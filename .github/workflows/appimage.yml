@@ -1,9 +1,9 @@
 name: AppImage
 
+# Linux release builds are handled by release.yml (the `linux` job). This
+# standalone workflow stays available for manual runs only, so it doesn't
+# race release.yml for the same release asset on every tag.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 jobs:
