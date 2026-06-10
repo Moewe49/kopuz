@@ -9,6 +9,8 @@ use hooks::use_search_data::use_search_data;
 use player::player;
 use reader::Library;
 
+use crate::server::discover::ShelfRow;
+
 #[component]
 pub fn JellyfinSearch(
     library: Signal<Library>,
@@ -26,6 +28,9 @@ pub fn JellyfinSearch(
     queue: Signal<Vec<reader::models::Track>>,
     current_queue_index: Signal<usize>,
     on_select_album: EventHandler<String>,
+    on_select_playlist: EventHandler<(String, String)>,
+    on_open_artist: EventHandler<(String, String)>,
+    on_search_artist: EventHandler<String>,
 ) -> Element {
     let data = use_search_data(library, search_query, config);
     let mut selected_genre = use_signal(|| None::<String>);
@@ -224,7 +229,61 @@ pub fn JellyfinSearch(
             } else {
                 SearchBar { search_query: data.search_query }
 
-                if let Some(Some((tracks, albums))) = data.search_results.cloned() {
+                if let Some(Some((tracks, albums, yt_sections))) = data.search_results.cloned() {
+                    // YT Music entity shelves — whole playlists, albums
+                    // and artists straight from the search bar, with the
+                    // same play-all tiles as Discover. The shelf block is
+                    // height-capped with its own scroll so SearchResults
+                    // below keeps the flex height chain its virtualized
+                    // track list depends on.
+                    if !yt_sections.is_empty() {
+                        div { class: "flex flex-col flex-1 min-h-0",
+                            div { class: "shrink-0 max-h-[45vh] overflow-y-auto pt-4",
+                                for (title_key, items) in [
+                                    ("playlists", yt_sections.playlists.clone()),
+                                    ("albums", yt_sections.albums.clone()),
+                                    ("artists", yt_sections.artists.clone()),
+                                ] {
+                                    if !items.is_empty() {
+                                        ShelfRow {
+                                            shelf: server::ytmusic::discover::DiscoverShelf {
+                                                title: i18n::t(title_key),
+                                                strapline: None,
+                                                more_browse_id: None,
+                                                items,
+                                                is_song_list: false,
+                                            },
+                                            scroll_id: format!("search-shelf-{title_key}"),
+                                            on_select_album: on_select_album,
+                                            on_select_playlist: on_select_playlist,
+                                            on_open_artist: on_open_artist,
+                                            on_search_artist: on_search_artist,
+                                        }
+                                    }
+                                }
+                            }
+                            SearchResults {
+                                search_query: data.search_query.read().clone(),
+                                tracks: tracks.clone(),
+                                albums: albums.clone(),
+                                library,
+                                playlist_store,
+                                player,
+                                is_playing,
+                                current_song_cover_url,
+                                current_song_title,
+                                current_song_artist,
+                                current_song_duration,
+                                current_song_progress,
+                                queue,
+                                current_queue_index,
+                                active_menu_track,
+                                show_playlist_modal,
+                                selected_track_for_playlist,
+                                on_select_album,
+                            }
+                        }
+                    } else {
                     SearchResults {
                         search_query: data.search_query.read().clone(),
                         tracks: tracks.clone(),
@@ -244,6 +303,7 @@ pub fn JellyfinSearch(
                         show_playlist_modal,
                         selected_track_for_playlist,
                         on_select_album,
+                    }
                     }
                 } else {
                     SearchGenres {

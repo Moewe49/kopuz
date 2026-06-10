@@ -5,11 +5,14 @@ use reader::models::{Album, Track};
 
 type TrackRes = Vec<(Track, Option<utils::CoverUrl>)>;
 type AlbumRes = Vec<(Album, Option<utils::CoverUrl>)>;
+/// Playlist/album/artist card sections — only populated by the YT
+/// Music backend; local and Jellyfin/Subsonic searches leave it empty.
+pub type YtSections = server::ytmusic::search::SearchSections;
 
 #[derive(Clone, Copy)]
 pub struct SearchData {
     pub genres: Memo<Vec<(String, Option<utils::CoverUrl>)>>,
-    pub search_results: Resource<Option<(TrackRes, AlbumRes)>>,
+    pub search_results: Resource<Option<(TrackRes, AlbumRes, YtSections)>>,
     pub search_query: Signal<String>,
 }
 
@@ -17,7 +20,7 @@ fn search_local(
     query: &str,
     tracks: Vec<Track>,
     albums: Vec<Album>,
-) -> Option<(TrackRes, AlbumRes)> {
+) -> Option<(TrackRes, AlbumRes, YtSections)> {
     let album_map: std::collections::HashMap<&String, &Album> =
         albums.iter().map(|a| (&a.id, a)).collect();
 
@@ -61,7 +64,7 @@ fn search_local(
         })
         .collect();
 
-    Some((result_tracks, result_albums))
+    Some((result_tracks, result_albums, YtSections::default()))
 }
 
 fn search_server(
@@ -70,7 +73,7 @@ fn search_server(
     albums: Vec<Album>,
     active_service: Option<MusicService>,
     server: Option<config::MusicServer>,
-) -> Option<(TrackRes, AlbumRes)> {
+) -> Option<(TrackRes, AlbumRes, YtSections)> {
     let result_tracks: TrackRes = tracks
         .iter()
         .filter(|t| {
@@ -166,7 +169,7 @@ fn search_server(
         })
         .collect();
 
-    Some((result_tracks, result_albums))
+    Some((result_tracks, result_albums, YtSections::default()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -177,7 +180,7 @@ async fn run_search(
     active_source: MusicSource,
     active_service: Option<MusicService>,
     server: Option<config::MusicServer>,
-) -> Option<(TrackRes, AlbumRes)> {
+) -> Option<(TrackRes, AlbumRes, YtSections)> {
     if matches!(active_source, MusicSource::Server)
         && matches!(active_service, Some(MusicService::YtMusic))
     {
@@ -194,19 +197,27 @@ async fn run_search(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn search_ytmusic(query: &str, cookies: Option<String>) -> Option<(TrackRes, AlbumRes)> {
+async fn search_ytmusic(
+    query: &str,
+    cookies: Option<String>,
+) -> Option<(TrackRes, AlbumRes, YtSections)> {
     if query.trim().is_empty() {
-        return Some((Vec::new(), Vec::new()));
+        return Some((Vec::new(), Vec::new(), YtSections::default()));
     }
     let client = match cookies {
         Some(c) if !c.is_empty() => server::ytmusic::YouTubeMusicClient::with_cookies(c),
         _ => server::ytmusic::YouTubeMusicClient::new(),
     };
-    let tracks = client
-        .search_tracks(query)
-        .await
+    // Tracks and entity sections hit different filtered tabs — fetch
+    // them concurrently. A sections failure must not take down track
+    // search, so it degrades to empty shelves.
+    let (tracks, sections) = tokio::join!(client.search_tracks(query), client.search_sections(query));
+    let tracks = tracks
         .map_err(|e| eprintln!("YT Music search error: {e}"))
         .ok()?;
+    let sections = sections
+        .map_err(|e| eprintln!("YT Music section search error: {e}"))
+        .unwrap_or_default();
     // Each track's `album_id` carries its YT thumbnail as
     // `ytmusic:_:urlhex_HEX`; the standard fallback resolver decodes
     // that embedded URL when we pass an empty server_url.
@@ -227,7 +238,7 @@ async fn search_ytmusic(query: &str, cookies: Option<String>) -> Option<(TrackRe
             (t, cover_url)
         })
         .collect();
-    Some((result_tracks, Vec::new()))
+    Some((result_tracks, Vec::new(), sections))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -238,7 +249,7 @@ async fn run_search(
     active_source: MusicSource,
     active_service: Option<MusicService>,
     server: Option<config::MusicServer>,
-) -> Option<(TrackRes, AlbumRes)> {
+) -> Option<(TrackRes, AlbumRes, YtSections)> {
     match active_source {
         MusicSource::Local => search_local(&query, tracks, albums),
         MusicSource::Server => search_server(&query, tracks, albums, active_service, server),

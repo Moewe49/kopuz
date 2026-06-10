@@ -27,6 +27,7 @@ server = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs"] }
 serde_json = { workspace = true }
 i18n = { workspace = true }
+web-time = { workspace = true }
 
 # Native file dialogs (folder/cover pickers). Not used on web, and rfd doesn't work on
 # Android (which auto-detects the music dir via JNI instead).

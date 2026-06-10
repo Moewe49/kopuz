@@ -443,3 +443,55 @@ add_photo = Добавить фото
 change_photo = Изменить фото
 remove_photo = Удалить фото
 metadata_edit_warning = Пустые поля удаляют тег. Запись напрямую в файл — отменить нельзя.
+
+# Spotify import + sleep timer
+spotify_import_title = Импорт из Spotify
+spotify_tab_url = По ссылке
+spotify_tab_account = Аккаунт Spotify
+spotify_url_hint = Вставьте публичную ссылку на плейлист или альбом Spotify. Импорт по ссылке охватывает примерно первые 100 треков — подключите аккаунт для полных плейлистов.
+spotify_import_button = Импортировать в YouTube Music
+spotify_fetching = Загрузка из Spotify…
+spotify_matching = Поиск в YouTube Music — { $done } / { $total }
+spotify_creating = Создание плейлиста в вашем аккаунте YouTube Music…
+spotify_adding = Добавление треков — { $done } / { $total }
+spotify_done = Импортировано { $matched } из { $total } треков. Плейлист теперь в вашей библиотеке YouTube Music.
+spotify_unmatched = Не удалось сопоставить треков: { $count }
+spotify_bad_url = Это не похоже на ссылку плейлиста или альбома Spotify.
+spotify_needs_yt_login = Сначала войдите в YouTube Music — клонированный плейлист создаётся в вашем аккаунте YT Music.
+spotify_connect_hint = Подключите собственное приложение Spotify (бесплатно), чтобы импортировать приватные плейлисты и любимые треки:
+spotify_connect_step3 = Вставьте Client ID приложения ниже и подключитесь.
+spotify_connect_button = Подключить Spotify
+spotify_waiting_browser = Ожидание входа в браузере…
+spotify_connected = Spotify подключён
+spotify_disconnect = Отключить
+spotify_load_playlists = Загрузить мои плейлисты
+spotify_liked_songs = Любимые треки
+spotify_not_connected = Spotify не подключён.
+spotify_client_id_missing = Сначала введите Client ID вашего приложения Spotify.
+spotify_import_from = Импорт из Spotify
+sleep_timer = Таймер сна
+sleep_timer_minutes = { $min } минут
+sleep_timer_off = Выключить
+
+# YT Music manual cookie auth
+yt_auth_browser = Войти через браузер
+yt_auth_paste = Вставить cookies (работает на Windows)
+yt_auth_anonymous = Продолжить без входа (анонимно)
+yt_anon_explainer = kopuz будет использовать YouTube Music без входа. Можно просматривать, искать и слушать — но любимые треки, плейлисты библиотеки и подписки/лайки недоступны.
+yt_paste_step1 = Откройте music.youtube.com в браузере и войдите.
+yt_paste_step2 = Нажмите F12 → вкладка «Сеть» → перезагрузите → кликните любой запрос music.youtube.com.
+yt_paste_step3 = В заголовках запроса скопируйте полное значение Cookie и вставьте ниже.
+yt_paste_firefox = Импорт из Firefox
+yt_paste_firefox_hint = Читает вашу сессию YouTube напрямую из Firefox/LibreWolf.
+yt_paste_invalid = YouTube отклонил эти cookies — скопируйте полный заголовок Cookie из вкладки music.youtube.com, где выполнен вход.
+yt_manual_session_expired = Сессия YouTube Music истекла. Вставьте свежие cookies: Настройки → Медиасерверы → заново добавьте YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = Поиск…
+soundcloud_search_for = Искать «{ $query }» на SoundCloud
+soundcloud_download = Скачать через yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = Введите запрос выше, чтобы искать на SoundCloud.
+soundcloud_needs_ytdlp = Для поиска в SoundCloud нужен установленный yt-dlp.
+no_results = Ничего не найдено

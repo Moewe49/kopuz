@@ -442,3 +442,55 @@ add_photo = 添加图片
 change_photo = 更换图片
 remove_photo = 移除图片
 metadata_edit_warning = 留空字段将删除该标签。直接写入文件，无法撤销。
+
+# Spotify import + sleep timer
+spotify_import_title = 从 Spotify 导入
+spotify_tab_url = 通过链接
+spotify_tab_account = Spotify 账号
+spotify_url_hint = 粘贴公开的 Spotify 歌单或专辑链接。链接导入约涵盖前 100 首歌曲，完整歌单请连接账号。
+spotify_import_button = 导入到 YouTube Music
+spotify_fetching = 正在从 Spotify 加载…
+spotify_matching = 正在 YouTube Music 上匹配 — { $done } / { $total }
+spotify_creating = 正在你的 YouTube Music 账号中创建歌单…
+spotify_adding = 正在添加歌曲 — { $done } / { $total }
+spotify_done = 已导入 { $matched } / { $total } 首歌曲。歌单已加入你的 YouTube Music 音乐库。
+spotify_unmatched = { $count } 首歌曲未能匹配
+spotify_bad_url = 这看起来不像 Spotify 歌单或专辑链接。
+spotify_needs_yt_login = 请先登录 YouTube Music — 克隆的歌单将创建在你的 YT Music 账号中。
+spotify_connect_hint = 连接你自己的 Spotify 应用（免费）以导入私密歌单和喜欢的歌曲：
+spotify_connect_step3 = 在下方粘贴应用的 Client ID 并连接。
+spotify_connect_button = 连接 Spotify
+spotify_waiting_browser = 等待浏览器登录…
+spotify_connected = Spotify 已连接
+spotify_disconnect = 断开连接
+spotify_load_playlists = 加载我的歌单
+spotify_liked_songs = 喜欢的歌曲
+spotify_not_connected = Spotify 未连接。
+spotify_client_id_missing = 请先输入你的 Spotify 应用 Client ID。
+spotify_import_from = 从 Spotify 导入
+sleep_timer = 睡眠定时器
+sleep_timer_minutes = { $min } 分钟
+sleep_timer_off = 关闭
+
+# YT Music manual cookie auth
+yt_auth_browser = 使用浏览器登录
+yt_auth_paste = 粘贴 Cookie（Windows 可用）
+yt_auth_anonymous = 不登录继续（匿名）
+yt_anon_explainer = kopuz 将在未登录状态下使用 YouTube Music。可以浏览、搜索和播放，但喜欢的音乐、媒体库歌单及关注/点赞功能不可用。
+yt_paste_step1 = 在浏览器中打开 music.youtube.com 并登录。
+yt_paste_step2 = 按 F12 → 网络标签 → 刷新 → 点击任意 music.youtube.com 请求。
+yt_paste_step3 = 在请求标头中复制完整的 Cookie 值并粘贴到下方。
+yt_paste_firefox = 从 Firefox 导入
+yt_paste_firefox_hint = 直接从 Firefox/LibreWolf 读取已登录的 YouTube 会话。
+yt_paste_invalid = YouTube 拒绝了这些 Cookie——请从已登录的 music.youtube.com 标签页复制完整的 Cookie 标头。
+yt_manual_session_expired = 你的 YouTube Music 会话已过期。请粘贴新的 Cookie：设置 → 媒体服务器 → 重新添加 YouTube Music。
+
+# SoundCloud search
+soundcloud_searching = 搜索中…
+soundcloud_search_for = 在 SoundCloud 搜索“{ $query }”
+soundcloud_download = 通过 yt-dlp 下载
+
+# SoundCloud view + unified search
+soundcloud_hint = 在上方输入以搜索 SoundCloud。
+soundcloud_needs_ytdlp = SoundCloud 搜索需要系统安装 yt-dlp。
+no_results = 无结果

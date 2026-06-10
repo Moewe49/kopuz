@@ -435,3 +435,55 @@ add_photo = Aggiungi foto
 change_photo = Cambia foto
 remove_photo = Rimuovi foto
 metadata_edit_warning = I campi vuoti rimuovono quel tag. Scrive direttamente nel file — nessun annullamento.
+
+# Spotify import + sleep timer
+spotify_import_title = Importa da Spotify
+spotify_tab_url = Da URL
+spotify_tab_account = Account Spotify
+spotify_url_hint = Incolla un link pubblico di una playlist o un album Spotify. L'importazione da link copre circa i primi 100 brani — collega il tuo account per playlist complete.
+spotify_import_button = Importa su YouTube Music
+spotify_fetching = Caricamento da Spotify…
+spotify_matching = Ricerca su YouTube Music — { $done } / { $total }
+spotify_creating = Creazione della playlist nel tuo account YouTube Music…
+spotify_adding = Aggiunta brani — { $done } / { $total }
+spotify_done = { $matched } brani su { $total } importati. La playlist è ora nella tua libreria di YouTube Music.
+spotify_unmatched = { $count } brani non sono stati abbinati
+spotify_bad_url = Non sembra un link di playlist o album Spotify.
+spotify_needs_yt_login = Accedi prima a YouTube Music — la playlist clonata viene creata nel tuo account YT Music.
+spotify_connect_hint = Collega la tua app Spotify (gratuita) per importare playlist private e brani preferiti:
+spotify_connect_step3 = Incolla qui sotto il Client ID dell'app e collegati.
+spotify_connect_button = Collega Spotify
+spotify_waiting_browser = In attesa dell'accesso nel browser…
+spotify_connected = Spotify collegato
+spotify_disconnect = Scollega
+spotify_load_playlists = Carica le mie playlist
+spotify_liked_songs = Brani preferiti
+spotify_not_connected = Spotify non è collegato.
+spotify_client_id_missing = Inserisci prima il Client ID della tua app Spotify.
+spotify_import_from = Importa da Spotify
+sleep_timer = Timer di spegnimento
+sleep_timer_minutes = { $min } minuti
+sleep_timer_off = Disattiva
+
+# YT Music manual cookie auth
+yt_auth_browser = Accedi con un browser
+yt_auth_paste = Incolla i cookie (funziona su Windows)
+yt_auth_anonymous = Continua senza accedere (anonimo)
+yt_anon_explainer = kopuz userà YouTube Music senza accesso. Puoi sfogliare, cercare e riprodurre — ma i brani preferiti, le tue playlist e segui/mi piace sono disabilitati.
+yt_paste_step1 = Apri music.youtube.com nel browser e accedi.
+yt_paste_step2 = Premi F12 → scheda Rete → ricarica → clicca una richiesta music.youtube.com.
+yt_paste_step3 = Negli header della richiesta copia l'intero valore Cookie e incollalo qui sotto.
+yt_paste_firefox = Importa da Firefox
+yt_paste_firefox_hint = Legge la tua sessione YouTube direttamente da Firefox/LibreWolf.
+yt_paste_invalid = YouTube ha rifiutato questi cookie — copia l'header Cookie completo da una scheda music.youtube.com con accesso effettuato.
+yt_manual_session_expired = La sessione YouTube Music è scaduta. Incolla cookie nuovi: Impostazioni → Server multimediali → riaggiungi YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = Ricerca…
+soundcloud_search_for = Cerca “{ $query }” su SoundCloud
+soundcloud_download = Scarica con yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = Digita sopra per cercare su SoundCloud.
+soundcloud_needs_ytdlp = La ricerca su SoundCloud richiede yt-dlp installato sul sistema.
+no_results = Nessun risultato

@@ -403,6 +403,18 @@ pub fn YtdlpPage(config: Signal<AppConfig>, mut trigger_rescan: Signal<usize>) -
     let mut show_opts = use_signal(|| false);
     let mut preflight_error = use_signal(|| Option::<String>::None);
 
+    // A SoundCloud "download" button (or any caller) can prefill the URL
+    // field via this context. Consume + clear it on mount so navigating
+    // back later doesn't re-prefill a stale link.
+    if let Some(prefill) = try_consume_context::<components::soundcloud_search::YtdlpPrefillUrl>() {
+        let mut sig = prefill.0;
+        let pending = sig.peek().clone();
+        if let Some(url) = pending {
+            url_input.set(url);
+            sig.set(None);
+        }
+    }
+
     use_hook(move || {
         let history = config.peek().ytdlp_history.clone();
         jobs.set(

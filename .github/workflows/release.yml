@@ -1,0 +1,166 @@
+name: release
+
+# Build downloadable binaries for every platform and attach them to a GitHub
+# Release. Triggers on a pushed `v*` tag (e.g. `git tag v0.6.8 && git push
+# --tags`) or manually via the Actions tab.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ---- Windows: .msi installer + portable .exe ---------------------------
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67 # v1.20.0
+      - name: Install dioxus-cli
+        run: cargo binstall dioxus-cli@0.7.9 -y --disable-strategies compile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build CSS
+        run: |
+          npm install
+          npx @tailwindcss/cli -i ./tailwind.css -o ./crates/kopuz/assets/tailwind.css
+      - name: Bundle Windows installer
+        run: dx bundle --release --platform desktop --package kopuz
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Get-ChildItem -Recurse target/dx -Include *.msi,*setup*.exe -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName dist/ }
+          Copy-Item scripts/install-windows.ps1 dist/ -ErrorAction SilentlyContinue
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: false
+
+  # ---- Linux: AppImage ---------------------------------------------------
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libopus-dev libasound2-dev libxdo-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libsoup-3.0-dev libssl-dev \
+            libglib2.0-dev libpango1.0-dev \
+            libcairo2-dev libgdk-pixbuf-2.0-dev \
+            libfuse2 nodejs npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install dioxus-cli
+        run: cargo install dioxus-cli --version 0.7.9 --locked
+      - name: Build CSS
+        run: |
+          npm install
+          npx @tailwindcss/cli -i ./tailwind.css -o ./crates/kopuz/assets/tailwind.css
+      - name: Build binary
+        run: dx build --package kopuz --release
+      - name: Package AppImage
+        run: |
+          set -e
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp target/dx/kopuz/release/linux/app/kopuz AppDir/usr/bin/kopuz
+          cp data/com.temidaradev.kopuz.desktop AppDir/usr/share/applications/ 2>/dev/null || true
+          cp crates/kopuz/assets/favicon.ico AppDir/usr/share/icons/hicolor/256x256/apps/kopuz.png 2>/dev/null || true
+          cp scripts/install-linux.sh AppDir/ 2>/dev/null || true
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/kopuz" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          cp data/com.temidaradev.kopuz.desktop AppDir/kopuz.desktop 2>/dev/null || \
+            printf '[Desktop Entry]\nName=Kopuz\nExec=kopuz\nIcon=kopuz\nType=Application\nCategories=AudioVideo;\n' > AppDir/kopuz.desktop
+          ./appimagetool AppDir Kopuz-x86_64.AppImage || ARCH=x86_64 ./appimagetool AppDir Kopuz-x86_64.AppImage
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Kopuz-x86_64.AppImage
+            scripts/install-linux.sh
+          fail_on_unmatched_files: false
+
+  # ---- Android: sideloadable APK (works on GrapheneOS — no Play Services) -
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android NDK
+        run: |
+          echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.1.12297006"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67 # v1.20.0
+      - name: Install dioxus-cli + just
+        run: cargo binstall dioxus-cli@0.7.9 just -y --disable-strategies compile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build CSS
+        run: |
+          npm install
+          npx @tailwindcss/cli -i ./tailwind.css -o ./crates/kopuz/assets/tailwind.css
+      - name: Build + patch APK
+        run: just android-patch
+      - name: Stage APK
+        run: |
+          mkdir -p dist
+          find target/dx/kopuz/release/android -name "*.apk" -exec cp {} dist/Kopuz-android.apk \;
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Kopuz-android.apk
+          fail_on_unmatched_files: false
+
+  # ---- iOS: unsigned IPA for Sideloadly / AltStore -----------------------
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67 # v1.20.0
+      - name: Install dioxus-cli + just
+        run: cargo binstall dioxus-cli@0.7.9 just -y --disable-strategies compile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build CSS
+        run: |
+          npm install
+          npx @tailwindcss/cli -i ./tailwind.css -o ./crates/kopuz/assets/tailwind.css
+      - name: Build sideloadable IPA
+        run: just ios-ipa-sideloadly
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/ipa/Kopuz-sideloadly.ipa
+          fail_on_unmatched_files: false

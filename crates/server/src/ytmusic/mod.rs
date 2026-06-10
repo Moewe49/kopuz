@@ -8,10 +8,12 @@ pub mod decipher;
 pub mod discover;
 pub mod innertube;
 pub mod isolated_profile;
+pub mod manual_cookies;
 pub mod mix;
 pub mod mutations;
 pub mod player;
 pub mod playlists;
+pub mod ytdlp_resolve;
 pub mod search;
 pub mod verify_session_keepalive;
 
@@ -60,6 +62,12 @@ impl YouTubeMusicClient {
 
     pub async fn search_tracks(&self, query: &str) -> Result<Vec<Track>, String> {
         search::music_search_tracks(query, self.cookies.as_deref()).await
+    }
+
+    /// Playlist / album / artist sections for the search page. Works
+    /// anonymously — public catalog entities don't need auth.
+    pub async fn search_sections(&self, query: &str) -> Result<search::SearchSections, String> {
+        search::music_search_sections(query, self.cookies.as_deref()).await
     }
 
     pub async fn resolve_artist_channel_id(
@@ -216,11 +224,30 @@ impl YouTubeMusicClient {
         Ok(all)
     }
 
-    /// Resolves a playable stream URL via native sig/n deciphering against
-    /// WEB_REMIX (see `player::resolve`). With cookies this returns Premium
-    /// itags; anonymously the ~128 kbps ceiling. No PO token, no yt-dlp.
+    /// Resolves a playable stream URL. Primary path is native sig/n
+    /// deciphering + the in-app PO-token minter (see `player::resolve`).
+    /// When that fails entirely — most commonly YouTube escalating a
+    /// signed-in session to a `LOGIN_REQUIRED` bot check — and a local
+    /// `yt-dlp` is installed, fall back to it (it carries the full
+    /// bot-check machinery and uses our cookies). yt-dlp is never the
+    /// primary path, so binary-free installs are unaffected.
     pub async fn get_stream(&self, video_id: &str) -> Result<YtStreamInfo, String> {
-        player::resolve(video_id, self.cookies.as_deref()).await
+        match player::resolve(video_id, self.cookies.as_deref()).await {
+            Ok(info) => Ok(info),
+            Err(native_err) => {
+                if ytdlp_resolve::find_ytdlp().is_none() {
+                    return Err(native_err);
+                }
+                eprintln!(
+                    "[yt-player] native resolve failed ({native_err}) — trying yt-dlp fallback"
+                );
+                ytdlp_resolve::resolve(video_id, self.cookies.as_deref())
+                    .await
+                    .map_err(|ydl_err| {
+                        format!("{native_err}; yt-dlp fallback also failed: {ydl_err}")
+                    })
+            }
+        }
     }
 
     // Public surfaces — work anonymously. `cookies.as_deref().unwrap_or("")`

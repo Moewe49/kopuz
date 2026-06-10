@@ -25,7 +25,7 @@ use components::settings_items::{
     MultiDirectoryPicker, MusicBrainzSettings, RadioRegistryDropdown, ServerSettings, SettingItem,
     ThemeSelector, ToggleSetting,
 };
-use components::settings_popups::{AddRegistryPopup, AddServerPopup, LoginPopup};
+use components::settings_popups::{AddRegistryPopup, AddServerPopup, LoginPopup, YtAuthMethod};
 use config::{AppConfig, ArtistPhotoSource, Browser, FetchStrategy, MusicService, OfflineQuality};
 use dioxus::prelude::*;
 use hooks::use_player_controller::PlayerController;
@@ -57,9 +57,16 @@ async fn ensure_signed_in(
     config_cookies: Option<String>,
     browser: Browser,
     server_id: &str,
+    manual: bool,
 ) -> Result<String, String> {
     if let Some(c) = try_resume(config_cookies).await {
         return Ok(c);
+    }
+
+    // Manual-cookie sessions have no browser to fall back to — when
+    // the pasted session dies, the only fix is fresh cookies.
+    if manual {
+        return Err(i18n::t("yt_manual_session_expired"));
     }
 
     let profile = ::server::ytmusic::isolated_profile::profile_dir(server_id);
@@ -106,10 +113,11 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
             .and_then(|s| s.yt_browser)
             .unwrap_or(config::Browser::Chrome)
     });
-    // Anonymous YT mode for the add-server popup. Defaults to anonymous on
-    // Windows (browser sign-in unsupported there — App-Bound Encryption), so the
-    // popup opens on the only working method.
-    let yt_anonymous = use_signal(|| cfg!(target_os = "windows"));
+    // YT auth method for the add-server popup. Windows opens on the
+    // cookie-paste flow (its only signed-in path); elsewhere the
+    // one-click browser sign-in stays the default.
+    let yt_auth = use_signal(YtAuthMethod::default_for_platform);
+    let mut yt_pasted_cookies = use_signal(String::new);
 
     let mut username = use_signal(|| String::new());
     let mut password = use_signal(|| String::new());
@@ -170,13 +178,14 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
         // Prefer the browser already saved on the active server entry
         // (set during a previous successful sign-in); fall back to the
         // settings popup's selector for first-time setup.
-        let (browser, existing, server_id) = {
+        let (browser, existing, server_id, manual) = {
             let cfg = config.peek();
             let srv = cfg.server.as_ref();
             (
                 srv.and_then(|s| s.yt_browser).unwrap_or(*yt_browser.peek()),
                 srv.and_then(|s| s.access_token.clone()).filter(|t| !t.is_empty()),
                 srv.and_then(|s| s.id.clone()).unwrap_or_default(),
+                srv.map(|s| s.yt_manual).unwrap_or(false),
             )
         };
         let mut report = move |msg: String| {
@@ -184,8 +193,12 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
             ctrl.playback_error.set(Some(msg));
         };
         spawn(async move {
-            let cookies = match ensure_signed_in(existing, browser, &server_id).await {
+            let cookies = match ensure_signed_in(existing, browser, &server_id, manual).await {
                 Ok(c) => c,
+                Err(e) if manual => {
+                    report(e);
+                    return;
+                }
                 Err(e) => {
                     report(format!("YT Music sign-in failed ({browser}): {e}"));
                     return;
@@ -198,14 +211,22 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 let mut cfg = config.write();
                 let saved_id = cfg.server.as_ref().and_then(|s| s.id.clone());
                 if let Some(srv) = cfg.server.as_mut() {
-                    srv.access_token = Some(cookies);
+                    srv.access_token = Some(cookies.clone());
                     srv.user_id = Some(yt_user_id);
-                    srv.yt_browser = Some(browser);
+                    if !manual {
+                        srv.yt_browser = Some(browser);
+                    }
                 }
                 if let Some(id) = saved_id
                     && let Some(saved) = cfg.servers.iter_mut().find(|s| s.id == id)
                 {
-                    saved.yt_browser = Some(browser);
+                    if manual {
+                        // Keep the saved copy fresh so switching back to
+                        // this server restores a still-valid session.
+                        saved.yt_saved_cookies = Some(cookies);
+                    } else {
+                        saved.yt_browser = Some(browser);
+                    }
                 }
             }
             error.set(None);
@@ -240,13 +261,37 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 url_input
             };
 
+            let method = *yt_auth.peek();
+            let is_anon = is_ytmusic && method == YtAuthMethod::Anonymous;
+            let is_paste = is_ytmusic && method == YtAuthMethod::PasteCookies;
+
+            // The paste flow validates BEFORE the popup closes so a bad
+            // paste gets immediate inline feedback instead of a dead
+            // server entry.
+            let mut pasted_header = None;
+            if is_paste {
+                let raw = yt_pasted_cookies.peek().clone();
+                let header = match ::server::ytmusic::manual_cookies::sanitize_header(&raw) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        error.set(Some(e));
+                        return;
+                    }
+                };
+                if !validate(&header).await {
+                    error.set(Some(i18n::t("yt_paste_invalid")));
+                    return;
+                }
+                pasted_header = Some(header);
+            }
+
             let mut new_server = config::MusicServer::new_with_service(
                 display_name,
                 effective_url,
                 selected_service,
             );
-            let is_anon = is_ytmusic && *yt_anonymous.peek();
             new_server.yt_anonymous = is_anon;
+            new_server.yt_manual = is_paste;
             if is_anon {
                 // Mark anonymous mode at the server level. Empty access
                 // token + yt_anonymous=true is what get_stream /
@@ -254,17 +299,26 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 // only".
                 new_server.access_token = Some(String::new());
             }
+            if let Some(header) = &pasted_header {
+                new_server.access_token = Some(header.clone());
+                new_server.user_id = Some(
+                    ::server::ytmusic::derive_user_id(header).unwrap_or_else(|| "me".to_string()),
+                );
+            }
             // Persist the chosen browser on the active server too (not just the
             // saved-list entry), so the sign-in flow knows which browser to use.
-            new_server.yt_browser = (is_ytmusic && !is_anon).then(|| *yt_browser.peek());
+            let uses_browser = is_ytmusic && method == YtAuthMethod::BrowserSignin;
+            new_server.yt_browser = uses_browser.then(|| *yt_browser.peek());
 
             let saved = config::SavedServer {
                 id: new_server.id.clone().unwrap_or_default(),
                 name: new_server.name.clone(),
                 url: new_server.url.clone(),
                 service: new_server.service,
-                yt_browser: (is_ytmusic && !is_anon).then(|| *yt_browser.peek()),
+                yt_browser: uses_browser.then(|| *yt_browser.peek()),
                 yt_anonymous: is_anon,
+                yt_manual: is_paste,
+                yt_saved_cookies: pasted_header,
             };
             {
                 let mut cfg = config.write();
@@ -275,16 +329,17 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
             server_name.set(String::new());
             server_url.set(String::new());
             server_service.set(MusicService::Jellyfin);
+            yt_pasted_cookies.set(String::new());
             error.set(None);
             show_add_server.set(false);
 
-            if is_ytmusic && !is_anon {
+            if uses_browser {
                 ytmusic_auto_login();
             } else if !is_ytmusic {
                 show_login.set(true);
             }
-            // Anonymous YT needs no further setup — the server entry
-            // is already active and playable.
+            // Anonymous + pasted-cookie YT need no further setup — the
+            // server entry is already active and playable.
         });
     };
 
@@ -296,23 +351,37 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
         if let Some(saved) = server {
             let is_ytmusic = saved.service == MusicService::YtMusic;
             let is_anon = is_ytmusic && saved.yt_anonymous;
+            let manual_cookies = (is_ytmusic && saved.yt_manual)
+                .then(|| saved.yt_saved_cookies.clone())
+                .flatten();
+            let manual_user_id = manual_cookies
+                .as_deref()
+                .and_then(::server::ytmusic::derive_user_id);
             let active = config::MusicServer {
                 name: saved.name,
                 url: saved.url,
                 service: saved.service,
                 // Anonymous YT keeps an empty (non-None) token so the
                 // backend treats it as anon rather than "needs sign-in".
-                access_token: is_anon.then(String::new),
-                user_id: None,
+                // Manual-cookie servers restore their persisted session.
+                access_token: if is_anon {
+                    Some(String::new())
+                } else {
+                    manual_cookies
+                },
+                user_id: manual_user_id,
                 id: Some(saved.id),
                 // Carry the saved browser choice over so the sign-in
                 // launch hits the binary the user picked, not whatever
                 // the popup's default selector happens to be.
                 yt_browser: saved.yt_browser,
                 yt_anonymous: is_anon,
+                yt_manual: saved.yt_manual,
             };
             config.write().server = Some(active);
             if is_ytmusic && !is_anon {
+                // For manual servers this revalidates/rotates the
+                // restored cookies; it never launches a browser.
                 ytmusic_auto_login();
             } else if !is_ytmusic {
                 show_login.set(true);
@@ -941,7 +1010,8 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                         server_url,
                         server_service,
                         yt_browser,
-                        yt_anonymous,
+                        yt_auth,
+                        yt_pasted_cookies,
                         error,
                         on_close: move |_| show_add_server.set(false),
                         on_save: handle_add_server

@@ -426,8 +426,11 @@ impl PlayerController {
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             let is_radio_item = scheme.as_str() == "radio";
-            let is_server_item =
-                matches!(scheme.as_str(), "jellyfin" | "subsonic" | "custom" | "ytmusic");
+            let is_soundcloud_item = scheme.as_str() == "soundcloud";
+            let is_server_item = matches!(
+                scheme.as_str(),
+                "jellyfin" | "subsonic" | "custom" | "ytmusic" | "soundcloud"
+            );
 
             if is_server_item || is_radio_item {
                 let parts: Vec<&str> = path_str.split(':').collect();
@@ -555,6 +558,24 @@ impl PlayerController {
                             .and_then(|s| s.streams.iter().find(|str| str.id == stream_id))
                             .map(|s| s.url.clone())
                             .map(|stream_url| (stream_url, String::new()))
+                    } else if is_soundcloud_item {
+                        // SoundCloud resolves through yt-dlp asynchronously
+                        // (like YT), independent of any active server. The
+                        // cover is hex-encoded into the path, so decode it
+                        // synchronously for instant artwork. The sentinel
+                        // carries the whole path; the async spawn hands it to
+                        // server::soundcloud::resolve_path.
+                        let cover_url =
+                            utils::jellyfin_image::track_cover_url_with_album_fallback(
+                                &path_str,
+                                &track.album_id,
+                                "",
+                                None,
+                                800,
+                                90,
+                            )
+                            .unwrap_or_default();
+                        Some((format!("__SC_PENDING:{path_str}"), cover_url))
                     } else {
                         let conf = self.config.read();
                         conf.server.as_ref().map(|server| match server.service {
@@ -745,6 +766,39 @@ impl PlayerController {
                                     eprintln!("YT Music stream URL fetch failed: {e}");
                                     playback_error.set(Some(format!(
                                         "YouTube Music couldn't load this track:\n{e}"
+                                    )));
+                                    is_loading.set(false);
+                                    skip_in_progress.set(false);
+                                    return;
+                                }
+                            }
+                        } else if let Some(sc_path) = stream_url.strip_prefix("__SC_PENDING:") {
+                            // SoundCloud: resolve the progressive/HLS audio URL
+                            // through yt-dlp. Same stale-resolve guard as YT.
+                            match ::server::soundcloud::resolve_path(sc_path).await {
+                                Ok(info) => {
+                                    if *play_generation.read() == current_gen
+                                        && let Some(secs) = info.duration_secs
+                                        && secs > 0
+                                    {
+                                        if let Some(p) = phys_idx
+                                            && let Some(t) = queue_for_yt.write().get_mut(p)
+                                        {
+                                            t.duration = secs;
+                                        }
+                                        if *current_queue_index_for_yt.peek() == idx {
+                                            current_song_duration_for_yt.set(secs);
+                                        }
+                                    }
+                                    (info.url, Some(info.format), Some(info.user_agent))
+                                }
+                                Err(e) => {
+                                    if *play_generation.read() != current_gen {
+                                        return;
+                                    }
+                                    eprintln!("SoundCloud stream fetch failed: {e}");
+                                    playback_error.set(Some(format!(
+                                        "SoundCloud couldn't load this track:\n{e}"
                                     )));
                                     is_loading.set(false);
                                     skip_in_progress.set(false);

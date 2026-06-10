@@ -442,3 +442,55 @@ add_photo = הוסף תמונה
 change_photo = החלף תמונה
 remove_photo = הסר תמונה
 metadata_edit_warning = שדות ריקים מוחקים את התג. נכתב ישירות לקובץ — אין ביטול.
+
+# Spotify import + sleep timer
+spotify_import_title = ייבוא מ-Spotify
+spotify_tab_url = באמצעות קישור
+spotify_tab_account = חשבון Spotify
+spotify_url_hint = הדביקו קישור ציבורי לפלייליסט או אלבום ב-Spotify. ייבוא בקישור מכסה בערך את 100 השירים הראשונים — חברו את החשבון לפלייליסטים מלאים.
+spotify_import_button = ייבוא ל-YouTube Music
+spotify_fetching = טוען מ-Spotify…
+spotify_matching = מחפש ב-YouTube Music — { $done } / { $total }
+spotify_creating = יוצר פלייליסט בחשבון YouTube Music שלך…
+spotify_adding = מוסיף שירים — { $done } / { $total }
+spotify_done = יובאו { $matched } מתוך { $total } שירים. הפלייליסט נמצא כעת בספריית YouTube Music שלך.
+spotify_unmatched = { $count } שירים לא נמצאה להם התאמה
+spotify_bad_url = זה לא נראה כמו קישור לפלייליסט או אלבום ב-Spotify.
+spotify_needs_yt_login = התחברו קודם ל-YouTube Music — הפלייליסט המשוכפל נוצר בחשבון YT Music שלכם.
+spotify_connect_hint = חברו אפליקציית Spotify משלכם (בחינם) כדי לייבא פלייליסטים פרטיים ושירים שאהבתם:
+spotify_connect_step3 = הדביקו למטה את ה-Client ID של האפליקציה והתחברו.
+spotify_connect_button = חיבור Spotify
+spotify_waiting_browser = ממתין להתחברות בדפדפן…
+spotify_connected = Spotify מחובר
+spotify_disconnect = ניתוק
+spotify_load_playlists = טעינת הפלייליסטים שלי
+spotify_liked_songs = שירים שאהבתי
+spotify_not_connected = Spotify אינו מחובר.
+spotify_client_id_missing = הזינו קודם את ה-Client ID של אפליקציית Spotify שלכם.
+spotify_import_from = ייבוא מ-Spotify
+sleep_timer = טיימר שינה
+sleep_timer_minutes = { $min } דקות
+sleep_timer_off = כיבוי
+
+# YT Music manual cookie auth
+yt_auth_browser = התחברות באמצעות דפדפן
+yt_auth_paste = הדבקת עוגיות (עובד ב-Windows)
+yt_auth_anonymous = המשך ללא התחברות (אנונימי)
+yt_anon_explainer = kopuz ישתמש ב-YouTube Music ללא התחברות. אפשר לעיין, לחפש ולנגן — אבל מוזיקה שאהבתם, פלייליסטים של הספרייה ומעקב/לייקים מושבתים.
+yt_paste_step1 = פתחו את music.youtube.com בדפדפן והתחברו.
+yt_paste_step2 = לחצו F12 ← לשונית רשת ← רעננו ← לחצו על כל בקשה ל-music.youtube.com.
+yt_paste_step3 = בכותרות הבקשה העתיקו את ערך ה-Cookie המלא והדביקו למטה.
+yt_paste_firefox = ייבוא מ-Firefox
+yt_paste_firefox_hint = קורא את סשן ה-YouTube המחובר ישירות מ-Firefox/LibreWolf.
+yt_paste_invalid = YouTube דחה את העוגיות האלה — העתיקו את כותרת ה-Cookie המלאה מלשונית music.youtube.com מחוברת.
+yt_manual_session_expired = סשן YouTube Music פג. הדביקו עוגיות חדשות: הגדרות ← שרתי מדיה ← הוסיפו מחדש את YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = מחפש…
+soundcloud_search_for = חיפוש “{ $query }” ב-SoundCloud
+soundcloud_download = הורדה דרך yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = הקלד למעלה כדי לחפש ב-SoundCloud.
+soundcloud_needs_ytdlp = חיפוש SoundCloud דורש yt-dlp מותקן במערכת.
+no_results = אין תוצאות

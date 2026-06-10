@@ -16,6 +16,26 @@
 
 </div>
 
+## Download
+
+Grab the latest build for your platform from the
+[**Releases**](https://github.com/Moewe49/kopuz/releases/latest) page:
+
+| Platform | File | Notes |
+|----------|------|-------|
+| **Windows** | `*.msi` / `*setup*.exe` | Run `install-windows.ps1` once to add yt-dlp + ffmpeg. |
+| **Linux** | `Kopuz-x86_64.AppImage` | `chmod +x` then run. `install-linux.sh` pulls yt-dlp/ffmpeg/WebKitGTK. |
+| **Android / GrapheneOS** | `Kopuz-android.apk` | Sideload it. No Google Play Services needed — works on GrapheneOS. |
+| **iOS** | `Kopuz-sideloadly.ipa` | Sideload with [Sideloadly](https://sideloadly.io) / AltStore (re-signs on install). |
+
+> **Dependencies:** Kopuz uses **yt-dlp** (playback bot-check fallback +
+> SoundCloud search/download) and **ffmpeg** (download remux). The desktop
+> installers ship an install script that adds both automatically; on mobile
+> they're not required for normal YouTube Music / local playback.
+
+A release is produced automatically by the [`release`](.github/workflows/release.yml)
+workflow whenever a `v*` tag is pushed.
+
 ## About the Name
 
 The _kopuz_ is an ancient Turkic string instrument and is often considered the
@@ -69,6 +89,31 @@ utilizing the power of Rust.
 - **Genre Browsing**: Browse your library by genre for both local and server
   music.
 - **Search**: Search across artists, albums, and tracks with real-time results.
+  On YouTube Music the search page additionally surfaces **playlist, album and
+  artist shelves** — hit play on any playlist card to queue the whole thing
+  straight from the search bar, or open it to browse.
+- **Spotify Import**: Clone Spotify playlists into your YouTube Music account.
+  Paste any public playlist/album link (no Spotify login needed, ≈first 100
+  tracks), or connect your own free Spotify app via OAuth to import private
+  playlists and Liked Songs in full. Tracks are matched on YT Music by
+  title/artist/duration; the result is a real playlist in your YT Music
+  library — playable, editable and syncable like any other. Unmatched tracks
+  are listed so nothing silently disappears. Find it under **Playlists →
+  Import from Spotify** when the YouTube Music backend is active.
+- **Sleep Timer**: Moon button in the player bar — pause playback
+  automatically after 15–90 minutes.
+- **SoundCloud Search**: On the search page, a SoundCloud section (powered by
+  `yt-dlp`) finds tracks SoundCloud-side; play them in-app, add them to any
+  playlist, or send them to the Downloads page with one click. Requires
+  `yt-dlp` on your PATH (the section hides itself otherwise).
+- **Add-to-Playlist Everywhere**: Right-click the now-playing track in the
+  player bar (or use the + on a SoundCloud row) to add it to a playlist —
+  local or server (Jellyfin / Subsonic / YouTube Music).
+- **Robust Playback**: When YouTube escalates a signed-in session to a
+  "confirm you're not a bot" check and the native stream paths fail, kopuz
+  automatically falls back to a local `yt-dlp` resolve (using your cookies) so
+  playback keeps working. yt-dlp is only used as a fallback — binary-free
+  installs are unaffected.
 - **Listening Logs**: Tracks play counts locally so you can see what you
   actually listen to most.
 - **Scrobbling**: Scrobble to ListenBrainz. For Jellyfin users,
@@ -217,6 +262,39 @@ sudo ln -s /usr/lib/webkit2gtk-4.1/WebKitWebProcess /usr/libexec/webkit2gtk-4.1/
 sudo ln -s /usr/lib/webkit2gtk-4.1/WebKitGPUProcess /usr/libexec/webkit2gtk-4.1/
 ```
 
+### Android / GrapheneOS
+
+CI builds a sideloadable APK on every push (GitHub Actions → **mobile**
+workflow → `kopuz-android-apk` artifact), or build locally:
+
+```bash
+# Needs: Android SDK + NDK, JDK 17, rustup target aarch64-linux-android,
+# dioxus-cli 0.7.x, just
+just android-patch
+# APK lands in target/dx/kopuz/release/android/app/app/build/outputs/apk/debug/
+```
+
+Install by sideloading (`adb install kopuz.apk` or open the APK on the
+device). **GrapheneOS works out of the box**: Kopuz uses plain AOSP
+media APIs (MediaSession, foreground media service, system WebView) and
+has **no Google Play Services dependency** — no sandboxed Play services
+needed. Sign-in for YouTube Music on mobile uses the same cookie-based
+session as desktop.
+
+### iOS
+
+CI produces an unsigned `Kopuz-sideloadly.ipa` (GitHub Actions →
+**mobile** workflow) for sideloading with
+[Sideloadly](https://sideloadly.io) or AltStore, which re-sign it with
+your Apple ID on install. For a properly signed build see the
+`ios-ipa-signed` recipe in the `Justfile` (requires an Apple developer
+identity + provisioning profile):
+
+```bash
+just ios-ipa-sideloadly                 # unsigned, for Sideloadly/AltStore
+APPLE_SIGN_IDENTITY=… IOS_MOBILEPROVISION=… just ios-ipa-signed
+```
+
 ### Build from Source
 
 #### Dependencies
@@ -346,26 +424,31 @@ on your `PATH`. Without it, tracks resolve but fail to play.
 
 ### Choosing a mode
 
-The setup dialog offers two methods:
+The setup dialog offers three methods:
 
-- **Sign in with a browser** — kopuz opens the Google sign-in page in an
-  **isolated browser profile** (a fresh, separate session; your normal browsing
-  is never touched), waits for you to log in, and extracts the session cookies.
-  Pick which installed Chromium-family browser to use (Chrome, Chromium, Brave,
-  Edge, or Vivaldi). This unlocks your **library, Liked Music, playlists, and
-  followed artists**.
+- **Sign in with a browser** (Linux/macOS) — kopuz opens the Google sign-in
+  page in an **isolated browser profile** (a fresh, separate session; your
+  normal browsing is never touched), waits for you to log in, and extracts the
+  session cookies. Pick which installed Chromium-family browser to use (Chrome,
+  Chromium, Brave, Edge, or Vivaldi). This unlocks your **library, Liked Music,
+  playlists, and followed artists**.
+
+- **Paste cookies** (all platforms — **the signed-in path on Windows**) — copy
+  the `Cookie` request header from a signed-in music.youtube.com tab (F12 →
+  Network → click any request → Request Headers → Cookie) and paste it into the
+  dialog; a Netscape `cookies.txt` export (yt-dlp style) works too. There's
+  also a one-click **Import from Firefox** button that reads your signed-in
+  YouTube session straight from Firefox/LibreWolf. Cookies are validated
+  against YT before the server is saved, and the session is then kept alive
+  over HTTP like any other sign-in. This route sidesteps both Windows blockers
+  (Google's blank ServiceLogin page in fresh profiles, and Chrome 127+
+  App-Bound Encryption) because your browser already decrypted the cookies.
 
 - **Continue without signing in (anonymous)** — no sign-in, no cookies. You can
   **browse, search, open artist/album/playlist pages, start mix radio, and play
   public tracks**. Liked Music, library playlists, and following/liking are
   disabled (those views show a "sign in to enable" prompt). Music Premium-only
   tracks can't be played anonymously.
-
-> [!NOTE]
-> On **Windows**, browser sign-in is currently disabled — the Google accounts
-> page renders blank inside the isolated profile. Windows users get anonymous
-> mode automatically. Sign-in works on Linux and macOS. (Tracked as
-> `TODO(windows-signin)` in `crates/server/src/ytmusic/isolated_profile.rs`.)
 
 ### Premium tracks
 

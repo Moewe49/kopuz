@@ -441,3 +441,55 @@ add_photo = Tambah foto
 change_photo = Ganti foto
 remove_photo = Hapus foto
 metadata_edit_warning = Bidang kosong menghapus tag itu. Ditulis langsung ke berkas — tanpa pembatalan.
+
+# Spotify import + sleep timer
+spotify_import_title = Impor dari Spotify
+spotify_tab_url = Lewat URL
+spotify_tab_account = Akun Spotify
+spotify_url_hint = Tempel tautan publik playlist atau album Spotify. Impor lewat tautan mencakup sekitar 100 lagu pertama — hubungkan akunmu untuk playlist lengkap.
+spotify_import_button = Impor ke YouTube Music
+spotify_fetching = Memuat dari Spotify…
+spotify_matching = Mencocokkan di YouTube Music — { $done } / { $total }
+spotify_creating = Membuat playlist di akun YouTube Music kamu…
+spotify_adding = Menambahkan lagu — { $done } / { $total }
+spotify_done = { $matched } dari { $total } lagu berhasil diimpor. Playlist kini ada di pustaka YouTube Music kamu.
+spotify_unmatched = { $count } lagu tidak dapat dicocokkan
+spotify_bad_url = Itu sepertinya bukan tautan playlist atau album Spotify.
+spotify_needs_yt_login = Masuk dulu ke YouTube Music — playlist hasil kloning dibuat di akun YT Music kamu.
+spotify_connect_hint = Hubungkan aplikasi Spotify milikmu sendiri (gratis) untuk mengimpor playlist privat dan Lagu yang Disukai:
+spotify_connect_step3 = Tempel Client ID aplikasi di bawah lalu hubungkan.
+spotify_connect_button = Hubungkan Spotify
+spotify_waiting_browser = Menunggu login di browser…
+spotify_connected = Spotify terhubung
+spotify_disconnect = Putuskan
+spotify_load_playlists = Muat playlist saya
+spotify_liked_songs = Lagu yang Disukai
+spotify_not_connected = Spotify belum terhubung.
+spotify_client_id_missing = Masukkan dulu Client ID aplikasi Spotify kamu.
+spotify_import_from = Impor dari Spotify
+sleep_timer = Timer tidur
+sleep_timer_minutes = { $min } menit
+sleep_timer_off = Matikan
+
+# YT Music manual cookie auth
+yt_auth_browser = Masuk dengan browser
+yt_auth_paste = Tempel cookie (berfungsi di Windows)
+yt_auth_anonymous = Lanjutkan tanpa masuk (anonim)
+yt_anon_explainer = kopuz akan memakai YouTube Music tanpa login. Kamu bisa menjelajah, mencari, dan memutar — tetapi musik yang disukai, playlist pustaka, dan ikuti/suka dinonaktifkan.
+yt_paste_step1 = Buka music.youtube.com di browser dan masuk.
+yt_paste_step2 = Tekan F12 → tab Jaringan → muat ulang → klik permintaan music.youtube.com mana pun.
+yt_paste_step3 = Di header permintaan, salin seluruh nilai Cookie dan tempel di bawah.
+yt_paste_firefox = Impor dari Firefox
+yt_paste_firefox_hint = Membaca sesi YouTube yang sudah login langsung dari Firefox/LibreWolf.
+yt_paste_invalid = YouTube menolak cookie ini — salin header Cookie lengkap dari tab music.youtube.com yang sudah login.
+yt_manual_session_expired = Sesi YouTube Music kamu kedaluwarsa. Tempel cookie baru: Pengaturan → Server media → tambahkan kembali YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = Mencari…
+soundcloud_search_for = Cari “{ $query }” di SoundCloud
+soundcloud_download = Unduh via yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = Ketik di atas untuk mencari di SoundCloud.
+soundcloud_needs_ytdlp = Pencarian SoundCloud memerlukan yt-dlp terpasang di sistem.
+no_results = Tidak ada hasil

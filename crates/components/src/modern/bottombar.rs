@@ -176,6 +176,13 @@ pub fn BottombarModern(
 
             div {
                 class: "w-11 h-11 rounded overflow-hidden bg-white/5 shrink-0 flex items-center justify-center",
+                title: i18n::t("add_to_playlist"),
+                oncontextmenu: move |e| {
+                    e.prevent_default();
+                    if let Some(t) = ctrl.current_track_snapshot.read().clone() {
+                        crate::add_to_playlist::request_add_to_playlist(t);
+                    }
+                },
                 if current_song_cover_url.read().is_empty() {
                     i { class: "fa-solid fa-music text-white/20 text-xs" }
                 } else {
@@ -185,6 +192,12 @@ pub fn BottombarModern(
 
             div {
                 class: "flex flex-col flex-1 min-w-0 justify-center gap-0.5",
+                oncontextmenu: move |e| {
+                    e.prevent_default();
+                    if let Some(t) = ctrl.current_track_snapshot.read().clone() {
+                        crate::add_to_playlist::request_add_to_playlist(t);
+                    }
+                },
                 div {
                     class: "flex items-baseline gap-1.5 min-w-0",
                     span {
@@ -334,6 +347,7 @@ pub fn BottombarModern(
                         }
                     }
                 }
+                crate::sleep_timer::SleepTimerButton {}
                 button {
                     class: "w-7 h-7 flex items-center justify-center text-slate-500 hover:text-white transition-colors",
                     onclick: move |_| { let c = *is_rightbar_open.read(); is_rightbar_open.set(!c); },

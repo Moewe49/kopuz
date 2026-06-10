@@ -442,3 +442,55 @@ add_photo = o pana e sitelen
 change_photo = o ante e sitelen
 remove_photo = o weka e sitelen
 metadata_edit_warning = nimi ala li weka e nimi nanpa. ni li ante e lipu. sina ken ala ante e ni.
+
+# Spotify import + sleep timer
+spotify_import_title = o kama jo tan ilo Spotify
+spotify_tab_url = kepeken nimi URL
+spotify_tab_account = sijelo Spotify
+spotify_url_hint = o pana e nimi URL pi kulupu kalama Spotify. kama jo kepeken nimi URL li ken e kalama 100 taso — o wan e sijelo sina tawa kulupu ale.
+spotify_import_button = o pana tawa ilo YouTube Music
+spotify_fetching = ilo li kama jo tan Spotify…
+spotify_matching = ilo li alasa lon YouTube Music — { $done } / { $total }
+spotify_creating = ilo li pali e kulupu kalama lon sijelo YouTube Music sina…
+spotify_adding = ilo li pana e kalama — { $done } / { $total }
+spotify_done = kalama { $matched } tan { $total } li kama. kulupu kalama li lon poki YouTube Music sina.
+spotify_unmatched = kalama { $count } li ken ala kama
+spotify_bad_url = ni li sama ala nimi URL pi kulupu kalama Spotify.
+spotify_needs_yt_login = o open lon YouTube Music. kulupu kalama sin li kama lon sijelo YT Music sina.
+spotify_connect_hint = o wan e ilo Spotify sina (mani ala) tawa kama jo pi kulupu len en kalama pona:
+spotify_connect_step3 = o pana e Client ID pi ilo sina lon anpa. o wan.
+spotify_connect_button = o wan e Spotify
+spotify_waiting_browser = ilo li awen tawa open lon ilo lukin…
+spotify_connected = Spotify li wan
+spotify_disconnect = o weka
+spotify_load_playlists = o kama jo e kulupu kalama mi
+spotify_liked_songs = kalama pona
+spotify_not_connected = Spotify li wan ala.
+spotify_client_id_missing = o pana e Client ID pi ilo Spotify sina.
+spotify_import_from = o kama jo tan Spotify
+sleep_timer = ilo tenpo lape
+sleep_timer_minutes = tenpo lili { $min }
+sleep_timer_off = o pini
+
+# YT Music manual cookie auth
+yt_auth_browser = o open kepeken ilo lukin
+yt_auth_paste = o pana e sitelen Cookie (li pali lon Windows)
+yt_auth_anonymous = o awen kepeken open ala (jan nimi ala)
+yt_anon_explainer = ilo kopuz li kepeken YouTube Music kepeken open ala. sina ken lukin, alasa, kute — taso kalama pona, kulupu kalama poki, en olin li ken ala.
+yt_paste_step1 = o open e music.youtube.com lon ilo lukin sina. o open.
+yt_paste_step2 = o luka e F12 → lipu Network → o sin e lipu → o luka e toki tawa music.youtube.com.
+yt_paste_step3 = lon lawa pi toki tawa, o kama jo e nimi Cookie ale. o pana lon anpa.
+yt_paste_firefox = o kama jo tan ilo Firefox
+yt_paste_firefox_hint = ni li kama jo e open YouTube sina tan ilo Firefox/LibreWolf.
+yt_paste_invalid = ilo YouTube li wile ala e sitelen Cookie ni — o kama jo e lawa Cookie ale tan lipu music.youtube.com pi open pona.
+yt_manual_session_expired = open YouTube Music sina li pini. o pana e sitelen Cookie sin: lawa → ilo musi → o pana sin e YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = alasa…
+soundcloud_search_for = o alasa e “{ $query }” lon SoundCloud
+soundcloud_download = o kama jo kepeken yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = o sitelen lon sewi tawa alasa SoundCloud.
+soundcloud_needs_ytdlp = alasa SoundCloud li wile e ilo yt-dlp lon ilo sina.
+no_results = ijo ala li lon

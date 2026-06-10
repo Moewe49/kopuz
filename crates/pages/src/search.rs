@@ -1,3 +1,5 @@
+use components::search_bar::{SearchBar, SearchSource, SearchSourceState};
+use components::soundcloud_search::SoundCloudSearchView;
 use config::{AppConfig, MusicSource};
 use dioxus::prelude::*;
 use player::player;
@@ -23,11 +25,28 @@ pub fn Search(
     queue: Signal<Vec<reader::models::Track>>,
     current_queue_index: Signal<usize>,
     on_select_album: EventHandler<String>,
+    on_select_playlist: EventHandler<(String, String)>,
+    on_open_artist: EventHandler<(String, String)>,
+    on_search_artist: EventHandler<String>,
 ) -> Element {
+    // Unified search source — driven by the dropdown in the search bar.
+    // SoundCloud is an explicit overlay; for Local/Server we follow the
+    // active backend so the sidebar toggle keeps working in lockstep (the
+    // dropdown sets active_source too, so the two never disagree).
+    let source = use_context::<SearchSourceState>().0;
+    let is_soundcloud = *source.read() == SearchSource::SoundCloud;
     let is_server = config.read().active_source == MusicSource::Server;
 
     rsx! {
-        if is_server {
+        if is_soundcloud {
+            // SoundCloud-only view: render the shared bar (with dropdown) plus
+            // the auto-searching SoundCloud results.
+            div {
+                class: "p-8 absolute inset-0 flex flex-col",
+                SearchBar { search_query }
+                SoundCloudSearchView { search_query }
+            }
+        } else if is_server {
             ServerSearch {
                 library,
                 config,
@@ -44,6 +63,9 @@ pub fn Search(
                 queue,
                 current_queue_index,
                 on_select_album,
+                on_select_playlist,
+                on_open_artist,
+                on_search_artist,
             }
         } else {
             LocalSearch {

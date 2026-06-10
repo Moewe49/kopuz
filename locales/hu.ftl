@@ -442,3 +442,55 @@ add_photo = Fénykép hozzáadása
 change_photo = Fénykép cseréje
 remove_photo = Fénykép eltávolítása
 metadata_edit_warning = Az üres mezők eltávolítják az adott címkét. Közvetlenül a fájlba ír — nincs visszavonás.
+
+# Spotify import + sleep timer
+spotify_import_title = Importálás Spotify-ról
+spotify_tab_url = URL alapján
+spotify_tab_account = Spotify-fiók
+spotify_url_hint = Illessz be egy nyilvános Spotify lejátszásilista- vagy albumlinket. A link alapú importálás kb. az első 100 számot fedi le — teljes listákhoz kösd össze a fiókodat.
+spotify_import_button = Importálás a YouTube Musicba
+spotify_fetching = Betöltés a Spotify-ról…
+spotify_matching = Keresés a YouTube Musicon — { $done } / { $total }
+spotify_creating = Lejátszási lista létrehozása a YouTube Music fiókodban…
+spotify_adding = Számok hozzáadása — { $done } / { $total }
+spotify_done = { $matched } / { $total } szám importálva. A lejátszási lista mostantól a YouTube Music könyvtáradban van.
+spotify_unmatched = { $count } számot nem sikerült párosítani
+spotify_bad_url = Ez nem tűnik Spotify lejátszásilista- vagy albumlinknek.
+spotify_needs_yt_login = Először jelentkezz be a YouTube Musicba — a klónozott lista a YT Music fiókodban jön létre.
+spotify_connect_hint = Kösd össze a saját (ingyenes) Spotify-alkalmazásodat privát listák és kedvelt számok importálásához:
+spotify_connect_step3 = Illeszd be lent az alkalmazás Client ID-ját, és csatlakozz.
+spotify_connect_button = Spotify összekötése
+spotify_waiting_browser = Várakozás a böngészős bejelentkezésre…
+spotify_connected = Spotify összekötve
+spotify_disconnect = Leválasztás
+spotify_load_playlists = Lejátszási listáim betöltése
+spotify_liked_songs = Kedvelt számok
+spotify_not_connected = A Spotify nincs összekötve.
+spotify_client_id_missing = Először add meg a Spotify-alkalmazásod Client ID-ját.
+spotify_import_from = Importálás Spotify-ról
+sleep_timer = Elalvásidőzítő
+sleep_timer_minutes = { $min } perc
+sleep_timer_off = Kikapcsolás
+
+# YT Music manual cookie auth
+yt_auth_browser = Bejelentkezés böngészővel
+yt_auth_paste = Sütik beillesztése (Windowson is működik)
+yt_auth_anonymous = Folytatás bejelentkezés nélkül (névtelen)
+yt_anon_explainer = A kopuz bejelentkezés nélkül használja a YouTube Musicot. Böngészhetsz, kereshetsz és lejátszhatsz — de a kedvelt zenék, a könyvtári listák és a követés/kedvelés nem érhető el.
+yt_paste_step1 = Nyisd meg a music.youtube.com-ot a böngészőben, és jelentkezz be.
+yt_paste_step2 = Nyomj F12-t → Hálózat fül → frissítés → kattints bármely music.youtube.com kérésre.
+yt_paste_step3 = A kérés fejlécei közül másold ki a teljes Cookie értéket, és illeszd be lent.
+yt_paste_firefox = Importálás Firefoxból
+yt_paste_firefox_hint = Közvetlenül a Firefox/LibreWolf bejelentkezett YouTube-munkamenetét olvassa be.
+yt_paste_invalid = A YouTube elutasította ezeket a sütiket — másold a teljes Cookie fejlécet egy bejelentkezett music.youtube.com fülről.
+yt_manual_session_expired = A YouTube Music munkameneted lejárt. Illessz be friss sütiket: Beállítások → Médiaszerverek → add hozzá újra a YouTube Musicot.
+
+# SoundCloud search
+soundcloud_searching = Keresés…
+soundcloud_search_for = „{ $query }” keresése a SoundCloudon
+soundcloud_download = Letöltés yt-dlp-vel
+
+# SoundCloud view + unified search
+soundcloud_hint = Írj felülre a SoundCloud kereséséhez.
+soundcloud_needs_ytdlp = A SoundCloud-kereséshez telepített yt-dlp szükséges.
+no_results = Nincs találat

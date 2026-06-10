@@ -442,3 +442,55 @@ add_photo = Προσθήκη φωτογραφίας
 change_photo = Αλλαγή φωτογραφίας
 remove_photo = Αφαίρεση φωτογραφίας
 metadata_edit_warning = Τα κενά πεδία αφαιρούν την ετικέτα. Εγγραφή απευθείας στο αρχείο — χωρίς αναίρεση.
+
+# Spotify import + sleep timer
+spotify_import_title = Εισαγωγή από το Spotify
+spotify_tab_url = Μέσω URL
+spotify_tab_account = Λογαριασμός Spotify
+spotify_url_hint = Επικολλήστε έναν δημόσιο σύνδεσμο playlist ή άλμπουμ του Spotify. Η εισαγωγή μέσω συνδέσμου καλύπτει περίπου τα πρώτα 100 κομμάτια — συνδέστε τον λογαριασμό σας για πλήρεις λίστες.
+spotify_import_button = Εισαγωγή στο YouTube Music
+spotify_fetching = Φόρτωση από το Spotify…
+spotify_matching = Αντιστοίχιση στο YouTube Music — { $done } / { $total }
+spotify_creating = Δημιουργία playlist στον λογαριασμό σας YouTube Music…
+spotify_adding = Προσθήκη κομματιών — { $done } / { $total }
+spotify_done = Εισήχθησαν { $matched } από { $total } κομμάτια. Η playlist βρίσκεται πλέον στη βιβλιοθήκη σας στο YouTube Music.
+spotify_unmatched = { $count } κομμάτια δεν αντιστοιχίστηκαν
+spotify_bad_url = Αυτό δεν μοιάζει με σύνδεσμο playlist ή άλμπουμ του Spotify.
+spotify_needs_yt_login = Συνδεθείτε πρώτα στο YouTube Music — η κλωνοποιημένη playlist δημιουργείται στον λογαριασμό σας YT Music.
+spotify_connect_hint = Συνδέστε τη δική σας εφαρμογή Spotify (δωρεάν) για εισαγωγή ιδιωτικών playlist και αγαπημένων κομματιών:
+spotify_connect_step3 = Επικολλήστε το Client ID της εφαρμογής παρακάτω και συνδεθείτε.
+spotify_connect_button = Σύνδεση Spotify
+spotify_waiting_browser = Αναμονή σύνδεσης στο πρόγραμμα περιήγησης…
+spotify_connected = Το Spotify συνδέθηκε
+spotify_disconnect = Αποσύνδεση
+spotify_load_playlists = Φόρτωση των playlist μου
+spotify_liked_songs = Αγαπημένα κομμάτια
+spotify_not_connected = Το Spotify δεν είναι συνδεδεμένο.
+spotify_client_id_missing = Εισαγάγετε πρώτα το Client ID της εφαρμογής σας Spotify.
+spotify_import_from = Εισαγωγή από το Spotify
+sleep_timer = Χρονοδιακόπτης ύπνου
+sleep_timer_minutes = { $min } λεπτά
+sleep_timer_off = Απενεργοποίηση
+
+# YT Music manual cookie auth
+yt_auth_browser = Σύνδεση με πρόγραμμα περιήγησης
+yt_auth_paste = Επικόλληση cookies (λειτουργεί στα Windows)
+yt_auth_anonymous = Συνέχεια χωρίς σύνδεση (ανώνυμα)
+yt_anon_explainer = Το kopuz θα χρησιμοποιεί το YouTube Music χωρίς σύνδεση. Μπορείτε να περιηγείστε, να αναζητάτε και να αναπαράγετε — αλλά τα αγαπημένα, οι playlist της βιβλιοθήκης και το follow/like είναι απενεργοποιημένα.
+yt_paste_step1 = Ανοίξτε το music.youtube.com στο πρόγραμμα περιήγησης και συνδεθείτε.
+yt_paste_step2 = Πατήστε F12 → καρτέλα Δίκτυο → ανανέωση → κλικ σε οποιοδήποτε αίτημα music.youtube.com.
+yt_paste_step3 = Στις κεφαλίδες αιτήματος αντιγράψτε ολόκληρη την τιμή Cookie και επικολλήστε την παρακάτω.
+yt_paste_firefox = Εισαγωγή από Firefox
+yt_paste_firefox_hint = Διαβάζει τη συνδεδεμένη συνεδρία YouTube απευθείας από Firefox/LibreWolf.
+yt_paste_invalid = Το YouTube απέρριψε αυτά τα cookies — αντιγράψτε ολόκληρη την κεφαλίδα Cookie από συνδεδεμένη καρτέλα music.youtube.com.
+yt_manual_session_expired = Η συνεδρία YouTube Music έληξε. Επικολλήστε νέα cookies: Ρυθμίσεις → Διακομιστές πολυμέσων → προσθέστε ξανά το YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = Αναζήτηση…
+soundcloud_search_for = Αναζήτηση “{ $query }” στο SoundCloud
+soundcloud_download = Λήψη μέσω yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = Πληκτρολογήστε παραπάνω για αναζήτηση στο SoundCloud.
+soundcloud_needs_ytdlp = Η αναζήτηση SoundCloud απαιτεί εγκατεστημένο yt-dlp.
+no_results = Κανένα αποτέλεσμα

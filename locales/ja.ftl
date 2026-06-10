@@ -448,3 +448,55 @@ add_photo = 写真を追加
 change_photo = 写真を変更
 remove_photo = 写真を削除
 metadata_edit_warning = 空欄にするとそのタグは削除されます。ファイルに直接書き込まれ、元に戻せません。
+
+# Spotify import + sleep timer
+spotify_import_title = Spotify からインポート
+spotify_tab_url = URL から
+spotify_tab_account = Spotify アカウント
+spotify_url_hint = 公開されている Spotify のプレイリストまたはアルバムのリンクを貼り付けてください。リンクからのインポートは最初の約100曲が対象です。完全なプレイリストにはアカウント連携が必要です。
+spotify_import_button = YouTube Music にインポート
+spotify_fetching = Spotify から読み込み中…
+spotify_matching = YouTube Music で照合中 — { $done } / { $total }
+spotify_creating = YouTube Music アカウントにプレイリストを作成中…
+spotify_adding = 曲を追加中 — { $done } / { $total }
+spotify_done = { $total } 曲中 { $matched } 曲をインポートしました。プレイリストは YouTube Music のライブラリに追加されました。
+spotify_unmatched = { $count } 曲は照合できませんでした
+spotify_bad_url = Spotify のプレイリストまたはアルバムのリンクではないようです。
+spotify_needs_yt_login = 先に YouTube Music にログインしてください。複製されたプレイリストは YT Music アカウントに作成されます。
+spotify_connect_hint = 非公開プレイリストやお気に入りの曲をインポートするには、自分の Spotify アプリ（無料）を連携してください:
+spotify_connect_step3 = アプリの Client ID を下に貼り付けて連携します。
+spotify_connect_button = Spotify を連携
+spotify_waiting_browser = ブラウザでのログインを待っています…
+spotify_connected = Spotify 連携済み
+spotify_disconnect = 連携を解除
+spotify_load_playlists = プレイリストを読み込む
+spotify_liked_songs = お気に入りの曲
+spotify_not_connected = Spotify が連携されていません。
+spotify_client_id_missing = 先に Spotify アプリの Client ID を入力してください。
+spotify_import_from = Spotify からインポート
+sleep_timer = スリープタイマー
+sleep_timer_minutes = { $min } 分
+sleep_timer_off = オフにする
+
+# YT Music manual cookie auth
+yt_auth_browser = ブラウザでログイン
+yt_auth_paste = Cookie を貼り付け（Windows で動作）
+yt_auth_anonymous = ログインせずに続行（匿名）
+yt_anon_explainer = kopuz はログインなしで YouTube Music を使用します。閲覧・検索・再生はできますが、お気に入りやライブラリのプレイリスト、フォロー/高評価は無効です。
+yt_paste_step1 = ブラウザで music.youtube.com を開いてログインします。
+yt_paste_step2 = F12 → ネットワークタブ → 再読み込み → music.youtube.com への任意のリクエストをクリック。
+yt_paste_step3 = リクエストヘッダーの Cookie の値を全部コピーして下に貼り付けます。
+yt_paste_firefox = Firefox からインポート
+yt_paste_firefox_hint = Firefox/LibreWolf からログイン済みの YouTube セッションを直接読み取ります。
+yt_paste_invalid = YouTube がこの Cookie を拒否しました。ログイン済みの music.youtube.com タブから完全な Cookie ヘッダーをコピーしてください。
+yt_manual_session_expired = YouTube Music のセッションが期限切れです。新しい Cookie を貼り付けてください: 設定 → メディアサーバー → YouTube Music を再追加。
+
+# SoundCloud search
+soundcloud_searching = 検索中…
+soundcloud_search_for = SoundCloud で「{ $query }」を検索
+soundcloud_download = yt-dlp でダウンロード
+
+# SoundCloud view + unified search
+soundcloud_hint = 上に入力して SoundCloud を検索します。
+soundcloud_needs_ytdlp = SoundCloud 検索にはシステムに yt-dlp のインストールが必要です。
+no_results = 結果なし

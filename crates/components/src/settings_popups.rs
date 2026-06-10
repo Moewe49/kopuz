@@ -1,6 +1,32 @@
 use config::{Browser, MusicService};
 use dioxus::prelude::*;
 
+/// How the YouTube Music session gets authenticated.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum YtAuthMethod {
+    /// Isolated-profile browser sign-in (Linux/macOS only — Google
+    /// renders the login page blank in fresh profiles on Windows and
+    /// Chrome's App-Bound Encryption blocks cookie extraction there).
+    BrowserSignin,
+    /// Paste the Cookie header from a signed-in music.youtube.com tab
+    /// (or import it from Firefox). Works on every platform.
+    PasteCookies,
+    /// No sign-in: browse/search/play public tracks only.
+    Anonymous,
+}
+
+impl YtAuthMethod {
+    /// Windows opens on the paste flow (the only signed-in path
+    /// there); other platforms keep the one-click browser sign-in.
+    pub fn default_for_platform() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::PasteCookies
+        } else {
+            Self::BrowserSignin
+        }
+    }
+}
+
 #[component]
 pub fn AddServerPopup(
     server_name: Signal<String>,
@@ -8,10 +34,10 @@ pub fn AddServerPopup(
     server_service: Signal<MusicService>,
     /// Selected Chromium-family browser when service is YouTube Music.
     yt_browser: Signal<Browser>,
-    /// YouTube Music anonymous mode — true = no sign-in, browse + play
-    /// public surfaces only. Forced true on Windows (browser sign-in
-    /// is disabled there for now).
-    yt_anonymous: Signal<bool>,
+    /// Selected auth method when service is YouTube Music.
+    yt_auth: Signal<YtAuthMethod>,
+    /// Raw cookie paste buffer for [`YtAuthMethod::PasteCookies`].
+    yt_pasted_cookies: Signal<String>,
     error: Signal<Option<String>>,
     on_close: EventHandler<()>,
     on_save: EventHandler<()>,
@@ -55,7 +81,8 @@ pub fn AddServerPopup(
                     server_service,
                     server_url,
                     yt_browser,
-                    yt_anonymous,
+                    yt_auth,
+                    yt_pasted_cookies,
                     server_url_placeholder: server_url_placeholder.clone(),
                 }
 
@@ -230,74 +257,126 @@ fn ServerServiceFields(
     server_service: Signal<MusicService>,
     server_url: Signal<String>,
     yt_browser: Signal<Browser>,
-    mut yt_anonymous: Signal<bool>,
+    mut yt_auth: Signal<YtAuthMethod>,
+    yt_pasted_cookies: Signal<String>,
     server_url_placeholder: String,
 ) -> Element {
-    // Browser sign-in must decrypt the browser's cookie store, which Chrome 127+
-    // App-Bound Encryption blocks for non-admin apps on Windows (HKLM-only policy,
-    // no in-app workaround). Force anonymous there and hide the sign-in option.
+    // The isolated-browser sign-in is dead on Windows for two stacked
+    // reasons: Google renders ServiceLogin blank in a fresh profile,
+    // and Chrome 127+ App-Bound Encryption blocks decrypting the
+    // profile's cookies. Hide that option there; manual cookies are
+    // the Windows sign-in path.
     let windows = cfg!(target_os = "windows");
     use_effect(move || {
-        if cfg!(target_os = "windows") && !*yt_anonymous.peek() {
-            yt_anonymous.set(true);
+        if cfg!(target_os = "windows") && *yt_auth.peek() == YtAuthMethod::BrowserSignin {
+            yt_auth.set(YtAuthMethod::PasteCookies);
         }
     });
+    let mut firefox_busy = use_signal(|| false);
+    let mut firefox_error = use_signal(|| None::<String>);
 
     match server_service() {
         MusicService::YtMusic => {
-            let anon = yt_anonymous();
+            let method = yt_auth();
             rsx! {
-                // Auth method selector (sign-in row hidden on Windows).
+                // Auth method selector (browser sign-in hidden on Windows).
                 div { class: "flex flex-col gap-2 mb-2",
                     if !windows {
                         label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
                             input {
                                 r#type: "radio",
                                 name: "yt-auth-method",
-                                checked: !anon,
-                                onchange: move |_| yt_anonymous.set(false),
+                                checked: method == YtAuthMethod::BrowserSignin,
+                                onchange: move |_| yt_auth.set(YtAuthMethod::BrowserSignin),
                             }
-                            span { "Sign in with a browser" }
+                            span { "{i18n::t(\"yt_auth_browser\")}" }
                         }
                     }
                     label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
                         input {
                             r#type: "radio",
                             name: "yt-auth-method",
-                            checked: anon,
-                            onchange: move |_| yt_anonymous.set(true),
+                            checked: method == YtAuthMethod::PasteCookies,
+                            onchange: move |_| yt_auth.set(YtAuthMethod::PasteCookies),
                         }
-                        span { "Continue without signing in (anonymous)" }
+                        span { "{i18n::t(\"yt_auth_paste\")}" }
+                    }
+                    label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
+                        input {
+                            r#type: "radio",
+                            name: "yt-auth-method",
+                            checked: method == YtAuthMethod::Anonymous,
+                            onchange: move |_| yt_auth.set(YtAuthMethod::Anonymous),
+                        }
+                        span { "{i18n::t(\"yt_auth_anonymous\")}" }
                     }
                 }
 
-                if anon {
-                    p { class: "text-xs text-white/60",
-                        if windows {
-                            "On Windows, kopuz uses YouTube Music anonymously (browser sign-in isn't supported here yet). You can browse, search, and play — but Liked Music, library playlists, and following/liking are disabled."
-                        } else {
-                            "kopuz will use YouTube Music without signing in. You can browse, search, and play — but Liked Music, your library playlists, and following/liking are disabled."
+                match method {
+                    YtAuthMethod::Anonymous => rsx! {
+                        p { class: "text-xs text-white/60", "{i18n::t(\"yt_anon_explainer\")}" }
+                    },
+                    YtAuthMethod::PasteCookies => rsx! {
+                        ol { class: "text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-2",
+                            li { "{i18n::t(\"yt_paste_step1\")}" }
+                            li { "{i18n::t(\"yt_paste_step2\")}" }
+                            li { "{i18n::t(\"yt_paste_step3\")}" }
                         }
-                    }
-                } else {
-                    p { class: "text-xs text-white/60",
-                        "Pick which browser kopuz should use for the YouTube Music sign-in window. It opens in an isolated profile (a fresh, separate session) — your normal browsing is untouched. Make sure the browser is installed."
-                    }
-                    select {
-                        onchange: move |e| {
-                            if let Some(b) = Browser::from_id(&e.value()) {
-                                yt_browser.set(b);
+                        textarea {
+                            class: "w-full h-24 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono placeholder:text-white/30 focus:outline-none focus:border-indigo-400 resize-y",
+                            placeholder: "VISITOR_INFO1_LIVE=…; SID=…; SAPISID=…; …",
+                            value: "{yt_pasted_cookies()}",
+                            oninput: move |e| yt_pasted_cookies.set(e.value()),
+                            onkeydown: move |e| e.stop_propagation(),
+                        }
+                        div { class: "flex items-center gap-2 mt-1",
+                            button {
+                                class: "px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs transition-colors disabled:opacity-50",
+                                disabled: *firefox_busy.read(),
+                                onclick: move |_| {
+                                    firefox_busy.set(true);
+                                    firefox_error.set(None);
+                                    spawn(async move {
+                                        match server::ytmusic::manual_cookies::extract_from_firefox().await {
+                                            Ok(header) => yt_pasted_cookies.set(header),
+                                            Err(e) => firefox_error.set(Some(e)),
+                                        }
+                                        firefox_busy.set(false);
+                                    });
+                                },
+                                if *firefox_busy.read() {
+                                    i { class: "fa-solid fa-arrows-rotate fa-spin mr-1" }
+                                } else {
+                                    i { class: "fa-brands fa-firefox-browser mr-1" }
+                                }
+                                "{i18n::t(\"yt_paste_firefox\")}"
                             }
-                        },
-                        onkeydown: move |e| e.stop_propagation(),
-                        for browser in Browser::ALL.iter().copied() {
-                            option {
-                                value: "{browser.id()}",
-                                selected: yt_browser() == browser,
-                                "{browser.label()}"
+                            span { class: "text-[10px] text-white/40", "{i18n::t(\"yt_paste_firefox_hint\")}" }
+                        }
+                        if let Some(err) = firefox_error.read().clone() {
+                            p { class: "text-xs text-rose-300 mt-1 break-words", "{err}" }
+                        }
+                    },
+                    YtAuthMethod::BrowserSignin => rsx! {
+                        p { class: "text-xs text-white/60",
+                            "Pick which browser kopuz should use for the YouTube Music sign-in window. It opens in an isolated profile (a fresh, separate session) — your normal browsing is untouched. Make sure the browser is installed."
+                        }
+                        select {
+                            onchange: move |e| {
+                                if let Some(b) = Browser::from_id(&e.value()) {
+                                    yt_browser.set(b);
+                                }
+                            },
+                            onkeydown: move |e| e.stop_propagation(),
+                            for browser in Browser::ALL.iter().copied() {
+                                option {
+                                    value: "{browser.id()}",
+                                    selected: yt_browser() == browser,
+                                    "{browser.label()}"
+                                }
                             }
                         }
-                    }
+                    },
                 }
 
             }

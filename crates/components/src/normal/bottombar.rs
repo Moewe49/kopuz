@@ -123,8 +123,15 @@ pub fn BottombarNormal(
 
             div {
                 class: "flex items-center gap-4 w-1/4",
+                oncontextmenu: move |e| {
+                    e.prevent_default();
+                    if let Some(t) = ctrl.current_track_snapshot.read().clone() {
+                        crate::add_to_playlist::request_add_to_playlist(t);
+                    }
+                },
                 div {
                     class: "w-14 h-14 bg-white/5 rounded-md flex-shrink-0 overflow-hidden",
+                    title: i18n::t("add_to_playlist"),
                     if current_song_cover_url.read().is_empty() {
                         div {
                             class: "w-full h-full flex items-center justify-center",
@@ -321,6 +328,7 @@ pub fn BottombarNormal(
                         }
                     }
                 }
+                crate::sleep_timer::SleepTimerButton {}
                 button {
                     class: "text-slate-400 hover:text-white",
                     onclick: move |_| { let c = *is_rightbar_open.read(); is_rightbar_open.set(!c); },

@@ -188,7 +188,7 @@ fn apply_home(
 }
 
 #[component]
-fn ShelfRow(
+pub fn ShelfRow(
     shelf: DiscoverShelf,
     scroll_id: String,
     on_select_album: EventHandler<String>,

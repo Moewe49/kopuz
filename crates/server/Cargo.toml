@@ -14,6 +14,9 @@ rand = { workspace = true }
 uuid = { workspace = true }
 md5 = "0.8"
 sha1 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+percent-encoding = { workspace = true }
 httpdate = "1"
 hex = "0.4"
 rookie = "0.5"

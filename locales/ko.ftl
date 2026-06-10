@@ -442,3 +442,55 @@ add_photo = 사진 추가
 change_photo = 사진 변경
 remove_photo = 사진 제거
 metadata_edit_warning = 빈 필드는 해당 태그를 제거합니다. 파일에 직접 기록되며 되돌릴 수 없습니다.
+
+# Spotify import + sleep timer
+spotify_import_title = Spotify에서 가져오기
+spotify_tab_url = URL로
+spotify_tab_account = Spotify 계정
+spotify_url_hint = 공개된 Spotify 재생목록 또는 앨범 링크를 붙여넣으세요. 링크 가져오기는 처음 약 100곡까지 지원합니다. 전체 재생목록은 계정을 연결하세요.
+spotify_import_button = YouTube Music으로 가져오기
+spotify_fetching = Spotify에서 불러오는 중…
+spotify_matching = YouTube Music에서 검색 중 — { $done } / { $total }
+spotify_creating = YouTube Music 계정에 재생목록 생성 중…
+spotify_adding = 곡 추가 중 — { $done } / { $total }
+spotify_done = { $total }곡 중 { $matched }곡을 가져왔습니다. 재생목록이 YouTube Music 라이브러리에 추가되었습니다.
+spotify_unmatched = { $count }곡은 일치하는 항목을 찾지 못했습니다
+spotify_bad_url = Spotify 재생목록 또는 앨범 링크가 아닌 것 같습니다.
+spotify_needs_yt_login = 먼저 YouTube Music에 로그인하세요. 복제된 재생목록은 YT Music 계정에 생성됩니다.
+spotify_connect_hint = 비공개 재생목록과 좋아요 표시한 곡을 가져오려면 자신의 Spotify 앱(무료)을 연결하세요:
+spotify_connect_step3 = 앱의 Client ID를 아래에 붙여넣고 연결하세요.
+spotify_connect_button = Spotify 연결
+spotify_waiting_browser = 브라우저 로그인 대기 중…
+spotify_connected = Spotify 연결됨
+spotify_disconnect = 연결 해제
+spotify_load_playlists = 내 재생목록 불러오기
+spotify_liked_songs = 좋아요 표시한 곡
+spotify_not_connected = Spotify가 연결되어 있지 않습니다.
+spotify_client_id_missing = 먼저 Spotify 앱의 Client ID를 입력하세요.
+spotify_import_from = Spotify에서 가져오기
+sleep_timer = 수면 타이머
+sleep_timer_minutes = { $min }분
+sleep_timer_off = 끄기
+
+# YT Music manual cookie auth
+yt_auth_browser = 브라우저로 로그인
+yt_auth_paste = 쿠키 붙여넣기 (Windows에서 작동)
+yt_auth_anonymous = 로그인 없이 계속 (익명)
+yt_anon_explainer = kopuz는 로그인 없이 YouTube Music을 사용합니다. 탐색, 검색, 재생은 가능하지만 좋아요 표시한 음악, 라이브러리 재생목록, 팔로우/좋아요는 비활성화됩니다.
+yt_paste_step1 = 브라우저에서 music.youtube.com을 열고 로그인하세요.
+yt_paste_step2 = F12 → 네트워크 탭 → 새로고침 → music.youtube.com 요청을 아무거나 클릭하세요.
+yt_paste_step3 = 요청 헤더에서 Cookie 값 전체를 복사해 아래에 붙여넣으세요.
+yt_paste_firefox = Firefox에서 가져오기
+yt_paste_firefox_hint = Firefox/LibreWolf에서 로그인된 YouTube 세션을 직접 읽어옵니다.
+yt_paste_invalid = YouTube가 이 쿠키를 거부했습니다. 로그인된 music.youtube.com 탭에서 전체 Cookie 헤더를 복사하세요.
+yt_manual_session_expired = YouTube Music 세션이 만료되었습니다. 새 쿠키를 붙여넣으세요: 설정 → 미디어 서버 → YouTube Music 다시 추가.
+
+# SoundCloud search
+soundcloud_searching = 검색 중…
+soundcloud_search_for = SoundCloud에서 “{ $query }” 검색
+soundcloud_download = yt-dlp로 다운로드
+
+# SoundCloud view + unified search
+soundcloud_hint = 위에 입력하여 SoundCloud를 검색하세요.
+soundcloud_needs_ytdlp = SoundCloud 검색에는 시스템에 yt-dlp가 설치되어 있어야 합니다.
+no_results = 결과 없음

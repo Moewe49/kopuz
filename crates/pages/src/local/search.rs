@@ -129,7 +129,7 @@ pub fn LocalSearch(
             } else {
                 SearchBar { search_query: data.search_query }
 
-                if let Some(Some((tracks, albums))) = data.search_results.cloned() {
+                if let Some(Some((tracks, albums, _yt_sections))) = data.search_results.cloned() {
                     SearchResults {
                         search_query: data.search_query.read().clone(),
                         tracks: tracks.clone(),

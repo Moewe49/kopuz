@@ -939,6 +939,7 @@ dependencies = [
  "tracing",
  "utils",
  "uuid 1.23.2",
+ "web-time",
  "webbrowser",
 ]
 
@@ -6722,12 +6723,14 @@ dependencies = [
 name = "server"
 version = "0.6.7"
 dependencies = [
+ "base64 0.22.1",
  "config",
  "directories",
  "hex",
  "httpdate",
  "jellyfin-sdk-rust",
  "md5",
+ "percent-encoding",
  "rand 0.10.1",
  "reader",
  "reqwest 0.13.4",
@@ -6735,6 +6738,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sha2",
  "tokio",
  "uuid 1.23.2",
  "web-time",

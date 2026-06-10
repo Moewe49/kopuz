@@ -448,3 +448,55 @@ add_photo = إضافة صورة
 change_photo = تغيير الصورة
 remove_photo = إزالة الصورة
 metadata_edit_warning = الحقول الفارغة تحذف الوسم. يُكتب مباشرة في الملف — لا يمكن التراجع.
+
+# Spotify import + sleep timer
+spotify_import_title = استيراد من Spotify
+spotify_tab_url = عبر الرابط
+spotify_tab_account = حساب Spotify
+spotify_url_hint = الصق رابطًا عامًا لقائمة تشغيل أو ألبوم من Spotify. يشمل الاستيراد عبر الرابط حوالي أول 100 أغنية — اربط حسابك للقوائم الكاملة.
+spotify_import_button = استيراد إلى YouTube Music
+spotify_fetching = جارٍ التحميل من Spotify…
+spotify_matching = جارٍ المطابقة على YouTube Music — { $done } / { $total }
+spotify_creating = جارٍ إنشاء قائمة التشغيل في حساب YouTube Music الخاص بك…
+spotify_adding = جارٍ إضافة الأغاني — { $done } / { $total }
+spotify_done = تم استيراد { $matched } من أصل { $total } أغنية. قائمة التشغيل الآن في مكتبة YouTube Music لديك.
+spotify_unmatched = تعذّرت مطابقة { $count } أغنية
+spotify_bad_url = لا يبدو هذا رابط قائمة تشغيل أو ألبوم من Spotify.
+spotify_needs_yt_login = سجّل الدخول إلى YouTube Music أولًا — تُنشأ القائمة المستنسخة في حساب YT Music الخاص بك.
+spotify_connect_hint = اربط تطبيق Spotify الخاص بك (مجاني) لاستيراد القوائم الخاصة والأغاني المفضلة:
+spotify_connect_step3 = الصق Client ID الخاص بالتطبيق أدناه ثم اربط.
+spotify_connect_button = ربط Spotify
+spotify_waiting_browser = في انتظار تسجيل الدخول في المتصفح…
+spotify_connected = تم ربط Spotify
+spotify_disconnect = فصل
+spotify_load_playlists = تحميل قوائم التشغيل الخاصة بي
+spotify_liked_songs = الأغاني المفضلة
+spotify_not_connected = Spotify غير مرتبط.
+spotify_client_id_missing = أدخل أولًا Client ID لتطبيق Spotify الخاص بك.
+spotify_import_from = استيراد من Spotify
+sleep_timer = مؤقّت النوم
+sleep_timer_minutes = { $min } دقيقة
+sleep_timer_off = إيقاف
+
+# YT Music manual cookie auth
+yt_auth_browser = تسجيل الدخول عبر المتصفح
+yt_auth_paste = لصق ملفات تعريف الارتباط (يعمل على Windows)
+yt_auth_anonymous = المتابعة دون تسجيل الدخول (مجهول)
+yt_anon_explainer = سيستخدم kopuz خدمة YouTube Music دون تسجيل دخول. يمكنك التصفح والبحث والتشغيل — لكن الموسيقى المفضلة وقوائم المكتبة والمتابعة/الإعجاب معطّلة.
+yt_paste_step1 = افتح music.youtube.com في متصفحك وسجّل الدخول.
+yt_paste_step2 = اضغط F12 ← تبويب الشبكة ← أعد التحميل ← انقر أي طلب إلى music.youtube.com.
+yt_paste_step3 = من ترويسات الطلب انسخ قيمة Cookie كاملة والصقها أدناه.
+yt_paste_firefox = استيراد من Firefox
+yt_paste_firefox_hint = يقرأ جلسة YouTube المسجلة مباشرة من Firefox/LibreWolf.
+yt_paste_invalid = رفض YouTube ملفات تعريف الارتباط هذه — انسخ ترويسة Cookie كاملة من تبويب music.youtube.com مسجّل الدخول.
+yt_manual_session_expired = انتهت جلسة YouTube Music. الصق ملفات تعريف ارتباط جديدة: الإعدادات ← خوادم الوسائط ← أضف YouTube Music من جديد.
+
+# SoundCloud search
+soundcloud_searching = جارٍ البحث…
+soundcloud_search_for = ابحث عن “{ $query }” في SoundCloud
+soundcloud_download = التنزيل عبر yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = اكتب في الأعلى للبحث في SoundCloud.
+soundcloud_needs_ytdlp = يتطلب بحث SoundCloud تثبيت yt-dlp على نظامك.
+no_results = لا نتائج

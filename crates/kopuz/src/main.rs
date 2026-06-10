@@ -236,8 +236,20 @@ async fn run_rotation(mut config: Signal<config::AppConfig>) {
                 cookies.len(),
                 updated.len()
             );
-            if let Some(srv) = config.write().server.as_mut() {
-                srv.access_token = Some(updated);
+            let mut cfg = config.write();
+            let saved_id = cfg.server.as_ref().and_then(|s| s.id.clone());
+            let is_manual = cfg.server.as_ref().map(|s| s.yt_manual).unwrap_or(false);
+            if let Some(srv) = cfg.server.as_mut() {
+                srv.access_token = Some(updated.clone());
+            }
+            // Manual-cookie servers persist the rotated jar to the saved
+            // entry too, so a restart restores a still-valid session
+            // instead of the original (now-stale) pasted cookies.
+            if is_manual
+                && let Some(id) = saved_id
+                && let Some(saved) = cfg.servers.iter_mut().find(|s| s.id == id)
+            {
+                saved.yt_saved_cookies = Some(updated);
             }
         }
         Ok(None) => {}
@@ -1128,6 +1140,9 @@ fn App() -> Element {
     let mut selected_album_id = use_signal(String::new);
     let mut selected_playlist_id = use_signal(|| None::<String>);
     let mut discover_selected_playlist_id = use_signal(|| None::<String>);
+    // Which route opened the playlist detail view — Discover, Artist or
+    // Search — so its back button returns where the user actually was.
+    let mut discover_playlist_origin = use_signal(|| Route::Discover);
     let mut discover_selected_playlist_title = use_signal(|| None::<String>);
     // YT channel id corresponding to selected_artist_name when known
     // (Discover tile / mix entry carries it). Left None when the
@@ -1872,6 +1887,32 @@ fn App() -> Element {
     ));
     provide_context(download_queue);
     provide_context(download_progress);
+    let sleep_timer_deadline = use_signal(|| None::<u64>);
+    provide_context(components::sleep_timer::SleepTimerState(
+        sleep_timer_deadline,
+    ));
+    let add_to_playlist_pending = use_signal(|| None::<reader::models::Track>);
+    provide_context(components::add_to_playlist::AddToPlaylistState(
+        add_to_playlist_pending,
+    ));
+    // SoundCloud "download" buttons drop a permalink here; the Downloads
+    // (yt-dlp) page reads + clears it on open.
+    let ytdlp_prefill_url = use_signal(|| None::<String>);
+    provide_context(components::soundcloud_search::YtdlpPrefillUrl(
+        ytdlp_prefill_url,
+    ));
+    // Unified search-bar source selector (Local / server / SoundCloud).
+    // Seeds from the currently active source.
+    let initial_search_source = {
+        let conf = config.peek();
+        if conf.server.is_some() && conf.active_source == config::MusicSource::Server {
+            components::search_bar::SearchSource::Server
+        } else {
+            components::search_bar::SearchSource::Local
+        }
+    };
+    let search_source = use_signal(|| initial_search_source);
+    provide_context(components::search_bar::SearchSourceState(search_source));
     provide_context(scroll_positions);
     provide_context(fetched_artist_images);
     provide_context(is_fetching_artist_images);
@@ -2141,6 +2182,13 @@ fn App() -> Element {
                     is_rightbar_open: is_rightbar_open,
                 }
             }
+            // App-wide add-to-playlist picker — opened by track rows and the
+            // now-playing bar's right-click menu via the AddToPlaylistState
+            // context.
+            components::add_to_playlist::AddToPlaylistHost {
+                config: config,
+                playlist_store: playlist_store,
+            }
             div {
                 class: "{content_row_class}",
                 Sidebar {
@@ -2294,6 +2342,7 @@ fn App() -> Element {
                                 on_select_playlist: move |(id, title): (String, String)| {
                                     discover_selected_playlist_id.set(Some(id));
                                     discover_selected_playlist_title.set(Some(title));
+                                    discover_playlist_origin.set(Route::Discover);
                                     current_route.set(Route::DiscoverPlaylist);
                                 },
                                 on_open_artist: move |(cid, name): (String, String)| {
@@ -2316,7 +2365,7 @@ fn App() -> Element {
                                     // re-opening the same playlist refetches.
                                     discover_selected_playlist_id.set(None);
                                     discover_selected_playlist_title.set(None);
-                                    current_route.set(Route::Discover);
+                                    current_route.set(*discover_playlist_origin.peek());
                                 },
                             }
                         },
@@ -2339,6 +2388,20 @@ fn App() -> Element {
                                 on_select_album: move |id: String| {
                                     selected_album_id.set(id);
                                     current_route.set(Route::Album);
+                                },
+                                on_select_playlist: move |(id, title): (String, String)| {
+                                    discover_selected_playlist_id.set(Some(id));
+                                    discover_selected_playlist_title.set(Some(title));
+                                    discover_playlist_origin.set(Route::Search);
+                                    current_route.set(Route::DiscoverPlaylist);
+                                },
+                                on_open_artist: move |(cid, name): (String, String)| {
+                                    selected_artist_channel_id.set(Some(cid));
+                                    selected_artist_name.set(name);
+                                    current_route.set(Route::Artist);
+                                },
+                                on_search_artist: move |name: String| {
+                                    search_query.set(name);
                                 },
                             }
                         },
@@ -2406,6 +2469,7 @@ fn App() -> Element {
                                         on_select_playlist: move |(id, title): (String, String)| {
                                             discover_selected_playlist_id.set(Some(id));
                                             discover_selected_playlist_title.set(Some(title));
+                                            discover_playlist_origin.set(Route::Artist);
                                             current_route.set(Route::DiscoverPlaylist);
                                         },
                                         on_open_artist: move |(cid, name): (String, String)| {

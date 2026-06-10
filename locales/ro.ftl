@@ -442,3 +442,55 @@ add_photo = Adaugă fotografie
 change_photo = Schimbă fotografia
 remove_photo = Elimină fotografia
 metadata_edit_warning = Câmpurile goale elimină eticheta. Se scrie direct în fișier — fără anulare.
+
+# Spotify import + sleep timer
+spotify_import_title = Importă din Spotify
+spotify_tab_url = Prin URL
+spotify_tab_account = Cont Spotify
+spotify_url_hint = Lipește un link public de playlist sau album Spotify. Importul prin link acoperă aproximativ primele 100 de piese — conectează-ți contul pentru playlisturi complete.
+spotify_import_button = Importă în YouTube Music
+spotify_fetching = Se încarcă din Spotify…
+spotify_matching = Se caută pe YouTube Music — { $done } / { $total }
+spotify_creating = Se creează playlistul în contul tău YouTube Music…
+spotify_adding = Se adaugă piese — { $done } / { $total }
+spotify_done = { $matched } din { $total } piese importate. Playlistul este acum în biblioteca ta YouTube Music.
+spotify_unmatched = { $count } piese nu au putut fi potrivite
+spotify_bad_url = Nu pare un link de playlist sau album Spotify.
+spotify_needs_yt_login = Autentifică-te mai întâi în YouTube Music — playlistul clonat este creat în contul tău YT Music.
+spotify_connect_hint = Conectează propria aplicație Spotify (gratuită) pentru a importa playlisturi private și piese apreciate:
+spotify_connect_step3 = Lipește mai jos Client ID-ul aplicației și conectează-te.
+spotify_connect_button = Conectează Spotify
+spotify_waiting_browser = Se așteaptă autentificarea în browser…
+spotify_connected = Spotify conectat
+spotify_disconnect = Deconectează
+spotify_load_playlists = Încarcă playlisturile mele
+spotify_liked_songs = Piese apreciate
+spotify_not_connected = Spotify nu este conectat.
+spotify_client_id_missing = Introdu mai întâi Client ID-ul aplicației tale Spotify.
+spotify_import_from = Importă din Spotify
+sleep_timer = Temporizator de somn
+sleep_timer_minutes = { $min } minute
+sleep_timer_off = Dezactivează
+
+# YT Music manual cookie auth
+yt_auth_browser = Conectează-te cu un browser
+yt_auth_paste = Lipește cookie-uri (funcționează pe Windows)
+yt_auth_anonymous = Continuă fără conectare (anonim)
+yt_anon_explainer = kopuz va folosi YouTube Music fără conectare. Poți naviga, căuta și reda — dar muzica apreciată, playlisturile bibliotecii și urmărirea/aprecierile sunt dezactivate.
+yt_paste_step1 = Deschide music.youtube.com în browser și conectează-te.
+yt_paste_step2 = Apasă F12 → fila Rețea → reîncarcă → dă clic pe orice cerere music.youtube.com.
+yt_paste_step3 = Din anteturile cererii copiază valoarea completă Cookie și lipește-o mai jos.
+yt_paste_firefox = Importă din Firefox
+yt_paste_firefox_hint = Citește sesiunea YouTube conectată direct din Firefox/LibreWolf.
+yt_paste_invalid = YouTube a respins aceste cookie-uri — copiază antetul Cookie complet dintr-o filă music.youtube.com conectată.
+yt_manual_session_expired = Sesiunea YouTube Music a expirat. Lipește cookie-uri noi: Setări → Servere media → adaugă din nou YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = Se caută…
+soundcloud_search_for = Caută „{ $query }” pe SoundCloud
+soundcloud_download = Descărcare prin yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = Scrie mai sus pentru a căuta pe SoundCloud.
+soundcloud_needs_ytdlp = Căutarea SoundCloud necesită yt-dlp instalat pe sistem.
+no_results = Niciun rezultat

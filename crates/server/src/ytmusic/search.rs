@@ -14,6 +14,13 @@ const VIDEOS_FILTER: &str = "EgWKAQIQAWoMEAMQBBAJEAoQDhAV";
 // to musicResponsiveListItemRenderer rows whose nav endpoint browseId
 // begins with `UC…`, exactly what we need for name → channel resolve.
 const ARTISTS_FILTER: &str = "EgWKAQIgAWoMEAMQBBAJEAoQDhAV";
+// Same protobuf shape as the other tab filters; the 6th base64 char
+// encodes the entity kind (I=songs, Q=videos, Y=albums, g=artists,
+// o=community playlists). Verified live against InnerTube — the
+// playlists value returns the "Community playlists" shelf whose rows
+// carry `VL…`/`MPSP…` browse ids.
+const PLAYLISTS_FILTER: &str = "EgWKAQIoAWoMEAMQBBAJEAoQDhAV";
+const ALBUMS_FILTER: &str = "EgWKAQIYAWoMEAMQBBAJEAoQDhAV";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MusicVideoType {
@@ -247,10 +254,14 @@ fn track_id(t: &Track) -> String {
 fn parse_card_shelf(card: &Value) -> Option<ParsedRow> {
     let endpoint = card.pointer("/onTap/watchEndpoint")?;
     let video_id = endpoint.get("videoId").and_then(|v| v.as_str())?.to_string();
+    // Unknown/untagged type → treat as user-generated (no album), same
+    // tolerance as parse_row, so a top-result card is never dropped just
+    // for lacking a musicVideoType.
     let mvt = endpoint
         .pointer("/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType")
         .and_then(|v| v.as_str())
-        .and_then(MusicVideoType::from_str)?;
+        .and_then(MusicVideoType::from_str)
+        .unwrap_or(MusicVideoType::UserGenerated);
 
     let title = card
         .pointer("/title/runs/0/text")
@@ -308,13 +319,38 @@ fn parse_card_shelf(card: &Value) -> Option<ParsedRow> {
 
 fn parse_row(item: &Value) -> Option<ParsedRow> {
     let row = item.get("musicResponsiveListItemRenderer")?;
-    let mvt = find_music_video_type(row).and_then(MusicVideoType::from_str)?;
+    // Don't gate on MusicVideoType: smaller/less-popular songs, episodes and
+    // some video results ship rows YT didn't tag (or tagged with a type we
+    // don't enumerate), and dropping them here was exactly why the search
+    // missed tracks that real YT Music shows. Treat an unknown type as a
+    // plain user-generated row (no album column) — we still surface the
+    // track, just without an inferred album.
+    let mvt = find_music_video_type(row)
+        .and_then(MusicVideoType::from_str)
+        .unwrap_or(MusicVideoType::UserGenerated);
+    // The video id can live in any of three spots depending on row shape;
+    // playlistItemData is the common one, the watch endpoints cover search
+    // rows and the play-button overlay. A row with none of these is a
+    // non-track (artist/album/playlist) — skip it.
     let video_id = row
         .pointer("/playlistItemData/videoId")
-        .and_then(|v| v.as_str())?
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            row.pointer("/navigationEndpoint/watchEndpoint/videoId")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            row.pointer(
+                "/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/videoId",
+            )
+            .and_then(|v| v.as_str())
+        })?
         .to_string();
     let thumbnail_url = best_thumbnail(row);
     let title = pick_run(row, 0, 0);
+    if title.is_empty() {
+        return None;
+    }
 
     // Playlist-track rows ship the duration in a separate `fixedColumns`
     // cell. Search-result rows pack everything into flex[1] separated by
@@ -649,4 +685,134 @@ fn parse_mm_ss(s: &str) -> Option<u64> {
     let mins: u64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     let hours: u64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     Some(hours * 3600 + mins * 60 + secs)
+}
+
+/// Non-track entity sections for a search query: playlists, albums and
+/// artists, each from its own filtered search tab. Rendered by the YT
+/// search page as horizontal card shelves above the track list, with
+/// the same tiles (and whole-playlist playback) as Discover.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SearchSections {
+    pub playlists: Vec<super::discover::DiscoverItem>,
+    pub albums: Vec<super::discover::DiscoverItem>,
+    pub artists: Vec<super::discover::DiscoverItem>,
+}
+
+impl SearchSections {
+    pub fn is_empty(&self) -> bool {
+        self.playlists.is_empty() && self.albums.is_empty() && self.artists.is_empty()
+    }
+}
+
+pub async fn music_search_sections(
+    query: &str,
+    cookies: Option<&str>,
+) -> Result<SearchSections, String> {
+    let http = super::innertube::http_client();
+    let (playlists, albums, artists) = tokio::join!(
+        do_search_raw(http, query, Some(PLAYLISTS_FILTER), cookies),
+        do_search_raw(http, query, Some(ALBUMS_FILTER), cookies),
+        do_search_raw(http, query, Some(ARTISTS_FILTER), cookies),
+    );
+    Ok(SearchSections {
+        playlists: walk_entity_rows(&playlists?),
+        albums: walk_entity_rows(&albums?),
+        artists: walk_entity_rows(&artists?),
+    })
+}
+
+/// Walk the filtered-search shelves and lift every row whose browse
+/// endpoint identifies a playlist (`VL…`/`MPSP…`), album (`MPRE…`) or
+/// artist channel (`UC…`) into a [`DiscoverItem`]. Track rows (no
+/// browse endpoint) fall through silently.
+fn walk_entity_rows(resp: &Value) -> Vec<super::discover::DiscoverItem> {
+    let shelves = resp
+        .pointer(
+            "/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents",
+        )
+        .and_then(|v| v.as_array());
+    let Some(shelves) = shelves else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for shelf in shelves {
+        let Some(items) = shelf
+            .pointer("/musicShelfRenderer/contents")
+            .and_then(|v| v.as_array())
+        else {
+            continue;
+        };
+        for item in items {
+            if let Some(parsed) = parse_entity_row(item)
+                && seen.insert(entity_key(&parsed))
+            {
+                out.push(parsed);
+            }
+        }
+    }
+    out
+}
+
+fn entity_key(item: &super::discover::DiscoverItem) -> String {
+    use super::discover::DiscoverItem;
+    match item {
+        DiscoverItem::Playlist { playlist_id, .. } => format!("p:{playlist_id}"),
+        DiscoverItem::Album { browse_id, .. } => format!("al:{browse_id}"),
+        DiscoverItem::Artist { channel_id, .. } => format!("ar:{channel_id}"),
+        DiscoverItem::Song(t) => format!("s:{}", t.path.to_string_lossy()),
+        DiscoverItem::Mood { browse_id, .. } => format!("m:{browse_id}"),
+    }
+}
+
+fn parse_entity_row(item: &Value) -> Option<super::discover::DiscoverItem> {
+    use super::discover::DiscoverItem;
+    let row = item.get("musicResponsiveListItemRenderer")?;
+    let browse_id = row
+        .pointer("/navigationEndpoint/browseEndpoint/browseId")
+        .and_then(|v| v.as_str())?;
+    let title = pick_run(row, 0, 0);
+    if title.is_empty() {
+        return None;
+    }
+    // Column 1 is "Kind • Owner • N songs/views"-style runs; join them
+    // verbatim (separator runs included) for the card subtitle.
+    let subtitle: String = row
+        .pointer("/flexColumns/1/musicResponsiveListItemFlexColumnRenderer/text/runs")
+        .and_then(|v| v.as_array())
+        .map(|runs| {
+            runs.iter()
+                .filter_map(|r| r.get("text").and_then(|t| t.as_str()))
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    let thumbnail = best_thumbnail(row);
+
+    if let Some(id) = browse_id
+        .strip_prefix("VL")
+        .or_else(|| browse_id.strip_prefix("MPSP"))
+    {
+        return Some(DiscoverItem::Playlist {
+            playlist_id: id.to_string(),
+            title,
+            subtitle,
+            thumbnail,
+        });
+    }
+    if browse_id.starts_with("MPRE") {
+        return Some(DiscoverItem::Album {
+            browse_id: browse_id.to_string(),
+            title,
+            subtitle,
+            thumbnail,
+        });
+    }
+    if browse_id.starts_with("UC") {
+        return Some(DiscoverItem::Artist {
+            channel_id: browse_id.to_string(),
+            name: title,
+            thumbnail,
+        });
+    }
+    None
 }

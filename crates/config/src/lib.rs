@@ -535,6 +535,13 @@ pub struct AppConfig {
     pub lastfm_api_secret: String,
     #[serde(default)]
     pub lastfm_session_key: String,
+    /// Spotify import (OAuth PKCE): the user's own app client id from
+    /// the Spotify developer dashboard. Empty = URL-only import.
+    #[serde(default)]
+    pub spotify_client_id: String,
+    /// Rotating PKCE refresh token for the connected Spotify account.
+    #[serde(default)]
+    pub spotify_refresh_token: String,
     #[serde(default = "default_language")]
     pub language: String,
     #[serde(default)]
@@ -616,10 +623,16 @@ pub struct MusicServer {
     /// For `MusicService::YtMusic` only: anonymous mode — no sign-in,
     /// no cookies. Browse + play public surfaces work; Liked / Library
     /// Playlists / follow / like are disabled. Set when the user picks
-    /// "Continue without signing in" (the only option on Windows for
-    /// now — see isolated_profile.rs).
+    /// "Continue without signing in".
     #[serde(default)]
     pub yt_anonymous: bool,
+    /// For `MusicService::YtMusic` only: the session came from manually
+    /// pasted cookies (or a Firefox import) rather than the isolated
+    /// browser sign-in. On session loss, re-auth means pasting fresh
+    /// cookies — never launching a browser. This is the only signed-in
+    /// path on Windows.
+    #[serde(default)]
+    pub yt_manual: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -692,6 +705,7 @@ impl MusicServer {
             id: Some(uuid::Uuid::new_v4().to_string()),
             yt_browser: None,
             yt_anonymous: false,
+            yt_manual: false,
         }
     }
 
@@ -717,6 +731,15 @@ pub struct SavedServer {
     /// click skips the sign-in launch entirely and runs anonymously.
     #[serde(default)]
     pub yt_anonymous: bool,
+    /// Manual-cookie auth marker (see [`MusicServer::yt_manual`]).
+    #[serde(default)]
+    pub yt_manual: bool,
+    /// Last known cookie header for manual-auth servers, so switching
+    /// back to this server restores the session without re-pasting.
+    /// Same plaintext-in-config posture as the active server's
+    /// `access_token`.
+    #[serde(default)]
+    pub yt_saved_cookies: Option<String>,
 }
 
 impl SavedServer {
@@ -728,6 +751,8 @@ impl SavedServer {
             service,
             yt_browser: None,
             yt_anonymous: false,
+            yt_manual: false,
+            yt_saved_cookies: None,
         }
     }
 
@@ -842,6 +867,8 @@ impl Default for AppConfig {
             lastfm_api_key: String::new(),
             lastfm_api_secret: String::new(),
             lastfm_session_key: String::new(),
+            spotify_client_id: String::new(),
+            spotify_refresh_token: String::new(),
             language: default_language(),
             reduce_animations: false,
             auto_check_updates: default_auto_check_updates(),
@@ -916,6 +943,11 @@ impl AppConfig {
                     service: server.service,
                     yt_browser: server.yt_browser,
                     yt_anonymous: server.yt_anonymous,
+                    yt_manual: server.yt_manual,
+                    yt_saved_cookies: server
+                        .yt_manual
+                        .then(|| server.access_token.clone())
+                        .flatten(),
                 });
             }
         }
@@ -990,6 +1022,7 @@ impl Default for MusicServer {
             id: None,
             yt_browser: None,
             yt_anonymous: false,
+            yt_manual: false,
         }
     }
 }

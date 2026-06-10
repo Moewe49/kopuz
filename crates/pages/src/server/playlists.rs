@@ -17,8 +17,10 @@ pub fn JellyfinPlaylists(
     let mut last_fetch_key = use_signal(|| None::<String>);
     let mut fetch_request_id = use_signal(|| 0u64);
     let mut yt_refresh_nonce: Signal<u64> = use_signal(|| 0);
+    let mut show_spotify_import = use_signal(|| false);
     let mut yt_is_syncing = use_signal(|| false);
     let mut yt_synced_so_far: Signal<usize> = use_signal(|| 0);
+    let mut yt_sync_error = use_signal(|| None::<String>);
     let download_queue = use_context::<Signal<DownloadQueue>>();
 
     use_effect(move || {
@@ -166,6 +168,7 @@ pub fn JellyfinPlaylists(
                     eprintln!("[yt-playlists] sync starting");
                     yt_is_syncing.set(true);
                     yt_synced_so_far.set(0);
+                    yt_sync_error.set(None);
                     let yt =
                         ::server::ytmusic::YouTubeMusicClient::with_cookies(token.clone());
                     let list_result = yt.list_playlists().await;
@@ -181,7 +184,10 @@ pub fn JellyfinPlaylists(
                     );
                     let summaries = match list_result {
                         Ok(s) => s,
-                        Err(_) => {
+                        Err(e) => {
+                            // Surface the real reason (expired session, etc.)
+                            // instead of a silently empty list.
+                            yt_sync_error.set(Some(e));
                             yt_is_syncing.set(false);
                             return;
                         }
@@ -360,18 +366,48 @@ pub fn JellyfinPlaylists(
                                     span { "{total} playlists synced" }
                                 }
                             }
-                            button {
-                                class: "px-3 py-1 rounded bg-white/5 hover:bg-white/10 text-white/80 transition-colors disabled:opacity-50",
-                                disabled: syncing,
-                                onclick: move |_| {
-                                    let next = *yt_refresh_nonce.peek() + 1;
-                                    yt_refresh_nonce.set(next);
-                                },
-                                i { class: "fa-solid fa-arrows-rotate mr-1" }
-                                "Refresh"
+                            div {
+                                class: "flex items-center gap-2",
+                                button {
+                                    class: "px-3 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 transition-colors",
+                                    onclick: move |_| show_spotify_import.set(true),
+                                    i { class: "fa-brands fa-spotify mr-1" }
+                                    "{i18n::t(\"spotify_import_from\")}"
+                                }
+                                button {
+                                    class: "px-3 py-1 rounded bg-white/5 hover:bg-white/10 text-white/80 transition-colors disabled:opacity-50",
+                                    disabled: syncing,
+                                    onclick: move |_| {
+                                        let next = *yt_refresh_nonce.peek() + 1;
+                                        yt_refresh_nonce.set(next);
+                                    },
+                                    i { class: "fa-solid fa-arrows-rotate mr-1" }
+                                    "Refresh"
+                                }
                             }
                         }
                     }
+                }
+            }
+
+            if let Some(err) = yt_sync_error.read().clone() {
+                div {
+                    class: "mx-2 mb-3 rounded-lg bg-rose-500/10 border border-rose-400/30 text-rose-200 text-xs p-3",
+                    i { class: "fa-solid fa-triangle-exclamation mr-1" }
+                    "{err}"
+                }
+            }
+
+            if *show_spotify_import.read() {
+                components::spotify_import::SpotifyImportModal {
+                    config: config,
+                    on_close: move |_| show_spotify_import.set(false),
+                    on_imported: move |_| {
+                        // Refetch the YT playlist list so the clone
+                        // shows up in the library immediately.
+                        let next = *yt_refresh_nonce.peek() + 1;
+                        yt_refresh_nonce.set(next);
+                    },
                 }
             }
 

@@ -436,3 +436,57 @@ add_photo = Add photo
 change_photo = Change photo
 remove_photo = Remove photo
 metadata_edit_warning = Empty fields remove that tag. Writes directly to the file — no undo.
+
+# Spotify import
+spotify_import_title = Import from Spotify
+spotify_tab_url = From URL
+spotify_tab_account = Spotify account
+spotify_url_hint = Paste a public Spotify playlist or album link. Public link imports cover roughly the first 100 tracks — connect your account for full playlists.
+spotify_import_button = Import to YouTube Music
+spotify_fetching = Loading from Spotify…
+spotify_matching = Matching on YouTube Music — { $done } / { $total }
+spotify_creating = Creating playlist in your YouTube Music account…
+spotify_adding = Adding tracks — { $done } / { $total }
+spotify_done = { $matched } of { $total } tracks imported. The playlist is now in your YouTube Music library.
+spotify_unmatched = { $count } tracks could not be matched
+spotify_bad_url = That doesn't look like a Spotify playlist or album link.
+spotify_needs_yt_login = Sign in to YouTube Music first — the cloned playlist is created in your YT Music account.
+spotify_connect_hint = Connect your own Spotify app (free) to import private playlists and Liked Songs:
+spotify_connect_step3 = Paste the app's Client ID below and connect.
+spotify_connect_button = Connect Spotify
+spotify_waiting_browser = Waiting for browser sign-in…
+spotify_connected = Spotify connected
+spotify_disconnect = Disconnect
+spotify_load_playlists = Load my playlists
+spotify_liked_songs = Liked Songs
+spotify_not_connected = Spotify is not connected.
+spotify_client_id_missing = Enter your Spotify app Client ID first.
+spotify_import_from = Import from Spotify
+
+# Sleep timer
+sleep_timer = Sleep timer
+sleep_timer_minutes = { $min } minutes
+sleep_timer_off = Turn off
+
+# YT Music manual cookie auth
+yt_auth_browser = Sign in with a browser
+yt_auth_paste = Paste cookies (works on Windows)
+yt_auth_anonymous = Continue without signing in (anonymous)
+yt_anon_explainer = kopuz will use YouTube Music without signing in. You can browse, search, and play — but Liked Music, your library playlists, and following/liking are disabled.
+yt_paste_step1 = Open music.youtube.com in your browser and sign in.
+yt_paste_step2 = Press F12 → Network tab → reload → click any music.youtube.com request.
+yt_paste_step3 = Under Request Headers, copy the full Cookie value and paste it below.
+yt_paste_firefox = Import from Firefox
+yt_paste_firefox_hint = Reads your signed-in YouTube session straight from Firefox/LibreWolf.
+yt_paste_invalid = YouTube rejected these cookies — make sure you copied the full Cookie header from a signed-in music.youtube.com tab.
+yt_manual_session_expired = Your YouTube Music session expired. Paste fresh cookies: Settings → Media servers → re-add YouTube Music.
+
+# SoundCloud search
+soundcloud_searching = Searching…
+soundcloud_search_for = Search SoundCloud for “{ $query }”
+soundcloud_download = Download via yt-dlp
+
+# SoundCloud view + unified search
+soundcloud_hint = Type above to search SoundCloud.
+soundcloud_needs_ytdlp = SoundCloud search needs yt-dlp installed on your system.
+no_results = No results

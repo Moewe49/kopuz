@@ -442,3 +442,55 @@ add_photo = Fotoğraf ekle
 change_photo = Fotoğrafı değiştir
 remove_photo = Fotoğrafı kaldır
 metadata_edit_warning = Boş alanlar o etiketi siler. Doğrudan dosyaya yazılır — geri alınamaz.
+
+# Spotify import + sleep timer
+spotify_import_title = Spotify'dan içe aktar
+spotify_tab_url = URL ile
+spotify_tab_account = Spotify hesabı
+spotify_url_hint = Herkese açık bir Spotify çalma listesi veya albüm bağlantısı yapıştır. Bağlantıyla içe aktarma yaklaşık ilk 100 parçayı kapsar — tam listeler için hesabını bağla.
+spotify_import_button = YouTube Music'e aktar
+spotify_fetching = Spotify'dan yükleniyor…
+spotify_matching = YouTube Music'te eşleştiriliyor — { $done } / { $total }
+spotify_creating = YouTube Music hesabında çalma listesi oluşturuluyor…
+spotify_adding = Parçalar ekleniyor — { $done } / { $total }
+spotify_done = { $total } parçadan { $matched } tanesi aktarıldı. Çalma listesi artık YouTube Music kitaplığında.
+spotify_unmatched = { $count } parça eşleştirilemedi
+spotify_bad_url = Bu bir Spotify çalma listesi veya albüm bağlantısına benzemiyor.
+spotify_needs_yt_login = Önce YouTube Music'te oturum aç — klonlanan liste YT Music hesabında oluşturulur.
+spotify_connect_hint = Özel çalma listelerini ve beğenilen şarkıları aktarmak için kendi (ücretsiz) Spotify uygulamanı bağla:
+spotify_connect_step3 = Uygulamanın Client ID'sini aşağıya yapıştır ve bağlan.
+spotify_connect_button = Spotify'ı bağla
+spotify_waiting_browser = Tarayıcıda oturum açılması bekleniyor…
+spotify_connected = Spotify bağlandı
+spotify_disconnect = Bağlantıyı kes
+spotify_load_playlists = Çalma listelerimi yükle
+spotify_liked_songs = Beğenilen şarkılar
+spotify_not_connected = Spotify bağlı değil.
+spotify_client_id_missing = Önce Spotify uygulamanın Client ID'sini gir.
+spotify_import_from = Spotify'dan içe aktar
+sleep_timer = Uyku zamanlayıcısı
+sleep_timer_minutes = { $min } dakika
+sleep_timer_off = Kapat
+
+# YT Music manual cookie auth
+yt_auth_browser = Tarayıcıyla oturum aç
+yt_auth_paste = Çerezleri yapıştır (Windows'ta çalışır)
+yt_auth_anonymous = Oturum açmadan devam et (anonim)
+yt_anon_explainer = kopuz, YouTube Music'i oturum açmadan kullanır. Gezinebilir, arayabilir ve çalabilirsin — ancak beğenilen müzik, kitaplık listeleri ve takip/beğeni devre dışıdır.
+yt_paste_step1 = Tarayıcında music.youtube.com'u aç ve oturum aç.
+yt_paste_step2 = F12 → Ağ sekmesi → sayfayı yenile → herhangi bir music.youtube.com isteğine tıkla.
+yt_paste_step3 = İstek başlıklarından Cookie değerinin tamamını kopyala ve aşağıya yapıştır.
+yt_paste_firefox = Firefox'tan içe aktar
+yt_paste_firefox_hint = Oturum açık YouTube oturumunu doğrudan Firefox/LibreWolf'tan okur.
+yt_paste_invalid = YouTube bu çerezleri reddetti — oturum açık bir music.youtube.com sekmesinden Cookie başlığının tamamını kopyala.
+yt_manual_session_expired = YouTube Music oturumun sona erdi. Yeni çerez yapıştır: Ayarlar → Medya sunucuları → YouTube Music'i yeniden ekle.
+
+# SoundCloud search
+soundcloud_searching = Aranıyor…
+soundcloud_search_for = SoundCloud'da “{ $query }” ara
+soundcloud_download = yt-dlp ile indir
+
+# SoundCloud view + unified search
+soundcloud_hint = SoundCloud'da aramak için yukarı yazın.
+soundcloud_needs_ytdlp = SoundCloud araması için sisteminizde yt-dlp kurulu olmalı.
+no_results = Sonuç yok
