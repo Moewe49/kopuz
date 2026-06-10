@@ -19,10 +19,15 @@ base64 = "0.22"
 percent-encoding = { workspace = true }
 httpdate = "1"
 hex = "0.4"
-rookie = "0.5"
 web-time = { workspace = true }
 tokio = { workspace = true, features = ["fs", "process", "rt", "sync"] }
 reader = { workspace = true }
+
+# rookie's Chromium cookie decryption (the `get_keys` path) doesn't compile
+# for android/ios, and browser-based sign-in is desktop-only anyway. Mobile
+# uses the manual cookie-paste flow instead.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rookie = "0.5"
 
 [[example]]
 name = "duration_probe"

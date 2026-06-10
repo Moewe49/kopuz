@@ -4,12 +4,23 @@
 //! the right preset config per browser and points rookie at the
 //! `~/.config/kopuz/yt-profile-<id>/Default/Cookies` we own.
 
-use std::path::{Path, PathBuf};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use std::path::PathBuf;
+use std::path::Path;
 
 use config::Browser;
 
+/// Mobile has no isolated-browser sign-in (and `rookie`'s Chromium cookie
+/// decryption doesn't compile for android/ios), so this is a no-op stub
+/// there — mobile users sign in with the manual cookie paste instead.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn extract_from(_browser: Browser, _profile_root: &Path) -> Result<String, String> {
+    Err("browser cookie extraction is not available on mobile".to_string())
+}
+
 /// Extract YouTube cookies from `profile_root` (an isolated kopuz
 /// profile, not the user's main browser). Returns a `Cookie:` header.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub async fn extract_from(browser: Browser, profile_root: &Path) -> Result<String, String> {
     let db_path = pick_cookies_path(profile_root).ok_or_else(|| {
         format!(
@@ -62,6 +73,7 @@ pub async fn extract_from(browser: Browser, profile_root: &Path) -> Result<Strin
     Ok(header)
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn rookie_browser_name(browser: Browser) -> &'static str {
     match browser {
         Browser::Brave => "brave",
@@ -72,6 +84,7 @@ fn rookie_browser_name(browser: Browser) -> &'static str {
     }
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn pick_cookies_path(profile_root: &Path) -> Option<PathBuf> {
     let candidates = [
         profile_root.join("Default").join("Network").join("Cookies"),
@@ -80,6 +93,7 @@ fn pick_cookies_path(profile_root: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn header_safe(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()

@@ -63,7 +63,15 @@ pub fn sanitize_header(input: &str) -> Result<String, String> {
 
 /// Read youtube.com cookies from the user's Firefox (or LibreWolf)
 /// profile. Works on every desktop OS — Firefox has no app-bound
-/// encryption. The user must be signed in to YouTube there.
+/// encryption. The user must be signed in to YouTube there. Not
+/// available on mobile (no desktop browser profile; `rookie` doesn't
+/// build for android/ios).
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn extract_from_firefox() -> Result<String, String> {
+    Err("Firefox cookie import is not available on mobile".to_string())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub async fn extract_from_firefox() -> Result<String, String> {
     let cookies = tokio::task::spawn_blocking(|| {
         let domains = Some(vec!["youtube.com".to_string()]);
