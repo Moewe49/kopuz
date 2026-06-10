@@ -7,11 +7,28 @@
 
 use dioxus::prelude::*;
 use hooks::use_player_controller::PlayerController;
-use kopuz_route::Route;
 use reader::models::Track;
 
 use crate::NavigationController;
 use crate::add_to_playlist::request_add_to_playlist;
+
+/// Navigate to the yt-dlp Downloads page with `url` prefilled. The
+/// Downloads route (`Route::Ytdlp`) doesn't exist on mobile, so this is a
+/// no-op there — and SoundCloud itself only shows when yt-dlp is present,
+/// which mobile never is.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn open_downloads_with(url: String, nav: NavigationController, prefill: Option<YtdlpPrefillUrl>) {
+    if let Some(p) = prefill {
+        let mut sig = p.0;
+        sig.set(Some(url));
+    }
+    let mut route = nav.current_route;
+    route.set(kopuz_route::Route::Ytdlp);
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn open_downloads_with(_url: String, _nav: NavigationController, _prefill: Option<YtdlpPrefillUrl>) {
+}
 
 /// Set by a SoundCloud row's download button; the Downloads (yt-dlp) page
 /// reads it on open and prefills its URL field. Provided once in main.
@@ -138,13 +155,8 @@ fn SoundCloudRow(track: Track) -> Element {
                 onclick: move |e| {
                     e.stop_propagation();
                     let path = track_dl.path.to_string_lossy().to_string();
-                    if let Some(url) = server::soundcloud::permalink_from_path(&path)
-                        && let Some(p) = prefill
-                    {
-                        let mut sig = p.0;
-                        sig.set(Some(url));
-                        let mut route = nav.current_route;
-                        route.set(Route::Ytdlp);
+                    if let Some(url) = server::soundcloud::permalink_from_path(&path) {
+                        open_downloads_with(url, nav, prefill);
                     }
                 },
                 i { class: "fa-solid fa-download text-xs" }

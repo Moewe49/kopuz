@@ -116,7 +116,7 @@ pub fn AlbumDetails(
                 on_cover_click: move |_| {
                     let aid = aid.clone();
                     let _ = &aid;
-                    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+                    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
                     spawn(async move {
                         let file = rfd::AsyncFileDialog::new()
                             .add_filter("Images", &["jpg", "jpeg", "png", "webp"])

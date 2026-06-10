@@ -855,7 +855,7 @@ pub fn JellyfinArtist(
                                 tracks: artist_tracks(),
                                 library,
                                 on_cover_click: move |_| {
-                                    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+                                    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
                                     {
                                         let artist = artist_name.peek().clone();
                                         if artist.is_empty() {

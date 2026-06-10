@@ -1,7 +1,7 @@
 use config::MusicService;
 use dioxus::prelude::*;
 use reader::{Library, PlaylistStore};
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 use rfd::AsyncFileDialog;
 use std::path::PathBuf;
 
@@ -285,7 +285,7 @@ pub fn PlaylistDetail(
             enable_metadata: !is_jellyfin,
             on_cover_click: move |_| {
                 let _ = &pid_for_cover;
-                #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+                #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
                 {
                     let pid = pid_for_cover.clone();
                     spawn(async move {

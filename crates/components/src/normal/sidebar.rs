@@ -13,7 +13,7 @@ struct SidebarItem {
     icon: &'static str,
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 const TOP_MENU: &[SidebarItem] = &[
     SidebarItem {
         key: "home",
@@ -72,7 +72,7 @@ const TOP_MENU: &[SidebarItem] = &[
     },
 ];
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 const TOP_MENU: &[SidebarItem] = &[
     SidebarItem {
         key: "home",

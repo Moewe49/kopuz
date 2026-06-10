@@ -120,7 +120,7 @@ pub fn MetadataModal(props: MetadataModalProps) -> Element {
     };
 
     let pick_cover = move |_| {
-        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
         spawn(async move {
             let file = rfd::AsyncFileDialog::new()
                 .add_filter("Images", &["jpg", "jpeg", "png", "webp", "gif"])

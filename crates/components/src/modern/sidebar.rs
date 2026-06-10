@@ -76,7 +76,7 @@ const SECTIONS: &[(&str, &[NavItem])] = &[
     ),
 ];
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 const TOOL_ITEMS: &[NavItem] = &[
     NavItem {
         key: "ytdlp",
@@ -90,7 +90,7 @@ const TOOL_ITEMS: &[NavItem] = &[
     },
 ];
 
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+#[cfg(any(target_arch = "wasm32", target_os = "android", target_os = "ios"))]
 const TOOL_ITEMS: &[NavItem] = &[NavItem {
     key: "settings",
     route: Route::Settings,

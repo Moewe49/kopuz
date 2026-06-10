@@ -12,5 +12,5 @@ pub mod server;
 pub mod settings;
 #[cfg(not(target_os = "android"))]
 pub mod theme_editor;
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 pub mod ytdlp;

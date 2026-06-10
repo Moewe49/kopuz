@@ -4,7 +4,7 @@ use config::{
 };
 use dioxus::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 use rfd::AsyncFileDialog;
 use scrobble::lastfm;
 
@@ -135,7 +135,7 @@ pub fn MultiDirectoryPicker(
     }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 #[component]
 fn AddFolderButton(on_add: EventHandler<std::path::PathBuf>, add_text: String) -> Element {
     rsx! {
@@ -155,7 +155,7 @@ fn AddFolderButton(on_add: EventHandler<std::path::PathBuf>, add_text: String) -
 
 // Android has no native folder dialog (rfd doesn't work), so request storage permission
 // and auto-detect the system Music directory via JNI, falling back to common paths.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 #[component]
 fn AddFolderButton(on_add: EventHandler<std::path::PathBuf>, add_text: String) -> Element {
     rsx! {

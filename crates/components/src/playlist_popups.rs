@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 use rfd::AsyncFileDialog;
 
 #[component]
@@ -57,7 +57,7 @@ pub fn AddPlaylistPopup(
     }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
 #[component]
 fn AddFolderFromFileManagerButton(
     on_add_folder: EventHandler<String>,
@@ -81,7 +81,7 @@ fn AddFolderFromFileManagerButton(
 }
 
 // Web + Android have no native folder dialog.
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+#[cfg(any(target_arch = "wasm32", target_os = "android", target_os = "ios"))]
 #[component]
 fn AddFolderFromFileManagerButton(
     on_add_folder: EventHandler<String>,

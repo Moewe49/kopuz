@@ -26,7 +26,7 @@ Grab the latest build for your platform from the
 | **Windows** | `*.msi` / `*setup*.exe` | Run `install-windows.ps1` once to add yt-dlp + ffmpeg. |
 | **Linux** | `Kopuz-x86_64.AppImage` | `chmod +x` then run. `install-linux.sh` pulls yt-dlp/ffmpeg/WebKitGTK. |
 | **Android / GrapheneOS** | `Kopuz-android.apk` | Sideload it. No Google Play Services needed — works on GrapheneOS. |
-| **iOS** | `Kopuz-sideloadly.ipa` | Sideload with [Sideloadly](https://sideloadly.io) / AltStore (re-signs on install). |
+| **iOS** | — | Not yet available: the codebase has no iOS port (its mobile paths are Android-specific). The `just ios-ipa-*` recipes exist for anyone who wants to take it on. |
 
 > **Dependencies:** Kopuz uses **yt-dlp** (playback bot-check fallback +
 > SoundCloud search/download) and **ffmpeg** (download remux). The desktop

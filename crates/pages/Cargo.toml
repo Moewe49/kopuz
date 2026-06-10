@@ -11,7 +11,7 @@ directories = { workspace = true }
 dioxus = { workspace = true, features = ["web"] }
 
 # rfd is only used by the yt-dlp page, which is desktop/web only (excluded on Android).
-[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))'.dependencies]
 rfd = { workspace = true }
 
 [dependencies]

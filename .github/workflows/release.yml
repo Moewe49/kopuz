@@ -138,29 +138,9 @@ jobs:
           files: dist/Kopuz-android.apk
           fail_on_unmatched_files: false
 
-  # ---- iOS: unsigned IPA for Sideloadly / AltStore -----------------------
-  ios:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67 # v1.20.0
-      - name: Install dioxus-cli + just
-        run: cargo binstall dioxus-cli@0.7.9 just -y --disable-strategies compile
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build CSS
-        run: |
-          npm install
-          npx @tailwindcss/cli -i ./tailwind.css -o ./crates/kopuz/assets/tailwind.css
-      - name: Build sideloadable IPA
-        run: just ios-ipa-sideloadly
-      - name: Upload to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: target/ipa/Kopuz-sideloadly.ipa
-          fail_on_unmatched_files: false
+  # NOTE: iOS is intentionally not built here. Upstream Kopuz has no iOS
+  # support — its mobile code paths are Android-specific (JNI permissions,
+  # Android music-dir detection) with no iOS equivalents, and rfd's file
+  # dialogs don't build for iOS. Producing a working .ipa needs a dedicated
+  # iOS port. The `just ios-ipa-*` recipes remain for anyone who wants to
+  # take that on.

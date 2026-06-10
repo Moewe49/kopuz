@@ -2544,7 +2544,7 @@ fn App() -> Element {
                                 config: config,
                             }
                         },
-                        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+                        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
                         Route::Ytdlp => rsx! { pages::ytdlp::YtdlpPage { config, trigger_rescan } },
                         #[cfg(target_arch = "wasm32")]
                         Route::Ytdlp => rsx! { pages::settings::Settings { config } },

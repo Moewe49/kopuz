@@ -31,5 +31,5 @@ web-time = { workspace = true }
 
 # Native file dialogs (folder/cover pickers). Not used on web, and rfd doesn't work on
 # Android (which auto-detects the music dir via JNI instead).
-[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))'.dependencies]
 rfd = { workspace = true }
