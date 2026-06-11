@@ -237,6 +237,8 @@ pub fn use_player_task(ctrl: PlayerController) {
         #[cfg(target_os = "macos")]
         let mut last_now_playing_refresh = web_time::Instant::now();
         let mut last_lyrics_prefetch_track: Option<String> = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut last_stream_prefetch_track: Option<String> = None;
 
         async move {
             let mut last_progress_secs: u64 = u64::MAX;
@@ -289,6 +291,35 @@ pub fn use_player_task(ctrl: PlayerController) {
                             path.clone()
                         };
                         config.write().push_recent(id, is_server);
+                    }
+                }
+
+                // Prefetch the NEXT track's stream URL so advancing songs (with
+                // crossfade off) isn't a cold ~3s resolve — it's already cached
+                // by the time the player asks for it. YT tracks only; local and
+                // Jellyfin/Subsonic files don't go through the slow resolve.
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(next) = ctrl.get_track_at(*ctrl.current_queue_index.read() + 1) {
+                    let next_path = next.path.to_string_lossy().to_string();
+                    if next_path.starts_with("ytmusic:")
+                        && last_stream_prefetch_track.as_ref() != Some(&next_path)
+                    {
+                        last_stream_prefetch_track = Some(next_path.clone());
+                        if let Some(vid) =
+                            next_path.split(':').nth(1).filter(|s| !s.is_empty()).map(str::to_string)
+                        {
+                            let token = config
+                                .read()
+                                .server
+                                .as_ref()
+                                .and_then(|s| s.access_token.clone())
+                                .unwrap_or_default();
+                            spawn(async move {
+                                let yt =
+                                    ::server::ytmusic::YouTubeMusicClient::with_cookies(token);
+                                yt.prewarm_stream(&vid).await;
+                            });
+                        }
                     }
                 }
 

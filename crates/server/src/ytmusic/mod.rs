@@ -38,6 +38,36 @@ fn set_preferred_strategy(s: u8) {
     PREFERRED_STRATEGY.store(s, Ordering::Relaxed);
 }
 
+// Resolved-stream cache: video_id → (resolved_at, info). googlevideo URLs are
+// valid for hours; a conservative TTL keeps re-clicks and prefetched next-tracks
+// instant without risking long-stale URLs.
+fn stream_cache() -> &'static std::sync::Mutex<
+    std::collections::HashMap<String, (std::time::Instant, YtStreamInfo)>,
+> {
+    static C: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, YtStreamInfo)>>,
+    > = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+const STREAM_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+
+fn stream_cache_get(video_id: &str) -> Option<YtStreamInfo> {
+    let cache = stream_cache().lock().ok()?;
+    let (at, info) = cache.get(video_id)?;
+    (at.elapsed() < STREAM_CACHE_TTL).then(|| info.clone())
+}
+
+fn stream_cache_put(video_id: &str, info: &YtStreamInfo) {
+    if let Ok(mut cache) = stream_cache().lock() {
+        // Simple memory bound — a music session won't realistically exceed this,
+        // and a full clear just costs a few re-resolves.
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(video_id.to_string(), (std::time::Instant::now(), info.clone()));
+    }
+}
+
 pub const SOURCE_PREFIX: &str = "ytmusic";
 
 /// Surfaced by auth-only operations (like/unlike, add-to-playlist,
@@ -270,7 +300,29 @@ impl YouTubeMusicClient {
     /// `yt-dlp` is installed, fall back to it (it carries the full
     /// bot-check machinery and uses our cookies). yt-dlp is never the
     /// primary path, so binary-free installs are unaffected.
+    /// Resolve a playable stream for `video_id`, served from a short-lived cache
+    /// when possible. Caching makes re-clicks instant and — paired with the
+    /// player's next-track prefetch — removes the gap between songs. googlevideo
+    /// URLs stay valid for hours, so a conservative TTL is safe; a stale URL
+    /// would just fail playback and trigger a fresh resolve.
     pub async fn get_stream(&self, video_id: &str) -> Result<YtStreamInfo, String> {
+        if let Some(info) = stream_cache_get(video_id) {
+            return Ok(info);
+        }
+        let info = self.get_stream_uncached(video_id).await?;
+        stream_cache_put(video_id, &info);
+        Ok(info)
+    }
+
+    /// Prefetch and cache a stream so the next play is instant. Errors are
+    /// swallowed — it's a best-effort warm-up.
+    pub async fn prewarm_stream(&self, video_id: &str) {
+        if stream_cache_get(video_id).is_none() {
+            let _ = self.get_stream(video_id).await;
+        }
+    }
+
+    async fn get_stream_uncached(&self, video_id: &str) -> Result<YtStreamInfo, String> {
         let ytdlp = ytdlp_resolve::find_ytdlp().is_some();
 
         // Latency: once we learn which path actually works for this session,
