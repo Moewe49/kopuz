@@ -1728,6 +1728,13 @@ impl PlayerController {
             }
             _ => {
                 if idx + 1 >= queue_len && loop_mode == LoopMode::None {
+                    // End of the queue. With autoradio on, seed a YT Music radio
+                    // from the last song and keep playing in the same vein
+                    // (genre/taste) instead of just stopping.
+                    if self.try_start_autoradio(idx) {
+                        self.skip_in_progress.set(false);
+                        return;
+                    }
                     self.skip_in_progress.set(false);
                     self.player.write().pause();
                     self.is_playing.set(false);
@@ -1737,6 +1744,60 @@ impl PlayerController {
                 self.play_track_with_history(next_idx, allow_crossfade);
             }
         }
+    }
+
+    /// At the end of the queue, kick off a YT Music radio mix seeded from the
+    /// track at `idx` (a "Staub → similar songs" continuation). Returns true if
+    /// a radio was started (so the caller shouldn't pause). YT tracks only.
+    fn try_start_autoradio(&mut self, idx: usize) -> bool {
+        if !self.config.peek().autoradio {
+            return false;
+        }
+        let Some(track) = self.get_track_at(idx) else {
+            return false;
+        };
+        let path = track.path.to_string_lossy();
+        let Some(video_id) = path
+            .strip_prefix("ytmusic:")
+            .and_then(|rest| rest.split(':').next())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+        else {
+            return false;
+        };
+        let cookies = self
+            .config
+            .peek()
+            .server
+            .as_ref()
+            .and_then(|s| s.access_token.clone())
+            .unwrap_or_default();
+        let mut ctrl = *self;
+        ctrl.is_loading.set(true);
+        spawn(async move {
+            let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+            match yt.start_mix(&video_id).await {
+                Ok(mut tracks) if !tracks.is_empty() => {
+                    // RDAMVM radios begin WITH the seed song (which just
+                    // finished) — drop it so we continue with fresh tracks.
+                    if tracks
+                        .first()
+                        .map(|t| t.path.to_string_lossy().contains(&video_id))
+                        .unwrap_or(false)
+                        && tracks.len() > 1
+                    {
+                        tracks.remove(0);
+                    }
+                    ctrl.play_queue_linear(tracks);
+                }
+                _ => {
+                    ctrl.is_loading.set(false);
+                    ctrl.player.write().pause();
+                    ctrl.is_playing.set(false);
+                }
+            }
+        });
+        true
     }
 
     fn play_track_with_history(&mut self, track_idx: usize, allow_crossfade: bool) {

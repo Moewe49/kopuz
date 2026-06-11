@@ -680,6 +680,15 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                                 }
                             }
                         }
+                        SettingItem {
+                            title: i18n::t("autoradio_setting").to_string(),
+                            control: rsx! {
+                                ToggleSetting {
+                                    enabled: config.read().autoradio,
+                                    on_change: move |val| config.write().autoradio = val,
+                                }
+                            }
+                        }
                         if !cfg!(target_arch = "wasm32") {
                             SettingItem {
                                 title: i18n::t("auto_check_updates").to_string(),

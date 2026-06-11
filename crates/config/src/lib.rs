@@ -569,6 +569,10 @@ pub struct AppConfig {
     pub reduce_animations: bool,
     #[serde(default = "default_auto_check_updates")]
     pub auto_check_updates: bool,
+    /// When the queue ends, automatically continue with a YT Music radio mix
+    /// seeded from the last song (keeps the genre/taste going). On by default.
+    #[serde(default = "default_true")]
+    pub autoradio: bool,
     #[serde(default = "default_show_source_toggle")]
     pub show_source_toggle: bool,
     #[serde(default = "default_sidebar_order")]
@@ -897,6 +901,7 @@ impl Default for AppConfig {
             language: default_language(),
             reduce_animations: false,
             auto_check_updates: default_auto_check_updates(),
+            autoradio: true,
             show_source_toggle: default_show_source_toggle(),
             sidebar_order: default_sidebar_order(),
             volume: default_volume(),

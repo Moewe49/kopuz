@@ -536,3 +536,5 @@ yt_login_title = Sign in to YouTube Music
 yt_login_body = A browser window has opened. Sign in to your YouTube account there, then click Done — kopuz will grab the session and keep you signed in automatically from now on.
 yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
+
+autoradio_setting = Autoplay radio when the queue ends

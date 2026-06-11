@@ -532,3 +532,5 @@ yt_login_title = Bei YouTube Music anmelden
 yt_login_body = Es hat sich ein Browserfenster geöffnet. Melde dich dort bei deinem YouTube-Konto an und klicke dann auf „Fertig“ — Kopuz übernimmt die Sitzung und hält dich ab jetzt automatisch angemeldet.
 yt_login_done = Fertig – ich bin angemeldet
 yt_login_not_done = Noch nicht angemeldet — bitte im Browserfenster fertig anmelden und erneut auf „Fertig“ klicken.
+
+autoradio_setting = Autoplay radio when the queue ends
