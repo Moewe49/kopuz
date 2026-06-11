@@ -109,12 +109,28 @@ pub fn PlaylistDetail(
                                 let yt = server::ytmusic::YouTubeMusicClient::with_cookies(
                                     token.clone(),
                                 );
-                                if let Ok(yt_tracks) =
-                                    yt.get_playlist_entries(&pid_clone).await
-                                {
-                                    tracks.set(yt_tracks);
-                                    has_loaded_jellyfin_tracks.set(true);
+                                // Show the YT tracks, then append any external
+                                // (SoundCloud) overlay tracks attached to this
+                                // playlist so they appear + queue even though YT
+                                // can't store them. Overlay still shows if the
+                                // YT fetch fails (e.g. expired session).
+                                let mut merged =
+                                    yt.get_playlist_entries(&pid_clone).await.unwrap_or_default();
+                                let overlay = playlist_store
+                                    .peek()
+                                    .external_tracks
+                                    .get(&pid_clone)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                for p in overlay {
+                                    if let Some(t) = server::soundcloud::track_from_path(
+                                        &p.to_string_lossy(),
+                                    ) {
+                                        merged.push(t);
+                                    }
                                 }
+                                tracks.set(merged);
+                                has_loaded_jellyfin_tracks.set(true);
                             }
                             MusicService::Jellyfin => {
                                 let remote = server::jellyfin::JellyfinClient::new(

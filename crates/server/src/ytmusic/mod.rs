@@ -19,6 +19,22 @@ pub mod verify_session_keepalive;
 
 pub use player::YtStreamInfo;
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
+// Remembered "what last resolved a stream" so repeat tracks skip dead ends.
+const STRAT_UNKNOWN: u8 = 0;
+const STRAT_NATIVE: u8 = 1;
+const STRAT_YTDLP_COOKIES: u8 = 2;
+const STRAT_YTDLP_ANON: u8 = 3;
+static PREFERRED_STRATEGY: AtomicU8 = AtomicU8::new(STRAT_UNKNOWN);
+
+fn preferred_strategy() -> u8 {
+    PREFERRED_STRATEGY.load(Ordering::Relaxed)
+}
+fn set_preferred_strategy(s: u8) {
+    PREFERRED_STRATEGY.store(s, Ordering::Relaxed);
+}
+
 pub const SOURCE_PREFIX: &str = "ytmusic";
 
 /// Surfaced by auth-only operations (like/unlike, add-to-playlist,
@@ -237,12 +253,29 @@ impl YouTubeMusicClient {
     /// bot-check machinery and uses our cookies). yt-dlp is never the
     /// primary path, so binary-free installs are unaffected.
     pub async fn get_stream(&self, video_id: &str) -> Result<YtStreamInfo, String> {
+        let ytdlp = ytdlp_resolve::find_ytdlp().is_some();
+
+        // Latency: once we learn which path actually works for this session,
+        // try it FIRST so every later track skips the slow dead ends. A
+        // bot-flagged session fails the whole native chain (decipher + PO mint
+        // + ANDROID_VR + bare clients, seconds each) every single track — so
+        // after the first track resolves via anonymous yt-dlp we go straight
+        // there. The full chain still runs as a fallback if the shortcut fails.
+        if ytdlp && preferred_strategy() == STRAT_YTDLP_ANON {
+            if let Ok(info) = ytdlp_resolve::resolve(video_id, None).await {
+                return Ok(info);
+            }
+        }
+
         let native = player::resolve(video_id, self.cookies.as_deref()).await;
         let native_err = match native {
-            Ok(info) => return Ok(info),
+            Ok(info) => {
+                set_preferred_strategy(STRAT_NATIVE);
+                return Ok(info);
+            }
             Err(e) => e,
         };
-        if ytdlp_resolve::find_ytdlp().is_none() {
+        if !ytdlp {
             return Err(native_err);
         }
         eprintln!("[yt-player] native resolve failed ({native_err}) — trying yt-dlp fallback");
@@ -258,7 +291,10 @@ impl YouTubeMusicClient {
         let mut ydl_err = None;
         if self.cookies.is_some() && !bot_flagged {
             match ytdlp_resolve::resolve(video_id, self.cookies.as_deref()).await {
-                Ok(info) => return Ok(info),
+                Ok(info) => {
+                    set_preferred_strategy(STRAT_YTDLP_COOKIES);
+                    return Ok(info);
+                }
                 Err(e) => {
                     eprintln!("[yt-player] yt-dlp (signed-in) failed ({e}) — retrying anonymously");
                     ydl_err = Some(e);
@@ -266,7 +302,10 @@ impl YouTubeMusicClient {
             }
         }
         match ytdlp_resolve::resolve(video_id, None).await {
-            Ok(info) => Ok(info),
+            Ok(info) => {
+                set_preferred_strategy(STRAT_YTDLP_ANON);
+                Ok(info)
+            }
             Err(anon_err) => Err(format!(
                 "{native_err}; yt-dlp fallback also failed: {}",
                 ydl_err.unwrap_or(anon_err)

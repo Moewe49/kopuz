@@ -231,6 +231,13 @@ pub struct PlaylistStore {
     pub jellyfin_playlists: Vec<JellyfinPlaylist>,
     #[serde(default)]
     pub folders: Vec<PlaylistFolder>,
+    /// Non-server tracks (e.g. SoundCloud) attached to a playlist that can't
+    /// hold them server-side — keyed by playlist id (a YT/Jellyfin playlist
+    /// id or "LM"). Each value is a list of self-describing track paths. The
+    /// playlist view merges these in so a SoundCloud song shows and plays
+    /// inside a YouTube Music playlist even though YT can't store it.
+    #[serde(default)]
+    pub external_tracks: std::collections::HashMap<String, Vec<PathBuf>>,
 }
 
 impl PlaylistStore {

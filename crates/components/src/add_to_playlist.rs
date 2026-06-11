@@ -51,12 +51,23 @@ pub fn AddToPlaylistHost(
         return rsx! {};
     };
 
-    // SoundCloud tracks always go to LOCAL playlists: the server backends
-    // (YT/Jellyfin/Subsonic) only accept their own catalog ids, but a local
-    // playlist stores the self-describing path and resolves it at play time —
-    // so the SoundCloud song really lives in the playlist and queues up.
+    // SoundCloud (and any non-server) tracks can't be stored server-side —
+    // YT/Jellyfin/Subsonic only accept their own catalog ids. So the modal
+    // still lists the ACTIVE backend's playlists (so you can drop a SoundCloud
+    // song into a YouTube Music playlist), but the add is routed to a local
+    // overlay keyed by that playlist id. The playlist view merges the overlay
+    // back in, so the song shows + plays inside the YT playlist anyway.
     let is_external = server::soundcloud::is_soundcloud_path(&track.path.to_string_lossy());
-    let is_server = !is_external && config.read().active_source == MusicSource::Server;
+    let is_server = config.read().active_source == MusicSource::Server;
+
+    // Attach an external track to a (server or local) playlist via the overlay.
+    let mut add_external = move |playlist_id: String, track: Track| {
+        let mut store = playlist_store.write();
+        let entry = store.external_tracks.entry(playlist_id).or_default();
+        if !entry.contains(&track.path) {
+            entry.push(track.path.clone());
+        }
+    };
 
     let mut add_local = move |playlist_id: String, track: Track| {
         let mut store = playlist_store.write();
@@ -176,7 +187,11 @@ pub fn AddToPlaylistHost(
             is_jellyfin: is_server,
             on_close: move |_| pending.set(None),
             on_add_to_playlist: move |playlist_id: String| {
-                if is_server {
+                if is_external {
+                    // Can't live in the server catalog → store in the overlay
+                    // for this playlist id (works for both server and local).
+                    add_external(playlist_id, track_for_add.clone());
+                } else if is_server {
                     server_add(playlist_id, track_for_add.clone());
                 } else {
                     add_local(playlist_id, track_for_add.clone());
@@ -184,7 +199,11 @@ pub fn AddToPlaylistHost(
                 pending.set(None);
             },
             on_create_playlist: move |name: String| {
-                if is_server {
+                if is_external {
+                    // A brand-new playlist holding only an external track is a
+                    // local playlist (no point creating an empty server one).
+                    create_local(name, track_for_create.clone());
+                } else if is_server {
                     server_create(name, track_for_create.clone());
                 } else {
                     create_local(name, track_for_create.clone());

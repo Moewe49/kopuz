@@ -44,10 +44,14 @@ pub async fn tick(cookies: &str) -> Result<Option<String>, String> {
         let Some((name, value, expired)) = parse_set_cookie(s, now) else {
             continue;
         };
+        // NEVER remove cookies. Earlier this honoured tombstones and deleted
+        // entries — but YouTube routinely tombstones-then-reissues cookies
+        // (e.g. SIDCC) within one response, and a dropped auth cookie
+        // (SAPISID/SID/__Secure-*PSID) silently kills the whole session a few
+        // minutes after sign-in. We only add new cookies and refresh the
+        // value of existing ones; a stale leftover is harmless and gets
+        // overwritten on the next rotation.
         if expired {
-            if jar.remove(&name).is_some() {
-                changed = true;
-            }
             continue;
         }
         if jar.get(&name).map(String::as_str) != Some(value.as_str()) {
