@@ -12,7 +12,11 @@ pub type YtSections = server::ytmusic::search::SearchSections;
 #[derive(Clone, Copy)]
 pub struct SearchData {
     pub genres: Memo<Vec<(String, Option<utils::CoverUrl>)>>,
-    pub search_results: Resource<Option<(TrackRes, AlbumRes, YtSections)>>,
+    /// Tracks + albums — the fast path, rendered as soon as it's ready.
+    pub tracks: Resource<Option<(TrackRes, AlbumRes)>>,
+    /// YT Music playlist/album/artist shelves — loaded separately so they don't
+    /// hold up the track list. Empty for local / Jellyfin / Subsonic.
+    pub sections: Resource<YtSections>,
     pub search_query: Signal<String>,
 }
 
@@ -20,7 +24,7 @@ fn search_local(
     query: &str,
     tracks: Vec<Track>,
     albums: Vec<Album>,
-) -> Option<(TrackRes, AlbumRes, YtSections)> {
+) -> Option<(TrackRes, AlbumRes)> {
     let album_map: std::collections::HashMap<&String, &Album> =
         albums.iter().map(|a| (&a.id, a)).collect();
 
@@ -64,7 +68,7 @@ fn search_local(
         })
         .collect();
 
-    Some((result_tracks, result_albums, YtSections::default()))
+    Some((result_tracks, result_albums))
 }
 
 fn search_server(
@@ -73,7 +77,7 @@ fn search_server(
     albums: Vec<Album>,
     active_service: Option<MusicService>,
     server: Option<config::MusicServer>,
-) -> Option<(TrackRes, AlbumRes, YtSections)> {
+) -> Option<(TrackRes, AlbumRes)> {
     let result_tracks: TrackRes = tracks
         .iter()
         .filter(|t| {
@@ -169,23 +173,23 @@ fn search_server(
         })
         .collect();
 
-    Some((result_tracks, result_albums, YtSections::default()))
+    Some((result_tracks, result_albums))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn run_search(
+async fn run_track_search(
     query: String,
     tracks: Vec<Track>,
     albums: Vec<Album>,
     active_source: MusicSource,
     active_service: Option<MusicService>,
     server: Option<config::MusicServer>,
-) -> Option<(TrackRes, AlbumRes, YtSections)> {
+) -> Option<(TrackRes, AlbumRes)> {
     if matches!(active_source, MusicSource::Server)
         && matches!(active_service, Some(MusicService::YtMusic))
     {
         let cookies = server.as_ref().and_then(|s| s.access_token.clone());
-        return search_ytmusic(&query, cookies).await;
+        return search_ytmusic_tracks(&query, cookies).await;
     }
     tokio::task::spawn_blocking(move || match active_source {
         MusicSource::Local => search_local(&query, tracks, albums),
@@ -197,27 +201,22 @@ async fn run_search(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn search_ytmusic(
+async fn search_ytmusic_tracks(
     query: &str,
     cookies: Option<String>,
-) -> Option<(TrackRes, AlbumRes, YtSections)> {
+) -> Option<(TrackRes, AlbumRes)> {
     if query.trim().is_empty() {
-        return Some((Vec::new(), Vec::new(), YtSections::default()));
+        return Some((Vec::new(), Vec::new()));
     }
     let client = match cookies {
         Some(c) if !c.is_empty() => server::ytmusic::YouTubeMusicClient::with_cookies(c),
         _ => server::ytmusic::YouTubeMusicClient::new(),
     };
-    // Tracks and entity sections hit different filtered tabs — fetch
-    // them concurrently. A sections failure must not take down track
-    // search, so it degrades to empty shelves.
-    let (tracks, sections) = tokio::join!(client.search_tracks(query), client.search_sections(query));
-    let tracks = tracks
+    let tracks = client
+        .search_tracks(query)
+        .await
         .map_err(|e| eprintln!("YT Music search error: {e}"))
         .ok()?;
-    let sections = sections
-        .map_err(|e| eprintln!("YT Music section search error: {e}"))
-        .unwrap_or_default();
     // Each track's `album_id` carries its YT thumbnail as
     // `ytmusic:_:urlhex_HEX`; the standard fallback resolver decodes
     // that embedded URL when we pass an empty server_url.
@@ -238,18 +237,36 @@ async fn search_ytmusic(
             (t, cover_url)
         })
         .collect();
-    Some((result_tracks, Vec::new(), sections))
+    Some((result_tracks, Vec::new()))
+}
+
+/// Fetch only the YT Music entity shelves (playlists / albums / artists).
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_yt_sections(query: &str, cookies: Option<String>) -> YtSections {
+    if query.trim().is_empty() {
+        return YtSections::default();
+    }
+    let client = match cookies {
+        Some(c) if !c.is_empty() => server::ytmusic::YouTubeMusicClient::with_cookies(c),
+        _ => server::ytmusic::YouTubeMusicClient::new(),
+    };
+    client
+        .search_sections(query)
+        .await
+        .map_err(|e| eprintln!("YT Music section search error: {e}"))
+        .unwrap_or_default()
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn run_search(
+async fn run_track_search(
     query: String,
     tracks: Vec<Track>,
     albums: Vec<Album>,
     active_source: MusicSource,
     active_service: Option<MusicService>,
     server: Option<config::MusicServer>,
-) -> Option<(TrackRes, AlbumRes, YtSections)> {
+) -> Option<(TrackRes, AlbumRes)> {
+    let _ = (active_service, server);
     match active_source {
         MusicSource::Local => search_local(&query, tracks, albums),
         MusicSource::Server => search_server(&query, tracks, albums, active_service, server),
@@ -347,35 +364,64 @@ pub fn use_search_data(
         result
     });
 
-    let search_results = use_resource(move || {
-        let query = search_query.read().to_lowercase();
+    // Debounce: typing fires a search per keystroke, and each YT search is
+    // several InnerTube calls — without debouncing, "creepy nuts" launches a
+    // storm that saturates the network and makes results crawl in. Only the
+    // settled query (unchanged for ~280 ms) actually runs.
+    let mut debounced = use_signal(String::new);
+    use_effect(move || {
+        let q = search_query.read().to_lowercase();
+        spawn(async move {
+            utils::sleep(std::time::Duration::from_millis(280)).await;
+            if search_query.peek().to_lowercase() == q {
+                debounced.set(q);
+            }
+        });
+    });
+
+    // Tracks + albums — the fast path. Rendered as soon as it lands.
+    let tracks = use_resource(move || {
+        let query = debounced.read().clone();
         let (active_source, active_service, server) = {
             let conf = config.read();
-            (
-                conf.active_source.clone(),
-                conf.active_service(),
-                conf.server.clone(),
-            )
+            (conf.active_source.clone(), conf.active_service(), conf.server.clone())
         };
-        let (tracks, albums) = {
+        let (tr, al) = {
             let lib = library.read();
             match &active_source {
                 MusicSource::Local => (lib.tracks.clone(), lib.albums.clone()),
                 MusicSource::Server => (lib.jellyfin_tracks.clone(), lib.jellyfin_albums.clone()),
             }
         };
-
         async move {
             if query.trim().is_empty() {
                 return None;
             }
-            run_search(query, tracks, albums, active_source, active_service, server).await
+            run_track_search(query, tr, al, active_source, active_service, server).await
+        }
+    });
+
+    // YT entity shelves — loaded independently so they never delay the tracks.
+    let sections = use_resource(move || {
+        let query = debounced.read().clone();
+        let conf = config.read();
+        let is_yt = conf.active_source == MusicSource::Server
+            && conf.active_service() == Some(MusicService::YtMusic);
+        let cookies = conf.server.as_ref().and_then(|s| s.access_token.clone());
+        async move {
+            let _ = (&cookies, is_yt);
+            #[cfg(not(target_arch = "wasm32"))]
+            if is_yt && !query.trim().is_empty() {
+                return fetch_yt_sections(&query, cookies).await;
+            }
+            YtSections::default()
         }
     });
 
     SearchData {
         genres,
-        search_results,
+        tracks,
+        sections,
         search_query,
     }
 }

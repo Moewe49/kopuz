@@ -84,6 +84,10 @@ pub fn JellyfinSearch(
     });
 
     let is_modern = config.read().ui_style == UiStyle::Modern;
+    // Tracks render as soon as they're ready; the entity shelves load
+    // independently and fill in when they arrive (no longer gating the tracks).
+    let tracks_ready = data.tracks.cloned().flatten();
+    let yt_sections = data.sections.cloned().unwrap_or_default();
 
     rsx! {
         div {
@@ -229,7 +233,7 @@ pub fn JellyfinSearch(
             } else {
                 SearchBar { search_query: data.search_query }
 
-                if let Some(Some((tracks, albums, yt_sections))) = data.search_results.cloned() {
+                if let Some((tracks, albums)) = tracks_ready.clone() {
                     // YT Music entity shelves — whole playlists, albums
                     // and artists straight from the search bar, with the
                     // same play-all tiles as Discover. The shelf block is
