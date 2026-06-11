@@ -264,6 +264,7 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
             let method = *yt_auth.peek();
             let is_anon = is_ytmusic && method == YtAuthMethod::Anonymous;
             let is_paste = is_ytmusic && method == YtAuthMethod::PasteCookies;
+            let is_oauth = is_ytmusic && method == YtAuthMethod::OAuth;
 
             // The paste flow validates BEFORE the popup closes so a bad
             // paste gets immediate inline feedback instead of a dead
@@ -284,6 +285,17 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 }
                 pasted_header = Some(header);
             }
+            // OAuth: the device flow already ran in the popup and stashed the
+            // `oauth:<access>` sentinel in yt_pasted_cookies (+ the refresh
+            // token in config). Require it to be present.
+            if is_oauth {
+                let sentinel = yt_pasted_cookies.peek().clone();
+                if !sentinel.starts_with("oauth:") {
+                    error.set(Some(i18n::t("yt_oauth_required")));
+                    return;
+                }
+                pasted_header = Some(sentinel);
+            }
 
             let mut new_server = config::MusicServer::new_with_service(
                 display_name,
@@ -291,7 +303,7 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 selected_service,
             );
             new_server.yt_anonymous = is_anon;
-            new_server.yt_manual = is_paste;
+            new_server.yt_manual = is_paste || is_oauth;
             if is_anon {
                 // Mark anonymous mode at the server level. Empty access
                 // token + yt_anonymous=true is what get_stream /
@@ -317,7 +329,7 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 service: new_server.service,
                 yt_browser: uses_browser.then(|| *yt_browser.peek()),
                 yt_anonymous: is_anon,
-                yt_manual: is_paste,
+                yt_manual: is_paste || is_oauth,
                 yt_saved_cookies: pasted_header,
             };
             {

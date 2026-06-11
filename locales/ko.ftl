@@ -500,3 +500,13 @@ added_to_playlist_toast = “{ $name }”에 추가됨
 
 # YT auto-refresh
 yt_auto_refresh_label = 자동으로 로그인 유지 — 시작 시 로그인된 브라우저에서 쿠키를 다시 읽습니다(Firefox에서 YouTube를 열어두세요; F12 불필요).
+
+# YT OAuth device-code sign-in
+yt_auth_oauth = Sign in with Google (recommended — stays signed in, no browser needed)
+yt_oauth_explainer = Sign in once in your browser. kopuz then keeps you signed in automatically with no browser kept open and no cookies to re-paste — ideal for low-resource background playback.
+yt_oauth_button = Sign in with Google
+yt_oauth_enter_code = Open the page and enter this code:
+yt_oauth_waiting = Waiting for you to authorize…
+yt_oauth_done = Signed in! Click Save to finish.
+yt_oauth_timeout = The sign-in code expired — start again.
+yt_oauth_required = Please sign in with Google first.

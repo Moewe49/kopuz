@@ -253,6 +253,46 @@ async fn run_auto_refresh(mut config: Signal<config::AppConfig>) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+/// Mint a fresh OAuth access token from the stored refresh token and adopt it
+/// as the active YT session (`oauth:<access>`). Runs on boot and periodically
+/// (access tokens live ~1h). Browser-free, so it works on every platform —
+/// this is the "set up once, always signed in" path.
+async fn run_oauth_refresh(mut config: Signal<config::AppConfig>) {
+    let (active_yt, refresh_token) = {
+        let c = config.peek();
+        (
+            c.server
+                .as_ref()
+                .map(|s| s.service == config::MusicService::YtMusic)
+                .unwrap_or(false),
+            c.yt_oauth_refresh_token.clone(),
+        )
+    };
+    if !active_yt || refresh_token.is_empty() {
+        return;
+    }
+    match server::ytmusic::oauth::refresh(&refresh_token).await {
+        Ok((access, _ttl)) => {
+            let sentinel = server::ytmusic::oauth::to_sentinel(&access);
+            let mut cfg = config.write();
+            if let Some(srv) = cfg.server.as_mut() {
+                srv.access_token = Some(sentinel.clone());
+                srv.yt_manual = true;
+            }
+            let saved_id = cfg.server.as_ref().and_then(|s| s.id.clone());
+            if let Some(id) = saved_id
+                && let Some(saved) = cfg.servers.iter_mut().find(|s| s.id == id)
+            {
+                saved.yt_manual = true;
+                saved.yt_saved_cookies = Some(sentinel);
+            }
+            eprintln!("[yt-oauth] refreshed access token");
+        }
+        Err(e) => eprintln!("[yt-oauth] token refresh failed: {e}"),
+    }
+}
+
 async fn run_rotation(mut config: Signal<config::AppConfig>) {
     let cookies = match config.peek().server.as_ref() {
         Some(s) if s.service == config::MusicService::YtMusic => s.access_token.clone(),
@@ -1349,6 +1389,40 @@ fn App() -> Element {
                     return;
                 }
                 run_auto_refresh(config).await;
+            }
+        });
+    });
+
+    // OAuth "always signed in": when a refresh token is stored, mint a fresh
+    // access token on boot and every 45 min (tokens live ~1h). No browser, so
+    // this runs on every platform including mobile.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut yt_oauth_started = use_signal(|| false);
+    #[cfg(not(target_arch = "wasm32"))]
+    use_effect(move || {
+        if !*initial_load_done.read() {
+            return;
+        }
+        let want = !config.read().yt_oauth_refresh_token.is_empty()
+            && config
+                .read()
+                .server
+                .as_ref()
+                .map(|s| s.service == config::MusicService::YtMusic)
+                .unwrap_or(false);
+        if !want || *yt_oauth_started.peek() {
+            return;
+        }
+        yt_oauth_started.set(true);
+        spawn(async move {
+            run_oauth_refresh(config).await;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(45 * 60)).await;
+                if config.peek().yt_oauth_refresh_token.is_empty() {
+                    yt_oauth_started.set(false);
+                    return;
+                }
+                run_oauth_refresh(config).await;
             }
         });
     });

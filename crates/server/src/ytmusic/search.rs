@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 
 use super::SOURCE_PREFIX;
 use super::clients::WEB_REMIX;
-use super::innertube::sapisid_hash;
 
 const ORIGIN_YT_MUSIC: &str = "https://music.youtube.com";
 const SONGS_FILTER: &str = "EgWKAQIIAWoMEAMQBBAJEAoQDhAV";
@@ -65,15 +64,19 @@ pub async fn music_search_tracks(
     cookies: Option<&str>,
 ) -> Result<Vec<Track>, String> {
     let http = super::innertube::http_client();
+    // Each shelf is fetched independently and tolerantly: a single failed or
+    // empty sub-search (transient HTTP hiccup, or expired cookies poisoning
+    // the signed-in request) must NOT wipe out the whole Tracks list — that
+    // was the "tracks just sometimes don't show" bug. YT Music search needs
+    // no auth, so on a failed/empty cookie'd call we retry anonymously.
     let (top, songs, videos) = tokio::join!(
-        do_search(http, query, None, cookies),
-        do_search(http, query, Some(SONGS_FILTER), cookies),
-        do_search(http, query, Some(VIDEOS_FILTER), cookies),
+        resilient_search(http, query, None, cookies),
+        resilient_search(http, query, Some(SONGS_FILTER), cookies),
+        resilient_search(http, query, Some(VIDEOS_FILTER), cookies),
     );
 
-    let top = top?;
-    let mut songs = songs?.into_iter();
-    let mut videos = videos?.into_iter();
+    let mut songs = songs.into_iter();
+    let mut videos = videos.into_iter();
 
     let mut out: Vec<Track> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -173,10 +176,7 @@ async fn do_search_raw(
         .header("Referer", format!("{ORIGIN_YT_MUSIC}/"))
         .json(&body);
     if let Some(c) = cookies {
-        req = req.header("Cookie", c);
-        if let Some(auth) = sapisid_hash(c, ORIGIN_YT_MUSIC) {
-            req = req.header("Authorization", auth);
-        }
+        req = super::innertube::apply_auth(req, c, ORIGIN_YT_MUSIC);
     }
     req.send()
         .await
@@ -196,6 +196,31 @@ async fn do_search(
 ) -> Result<Vec<Track>, String> {
     let resp = do_search_raw(http, query, params, cookies).await?;
     Ok(walk_tracks(&resp))
+}
+
+/// Fault-tolerant single-shelf search: never returns an error, and never lets
+/// expired cookies hide results. Tries the signed-in request first (for
+/// personalized ranking); if it errors or comes back empty, falls back to an
+/// anonymous request (search is a public surface). Returns whatever it can.
+async fn resilient_search(
+    http: &reqwest::Client,
+    query: &str,
+    params: Option<&str>,
+    cookies: Option<&str>,
+) -> Vec<Track> {
+    let primary = do_search(http, query, params, cookies).await;
+    if let Ok(tracks) = &primary
+        && !tracks.is_empty()
+    {
+        return primary.unwrap_or_default();
+    }
+    // Cookie'd call failed or was empty — retry without auth if we had cookies,
+    // otherwise just retry once (covers transient network blips).
+    let retry_cookies = if cookies.is_some() { None } else { cookies };
+    do_search(http, query, params, retry_cookies)
+        .await
+        .or(primary)
+        .unwrap_or_default()
 }
 
 fn walk_tracks(resp: &Value) -> Vec<Track> {

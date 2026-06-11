@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::SOURCE_PREFIX;
 use super::clients::{ORIGIN_YOUTUBE_MUSIC, WEB_REMIX};
-use super::innertube::{http_client, sapisid_hash};
+use super::innertube::http_client;
 use super::search::{encode_url_tag, synthesize_album_id};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -731,15 +731,12 @@ async fn post(url: &str, body: &Value, cookies: &str) -> Result<Value, String> {
         .header("X-YouTube-Client-Version", client.client_version)
         .header("X-Origin", ORIGIN_YOUTUBE_MUSIC)
         .header("Referer", format!("{ORIGIN_YOUTUBE_MUSIC}/"));
-    // Attach auth only when we have cookies that actually yield a
-    // SAPISIDHASH. Empty cookies (anonymous mode) or a partial/expired
-    // jar with no SAPISID both fall through to an anonymous request —
-    // discover still returns generic recommendations rather than
-    // hard-failing with "SAPISID missing".
-    if !cookies.is_empty()
-        && let Some(auth) = sapisid_hash(cookies, ORIGIN_YOUTUBE_MUSIC)
-    {
-        req = req.header("Cookie", cookies).header("Authorization", auth);
+    // Attach auth only when we have a session (cookies → SAPISIDHASH, or an
+    // `oauth:` Bearer token). Empty/anonymous falls through to an anonymous
+    // request — discover still returns generic recommendations rather than
+    // hard-failing.
+    if !cookies.is_empty() {
+        req = super::innertube::apply_auth(req, cookies, ORIGIN_YOUTUBE_MUSIC);
     }
     req.json(body)
         .send()

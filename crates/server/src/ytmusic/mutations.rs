@@ -1,16 +1,14 @@
 //! Write-side InnerTube endpoints — like/unlike a video, add/remove from
-//! a playlist. All require the user's cookies + SAPISIDHASH auth.
+//! a playlist. All require a signed-in session — cookies + SAPISIDHASH, or an
+//! OAuth Bearer token (handled transparently by `innertube::apply_auth`).
 
 use serde_json::{Value, json};
 
 use super::clients::{ORIGIN_YOUTUBE_MUSIC, WEB_REMIX};
-use super::innertube::sapisid_hash;
 
 async fn post(endpoint: &str, body: Value, cookies: &str) -> Result<Value, String> {
     let client = WEB_REMIX;
-    let auth =
-        sapisid_hash(cookies, ORIGIN_YOUTUBE_MUSIC).ok_or_else(|| "SAPISID missing".to_string())?;
-    let resp = super::innertube::http_client().clone()
+    let req = super::innertube::http_client().clone()
         .post(format!(
             "{ORIGIN_YOUTUBE_MUSIC}/youtubei/v1/{endpoint}?prettyPrint=false"
         ))
@@ -20,9 +18,8 @@ async fn post(endpoint: &str, body: Value, cookies: &str) -> Result<Value, Strin
         .header("X-YouTube-Client-Name", client.client_id)
         .header("X-YouTube-Client-Version", client.client_version)
         .header("X-Origin", ORIGIN_YOUTUBE_MUSIC)
-        .header("Referer", format!("{ORIGIN_YOUTUBE_MUSIC}/"))
-        .header("Cookie", cookies)
-        .header("Authorization", auth)
+        .header("Referer", format!("{ORIGIN_YOUTUBE_MUSIC}/"));
+    let resp = super::innertube::apply_auth(req, cookies, ORIGIN_YOUTUBE_MUSIC)
         .json(&body)
         .send()
         .await

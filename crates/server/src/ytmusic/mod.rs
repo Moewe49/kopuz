@@ -11,6 +11,7 @@ pub mod isolated_profile;
 pub mod manual_cookies;
 pub mod mix;
 pub mod mutations;
+pub mod oauth;
 pub mod player;
 pub mod playlists;
 pub mod ytdlp_resolve;
@@ -74,6 +75,16 @@ impl YouTubeMusicClient {
         Self {
             cookies: (!cookies.is_empty()).then_some(cookies),
         }
+    }
+
+    /// The raw browser cookie header, if this session is cookie-based. Returns
+    /// `None` for OAuth sessions (whose token is `oauth:<…>`, not a cookie jar)
+    /// so cookie-only consumers — chiefly yt-dlp's `--cookies` file — never get
+    /// handed a Bearer token to misinterpret.
+    fn cookie_jar(&self) -> Option<&str> {
+        self.cookies
+            .as_deref()
+            .filter(|c| !c.starts_with(oauth::OAUTH_PREFIX))
     }
 
     pub async fn search_tracks(&self, query: &str) -> Result<Vec<Track>, String> {
@@ -289,8 +300,8 @@ impl YouTubeMusicClient {
         // flagged — skip straight to the anonymous attempt to save a round.
         let bot_flagged = native_err.contains("LOGIN_REQUIRED") || native_err.contains("not a bot");
         let mut ydl_err = None;
-        if self.cookies.is_some() && !bot_flagged {
-            match ytdlp_resolve::resolve(video_id, self.cookies.as_deref()).await {
+        if self.cookie_jar().is_some() && !bot_flagged {
+            match ytdlp_resolve::resolve(video_id, self.cookie_jar()).await {
                 Ok(info) => {
                     set_preferred_strategy(STRAT_YTDLP_COOKIES);
                     return Ok(info);

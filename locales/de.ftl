@@ -502,3 +502,13 @@ added_to_playlist_toast = Zu „{ $name }“ hinzugefügt
 
 # YT auto-refresh
 yt_auto_refresh_label = Automatisch eingeloggt bleiben — Cookies beim Start aus einem eingeloggten Browser holen (in Firefox bei YouTube angemeldet bleiben; kein F12 mehr nötig).
+
+# YT OAuth device-code sign-in
+yt_auth_oauth = Mit Google anmelden (empfohlen — bleibt angemeldet, kein Browser nötig)
+yt_oauth_explainer = Einmal im Browser anmelden. kopuz hält dich danach automatisch angemeldet — ohne offenen Browser und ohne Cookies neu einzufügen. Ideal für ressourcenschonende Wiedergabe im Hintergrund.
+yt_oauth_button = Mit Google anmelden
+yt_oauth_enter_code = Öffne die Seite und gib diesen Code ein:
+yt_oauth_waiting = Warte auf deine Bestätigung…
+yt_oauth_done = Angemeldet! Klicke auf Speichern zum Abschließen.
+yt_oauth_timeout = Der Anmelde-Code ist abgelaufen — bitte erneut starten.
+yt_oauth_required = Bitte zuerst mit Google anmelden.

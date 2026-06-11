@@ -16,6 +16,11 @@ use super::innertube;
 /// transport or auth failure surfaces as `Err`; cookie-by-cookie
 /// invalidation (tombstones) is reflected by a shrunk jar.
 pub async fn tick(cookies: &str) -> Result<Option<String>, String> {
+    // OAuth sessions carry no cookie jar to keep warm — the Bearer token is
+    // refreshed separately from `yt_oauth_refresh_token`. Nothing to do.
+    if cookies.starts_with(super::oauth::OAUTH_PREFIX) {
+        return Ok(None);
+    }
     let auth = innertube::sapisid_hash(cookies, ORIGIN_YOUTUBE_MUSIC)
         .ok_or_else(|| "SAPISID missing — cannot build SAPISIDHASH".to_string())?;
 

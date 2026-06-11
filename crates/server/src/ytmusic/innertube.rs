@@ -30,6 +30,26 @@ pub fn sapisid_hash(cookies: &str, origin: &str) -> Option<String> {
     Some(format!("SAPISIDHASH {ts}_{}", hex::encode(hasher.finalize())))
 }
 
+/// Apply session auth to an InnerTube request. The `auth` string carries the
+/// scheme:
+/// - `oauth:<access_token>` → `Authorization: Bearer <token>` (no Cookie, no
+///   SAPISIDHASH). This is the device-code OAuth path — browser-free.
+/// - anything else → a raw `Cookie:` header, plus the matching `SAPISIDHASH`
+///   `Authorization` when a SAPISID cookie is present (browser-session path).
+///
+/// Centralizing this means every endpoint stays scheme-agnostic: callers just
+/// thread the stored token through, whatever it is.
+pub fn apply_auth(req: reqwest::RequestBuilder, auth: &str, origin: &str) -> reqwest::RequestBuilder {
+    if let Some(token) = auth.strip_prefix(super::oauth::OAUTH_PREFIX) {
+        return req.header("Authorization", format!("Bearer {token}"));
+    }
+    let req = req.header("Cookie", auth);
+    match sapisid_hash(auth, origin) {
+        Some(hash) => req.header("Authorization", hash),
+        None => req,
+    }
+}
+
 fn cookie_value(header: &str, name: &str) -> Option<String> {
     let prefix = format!("{name}=");
     for part in header.split(';') {
@@ -146,9 +166,7 @@ pub async fn player(
     if client.login_supported
         && let Some(c) = cookies
     {
-        let auth = sapisid_hash(c, ORIGIN_YOUTUBE_MUSIC)
-            .ok_or_else(|| "SAPISID missing".to_string())?;
-        req = req.header("Cookie", c).header("Authorization", auth);
+        req = apply_auth(req, c, ORIGIN_YOUTUBE_MUSIC);
     }
 
     let resp = req
@@ -201,9 +219,7 @@ pub async fn browse_maybe_auth(
         .header("X-Origin", ORIGIN_YOUTUBE_MUSIC)
         .header("Referer", format!("{ORIGIN_YOUTUBE_MUSIC}/"));
     if let Some(c) = cookies {
-        let auth = sapisid_hash(c, ORIGIN_YOUTUBE_MUSIC)
-            .ok_or_else(|| "SAPISID missing".to_string())?;
-        req = req.header("Cookie", c).header("Authorization", auth);
+        req = apply_auth(req, c, ORIGIN_YOUTUBE_MUSIC);
     }
     let resp = req
         .json(&body)
@@ -258,9 +274,7 @@ pub async fn browse_continuation_maybe_auth(
         .header("X-Origin", ORIGIN_YOUTUBE_MUSIC)
         .header("Referer", format!("{ORIGIN_YOUTUBE_MUSIC}/"));
     if let Some(c) = cookies {
-        let auth = sapisid_hash(c, ORIGIN_YOUTUBE_MUSIC)
-            .ok_or_else(|| "SAPISID missing".to_string())?;
-        req = req.header("Cookie", c).header("Authorization", auth);
+        req = apply_auth(req, c, ORIGIN_YOUTUBE_MUSIC);
     }
     let resp = req
         .json(&body)
@@ -292,9 +306,7 @@ pub async fn visitor_id(cookies: Option<&str>) -> Result<String, String> {
         .header("X-Origin", ORIGIN_YOUTUBE_MUSIC)
         .header("Referer", format!("{ORIGIN_YOUTUBE_MUSIC}/"));
     if let Some(c) = cookies {
-        let auth =
-            sapisid_hash(c, ORIGIN_YOUTUBE_MUSIC).ok_or_else(|| "SAPISID missing".to_string())?;
-        req = req.header("Cookie", c).header("Authorization", auth);
+        req = apply_auth(req, c, ORIGIN_YOUTUBE_MUSIC);
     }
     let resp = req
         .json(&body)

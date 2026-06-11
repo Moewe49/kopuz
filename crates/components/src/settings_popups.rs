@@ -11,6 +11,11 @@ pub enum YtAuthMethod {
     /// Paste the Cookie header from a signed-in music.youtube.com tab
     /// (or import it from Firefox). Works on every platform.
     PasteCookies,
+    /// Google OAuth device-code flow: sign in once in any browser, then
+    /// kopuz holds a long-lived refresh token and mints access tokens
+    /// itself — no browser kept open, no cookies to re-paste. The
+    /// recommended path for a always-signed-in lightweight player.
+    OAuth,
     /// No sign-in: browse/search/play public tracks only.
     Anonymous,
 }
@@ -296,6 +301,15 @@ fn ServerServiceFields(
                         input {
                             r#type: "radio",
                             name: "yt-auth-method",
+                            checked: method == YtAuthMethod::OAuth,
+                            onchange: move |_| yt_auth.set(YtAuthMethod::OAuth),
+                        }
+                        span { "{i18n::t(\"yt_auth_oauth\")}" }
+                    }
+                    label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
+                        input {
+                            r#type: "radio",
+                            name: "yt-auth-method",
                             checked: method == YtAuthMethod::PasteCookies,
                             onchange: move |_| yt_auth.set(YtAuthMethod::PasteCookies),
                         }
@@ -315,6 +329,9 @@ fn ServerServiceFields(
                 match method {
                     YtAuthMethod::Anonymous => rsx! {
                         p { class: "text-xs text-white/60", "{i18n::t(\"yt_anon_explainer\")}" }
+                    },
+                    YtAuthMethod::OAuth => rsx! {
+                        OAuthSignIn { yt_pasted_cookies }
                     },
                     YtAuthMethod::PasteCookies => rsx! {
                         ol { class: "text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-2",
@@ -405,5 +422,107 @@ fn ServerServiceFields(
                 onkeydown: move |e| e.stop_propagation()
             }
         },
+    }
+}
+
+/// Google OAuth device-code sign-in. Requests a short user code, opens the
+/// verification page, and polls until the user authorizes — then stashes the
+/// long-lived refresh token in config and feeds the fresh access token (as the
+/// `oauth:<…>` sentinel) into `yt_pasted_cookies` so the surrounding Save flow
+/// adopts it exactly like a pasted session. No browser is kept open afterwards.
+#[component]
+fn OAuthSignIn(yt_pasted_cookies: Signal<String>) -> Element {
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    // (user_code, verification_url) while we wait for the user to authorize.
+    let mut user_code = use_signal(|| None::<(String, String)>);
+    let mut done = use_signal(|| false);
+
+    let start = move |_| {
+        busy.set(true);
+        error.set(None);
+        done.set(false);
+        user_code.set(None);
+        spawn(async move {
+            use server::ytmusic::oauth;
+            let dc = match oauth::request_device_code().await {
+                Ok(dc) => dc,
+                Err(e) => {
+                    error.set(Some(e));
+                    busy.set(false);
+                    return;
+                }
+            };
+            user_code.set(Some((dc.user_code.clone(), dc.verification_url.clone())));
+            let _ = webbrowser::open(&dc.verification_url);
+            let mut interval = dc.interval.max(2);
+            let deadline = dc.expires_in.max(300);
+            let mut waited = 0u64;
+            loop {
+                utils::sleep(std::time::Duration::from_secs(interval)).await;
+                waited += interval;
+                if waited > deadline {
+                    error.set(Some(i18n::t("yt_oauth_timeout").to_string()));
+                    break;
+                }
+                match oauth::poll_once(&dc.device_code).await {
+                    oauth::PollResult::Pending => continue,
+                    oauth::PollResult::SlowDown => interval += 5,
+                    oauth::PollResult::Authorized(tok) => {
+                        if let Some(mut cfg) = try_consume_context::<Signal<config::AppConfig>>() {
+                            cfg.write().yt_oauth_refresh_token = tok.refresh_token.clone();
+                        }
+                        yt_pasted_cookies.set(oauth::to_sentinel(&tok.access_token));
+                        done.set(true);
+                        break;
+                    }
+                    oauth::PollResult::Failed(e) => {
+                        error.set(Some(e));
+                        break;
+                    }
+                }
+            }
+            user_code.set(None);
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "flex flex-col gap-2",
+            p { class: "text-xs text-white/60", "{i18n::t(\"yt_oauth_explainer\")}" }
+            if *done.read() {
+                p { class: "text-xs text-emerald-300",
+                    i { class: "fa-solid fa-circle-check mr-1" }
+                    "{i18n::t(\"yt_oauth_done\")}"
+                }
+            } else if let Some((code, url)) = user_code.read().clone() {
+                div { class: "rounded-lg bg-white/5 border border-white/10 p-3 text-center",
+                    p { class: "text-[11px] text-white/50 mb-1", "{i18n::t(\"yt_oauth_enter_code\")}" }
+                    p { class: "text-2xl font-mono font-bold tracking-[0.2em] text-white select-all my-1",
+                        "{code}"
+                    }
+                    a {
+                        class: "text-xs text-indigo-300 underline break-all",
+                        href: "{url}",
+                        "{url}"
+                    }
+                    p { class: "text-[11px] text-white/40 mt-2",
+                        i { class: "fa-solid fa-arrows-rotate fa-spin mr-1" }
+                        "{i18n::t(\"yt_oauth_waiting\")}"
+                    }
+                }
+            } else {
+                button {
+                    class: "px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium transition-colors disabled:opacity-50 self-start",
+                    disabled: *busy.read(),
+                    onclick: start,
+                    i { class: "fa-brands fa-google mr-2" }
+                    "{i18n::t(\"yt_oauth_button\")}"
+                }
+            }
+            if let Some(err) = error.read().clone() {
+                p { class: "text-xs text-rose-300 break-words", "{err}" }
+            }
+        }
     }
 }

@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 
 use super::SOURCE_PREFIX;
 use super::clients::WEB_REMIX;
-use super::innertube::sapisid_hash;
 use super::search::{encode_url_tag, synthesize_album_id};
 
 const ORIGIN: &str = "https://music.youtube.com";
@@ -43,9 +42,7 @@ pub async fn start_mix(seed_video_id: &str, cookies: &str) -> Result<Vec<Track>,
         .header("Origin", ORIGIN)
         .header("Referer", format!("{ORIGIN}/"));
     if let Some(c) = cookies_opt {
-        let auth = sapisid_hash(c, ORIGIN)
-            .ok_or_else(|| "SAPISID missing".to_string())?;
-        req = req.header("Cookie", c).header("Authorization", auth);
+        req = super::innertube::apply_auth(req, c, ORIGIN);
     }
     let resp: Value = req
         .json(&body)

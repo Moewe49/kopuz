@@ -548,6 +548,13 @@ pub struct AppConfig {
     /// never has to be pasted again. The browser keeps the cookies fresh.
     #[serde(default)]
     pub yt_auto_refresh: bool,
+    /// YouTube OAuth (device-code "TV" flow): the rotating refresh token for
+    /// the signed-in Google account. When set, kopuz mints a fresh access
+    /// token on startup and periodically — no browser process and no pasted
+    /// cookies. Empty = OAuth not used. Held in `server.access_token` at
+    /// runtime as `oauth:<access_token>`.
+    #[serde(default)]
+    pub yt_oauth_refresh_token: String,
     #[serde(default = "default_language")]
     pub language: String,
     #[serde(default)]
@@ -876,6 +883,7 @@ impl Default for AppConfig {
             spotify_client_id: String::new(),
             spotify_refresh_token: String::new(),
             yt_auto_refresh: false,
+            yt_oauth_refresh_token: String::new(),
             language: default_language(),
             reduce_animations: false,
             auto_check_updates: default_auto_check_updates(),
