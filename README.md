@@ -93,13 +93,17 @@ utilizing the power of Rust.
   artist shelves** — hit play on any playlist card to queue the whole thing
   straight from the search bar, or open it to browse.
 - **Spotify Import**: Clone Spotify playlists into your YouTube Music account.
-  Paste any public playlist/album link (no Spotify login needed, ≈first 100
-  tracks), or connect your own free Spotify app via OAuth to import private
-  playlists and Liked Songs in full. Tracks are matched on YT Music by
+  Connect your own free Spotify app once (~3 min) to import any playlist —
+  including Liked Songs and >100-track playlists — in full and fast. Pasting a
+  bare public link without connecting still works but Spotify now rate-limits
+  anonymous access (≈first 100 tracks). Tracks are matched on YT Music by
   title/artist/duration; the result is a real playlist in your YT Music
   library — playable, editable and syncable like any other. Unmatched tracks
   are listed so nothing silently disappears. Find it under **Playlists →
   Import from Spotify** when the YouTube Music backend is active.
+  **Setup guide:** [English](docs/spotify-import-setup.md) ·
+  [Deutsch](docs/spotify-import-einrichten.md) (the one field that must be
+  exact: Redirect URI `http://127.0.0.1:8898/callback`).
 - **Sleep Timer**: Moon button in the player bar — pause playback
   automatically after 15–90 minutes.
 - **SoundCloud Search**: On the search page, a SoundCloud section (powered by
