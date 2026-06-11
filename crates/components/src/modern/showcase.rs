@@ -178,6 +178,15 @@ pub fn ShowcaseModern(props: ShowcaseProps) -> Element {
                                     }
                                 }
                             }
+                            if let Some(h) = props.on_delete_playlist {
+                                button {
+                                    class: "inline-flex items-center justify-center h-9 w-9 rounded-full text-sm font-medium transition-colors border border-white/12 hover:bg-red-500/20 hover:border-red-500/40",
+                                    style: "color: var(--color-white); opacity: 0.6;",
+                                    title: i18n::t("delete_playlist").to_string(),
+                                    onclick: move |_| h.call(()),
+                                    i { class: "fa-solid fa-trash text-xs" }
+                                }
+                            }
                         }
                         if let Some(actions) = props.actions {
                             {actions}

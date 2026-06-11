@@ -118,3 +118,17 @@ pub async fn create_playlist(
         .map(|s| s.to_string())
         .ok_or_else(|| "create_playlist: no playlistId in response".to_string())
 }
+
+/// Delete one of the signed-in user's own playlists. `playlist_id` is the bare
+/// playlist id (no `VL` browse prefix). Library/system shelves (Liked Music,
+/// uploads) aren't user playlists and will be rejected by the server.
+pub async fn delete_playlist(playlist_id: &str, cookies: &str) -> Result<(), String> {
+    // YT stores playlist ids with an optional `VL` browse prefix; the
+    // playlist/delete endpoint wants the bare id.
+    let bare = playlist_id.strip_prefix("VL").unwrap_or(playlist_id);
+    let body = json!({
+        "context": { "client": ytmusic_context()["client"], "user": { "lockedSafetyMode": false } },
+        "playlistId": bare,
+    });
+    post("playlist/delete", body, cookies).await.map(|_| ())
+}

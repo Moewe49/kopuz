@@ -17,7 +17,7 @@ use crate::add_to_playlist::request_add_to_playlist;
 /// no-op there — and SoundCloud itself only shows when yt-dlp is present,
 /// which mobile never is.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn open_downloads_with(url: String, nav: NavigationController, prefill: Option<YtdlpPrefillUrl>) {
+pub(crate) fn open_downloads_with(url: String, nav: NavigationController, prefill: Option<YtdlpPrefillUrl>) {
     if let Some(p) = prefill {
         let mut sig = p.0;
         sig.set(Some(url));
@@ -27,7 +27,7 @@ fn open_downloads_with(url: String, nav: NavigationController, prefill: Option<Y
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn open_downloads_with(_url: String, _nav: NavigationController, _prefill: Option<YtdlpPrefillUrl>) {
+pub(crate) fn open_downloads_with(_url: String, _nav: NavigationController, _prefill: Option<YtdlpPrefillUrl>) {
 }
 
 /// Set by a SoundCloud row's download button; the Downloads (yt-dlp) page

@@ -181,6 +181,14 @@ pub fn ShowcaseNormal(props: ShowcaseProps) -> Element {
                                  }
                              }
                          }
+                         if let Some(h) = props.on_delete_playlist {
+                             button {
+                                 class: "w-12 h-12 rounded-full border border-white/20 hover:border-red-500/50 text-white/70 hover:text-red-300 flex items-center justify-center transition-colors",
+                                 title: i18n::t("delete_playlist").to_string(),
+                                 onclick: move |_| h.call(()),
+                                 i { class: "fa-solid fa-trash" }
+                             }
+                         }
                      }
                      if let Some(actions) = props.actions {
                          {actions}

@@ -22,6 +22,7 @@ pub struct TrackListViewProps {
     pub on_remove_from_playlist: Option<EventHandler<usize>>,
     pub on_download_all: Option<EventHandler<()>>,
     pub on_delete_all: Option<EventHandler<()>>,
+    pub on_delete_playlist: Option<EventHandler<()>>,
     pub on_download_track: Option<EventHandler<usize>>,
     #[props(default = false)]
     pub is_downloading_all: bool,
@@ -168,6 +169,7 @@ pub fn TrackListView(mut props: TrackListViewProps) -> Element {
                 on_remove_from_playlist: props.on_remove_from_playlist,
                 on_download_all: props.on_download_all,
                 on_delete_all: props.on_delete_all,
+                on_delete_playlist: props.on_delete_playlist,
                 on_download_track: props.on_download_track,
                 is_downloading_all: props.is_downloading_all,
                 is_reorderable: props.is_reorderable,

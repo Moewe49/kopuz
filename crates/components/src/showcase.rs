@@ -109,6 +109,9 @@ pub struct ShowcaseProps {
     pub actions: Option<Element>,
     pub on_download_all: Option<EventHandler<()>>,
     pub on_delete_all: Option<EventHandler<()>>,
+    /// Delete the whole playlist (not just its tracks). When set, a trash
+    /// button appears in the header. Used by the playlist detail view.
+    pub on_delete_playlist: Option<EventHandler<()>>,
     #[props(default = false)]
     pub is_album: bool,
     #[props(default = false)]

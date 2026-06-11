@@ -512,3 +512,8 @@ yt_oauth_waiting = Warte auf deine Bestätigung…
 yt_oauth_done = Angemeldet! Klicke auf Speichern zum Abschließen.
 yt_oauth_timeout = Der Anmelde-Code ist abgelaufen — bitte erneut starten.
 yt_oauth_required = Bitte zuerst mit Google anmelden.
+
+download_song = Download
+
+# Delete playlist
+delete_playlist_confirm = Permanently delete “{ $name }”? This cannot be undone.

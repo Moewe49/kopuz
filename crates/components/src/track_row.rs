@@ -204,6 +204,51 @@ pub fn TrackRow(
         None
     };
 
+    // Direct download (desktop only): YouTube Music + SoundCloud tracks can be
+    // saved as files via the yt-dlp Downloads page. Local files and the
+    // server-cache "Download Offline" above are separate paths. Mobile has no
+    // yt-dlp / Downloads route, so this entry is hidden there.
+    let dl_path_str = track.path.to_string_lossy();
+    let direct_download_url: Option<String> = if cfg!(any(target_os = "android", target_os = "ios"))
+    {
+        None
+    } else if is_ytmusic_track {
+        dl_path_str
+            .split(':')
+            .nth(1)
+            .filter(|s| !s.is_empty())
+            .map(|vid| format!("https://music.youtube.com/watch?v={vid}"))
+    } else if server::soundcloud::is_soundcloud_path(&dl_path_str) {
+        server::soundcloud::permalink_from_path(&dl_path_str)
+    } else {
+        None
+    };
+    let direct_download_idx = if direct_download_url.is_some() {
+        let idx = actions.len();
+        actions.push(MenuAction::new(
+            i18n::t("download_song").to_string(),
+            "fa-solid fa-download",
+        ));
+        Some(idx)
+    } else {
+        None
+    };
+    // One opener reused by both layouts; clones because each closure moves it.
+    let trigger_download = {
+        let url = direct_download_url.clone();
+        let nav = nav_ctrl;
+        move || {
+            if let Some(url) = url.clone() {
+                crate::soundcloud_search::open_downloads_with(
+                    url,
+                    nav,
+                    try_consume_context::<crate::soundcloud_search::YtdlpPrefillUrl>(),
+                );
+            }
+        }
+    };
+    let trigger_download_normal = trigger_download.clone();
+
     let play_next_idx = if has_queue { Some(0) } else { None };
     let add_to_queue_idx = if has_queue { Some(1) } else { None };
     let add_to_playlist_idx = if has_queue { 2 } else { 0 };
@@ -512,6 +557,9 @@ pub fn TrackRow(
                                 } else if view_metadata_idx == Some(idx) {
                                     if let Some(handler) = on_view_metadata { handler.call(()); }
                                     on_close_menu.call(());
+                                } else if direct_download_idx == Some(idx) {
+                                    trigger_download();
+                                    on_close_menu.call(());
                                 } else if Some(idx) == delete_action_idx {
                                     on_delete.call(());
                                 }
@@ -785,6 +833,9 @@ pub fn TrackRow(
                                 if let Some(handler) = on_view_metadata {
                                     handler.call(());
                                 }
+                                on_close_menu.call(());
+                            } else if direct_download_idx == Some(idx) {
+                                trigger_download_normal();
                                 on_close_menu.call(());
                             } else if Some(idx) == delete_action_idx {
                                 on_delete.call(());

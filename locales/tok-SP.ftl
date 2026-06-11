@@ -511,3 +511,8 @@ yt_oauth_waiting = Waiting for you to authorize…
 yt_oauth_done = Signed in! Click Save to finish.
 yt_oauth_timeout = The sign-in code expired — start again.
 yt_oauth_required = Please sign in with Google first.
+
+download_song = Download
+
+# Delete playlist
+delete_playlist_confirm = Permanently delete “{ $name }”? This cannot be undone.
