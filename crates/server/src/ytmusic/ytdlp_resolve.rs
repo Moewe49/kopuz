@@ -55,11 +55,11 @@ fn resolve_blocking(
     let mut cmd = std::process::Command::new(binary);
     cmd.arg("--no-playlist")
         .arg("--no-warnings")
-        // Speed: skip yt-dlp's watch-page HTML + config fetches and go straight
-        // to the player API. Cuts a chunk of latency off every YouTube resolve.
-        // Ignored by non-YouTube extractors (SoundCloud etc.), so it's safe to
-        // always pass.
-        .args(["--extractor-args", "youtube:player_skip=webpage,configs,initial_data"])
+        // NOTE: do NOT add `player_skip=webpage,configs` here. It speeds up
+        // resolves but strips the very page yt-dlp uses to mint the PO token /
+        // visitor data that clears YouTube's "confirm you're not a bot" check —
+        // skipping it makes EVERY resolve fail with LOGIN_REQUIRED. (Regression
+        // fixed in v0.7.10.)
         // SoundCloud (and YT under load) intermittently 403 the metadata
         // fetch; retry the extractor + transport a few times, and present a
         // real browser UA so the client-id negotiation isn't blocked.

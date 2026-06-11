@@ -357,9 +357,13 @@ impl YouTubeMusicClient {
         // cookies. Non-Premium playback doesn't need the cookies anyway.
         // When the native error is itself a bot check, the cookies are already
         // flagged — skip straight to the anonymous attempt to save a round.
-        let bot_flagged = native_err.contains("LOGIN_REQUIRED") || native_err.contains("not a bot");
+        // Always try yt-dlp WITH cookies when we have them: YouTube now bot-
+        // blocks anonymous yt-dlp too ("confirm you're not a bot"), so a signed-
+        // in cookie jar is what actually clears the check. (We used to skip this
+        // when the native error was a bot flag and jump to anon — that no longer
+        // resolves anything.)
         let mut ydl_err = None;
-        if self.cookie_jar().is_some() && !bot_flagged {
+        if self.cookie_jar().is_some() {
             match ytdlp_resolve::resolve(video_id, self.cookie_jar()).await {
                 Ok(info) => {
                     set_preferred_strategy(STRAT_YTDLP_COOKIES);
