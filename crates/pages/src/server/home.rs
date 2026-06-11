@@ -85,6 +85,15 @@ pub fn JellyfinHome(
     let mut config = use_context::<Signal<AppConfig>>();
     let mut has_fetched = use_signal(|| false);
 
+    // Play a single track now (Continue listening tiles). These are individual
+    // songs — many YT singles have no album, so routing the click through an
+    // album id left them dead.
+    let ctrl = use_context::<hooks::use_player_controller::PlayerController>();
+    let on_play_track = EventHandler::new(move |t: Track| {
+        let mut ctrl = ctrl;
+        ctrl.play_queue_linear(vec![t]);
+    });
+
     let mut fetch_jellyfin = move || {
         has_fetched.set(true);
         spawn(async move {
@@ -565,6 +574,7 @@ pub fn JellyfinHome(
                                     recent_playlists(),
                                     on_select_album,
                                     on_play_album,
+                                    on_play_track,
                                     on_select_playlist,
                                     on_search_artist,
                                     scroll_container,
@@ -598,6 +608,7 @@ fn render_server_section(
     recent_playlists: Vec<(String, String, usize, Option<String>)>,
     on_select_album: EventHandler<String>,
     on_play_album: EventHandler<String>,
+    on_play_track: EventHandler<Track>,
     on_select_playlist: EventHandler<String>,
     on_search_artist: EventHandler<String>,
     scroll_container: impl Fn(&str, i32) + Copy + 'static,
@@ -618,8 +629,7 @@ fn render_server_section(
         "continue_listening" => render_continue_listening(
             is_modern,
             continue_listening,
-            on_select_album,
-            on_play_album,
+            on_play_track,
             scroll_container,
         ),
         "listen_now" => render_listen_now(
@@ -908,8 +918,7 @@ fn ServerHeroBanner(
 fn render_continue_listening(
     is_modern: bool,
     tracks: Vec<(Track, Option<Album>, Option<String>)>,
-    on_select_album: EventHandler<String>,
-    on_play_album: EventHandler<String>,
+    on_play_track: EventHandler<Track>,
     scroll_container: impl Fn(&str, i32) + Copy + 'static,
 ) -> Element {
     if tracks.is_empty() {
@@ -948,19 +957,17 @@ fn render_continue_listening(
                             .as_ref()
                             .map(|a| a.title.clone())
                             .unwrap_or_else(|| track.album.clone());
-                        let album_id_opt = album_opt.as_ref().map(|a| a.id.clone());
-                        let album_id_click = album_id_opt.clone();
-                        let album_id_play = album_id_opt.clone();
                         let key = track.path.to_string_lossy().to_string();
+                        // Play the track directly — these are individual songs,
+                        // and YT singles often have no album, which used to make
+                        // the tile do nothing (it required an album id).
+                        let track_click = track.clone();
+                        let track_play = track.clone();
                         rsx! {
                             div {
                                 key: "{key}",
                                 class: "flex-none w-44 group cursor-pointer",
-                                onclick: move |_| {
-                                    if let Some(id) = album_id_click.clone() {
-                                        on_select_album.call(id);
-                                    }
-                                },
+                                onclick: move |_| on_play_track.call(track_click.clone()),
                                 div { class: "aspect-square rounded-xl bg-stone-800 mb-3 overflow-hidden relative",
                                     if let Some(url) = cover_url {
                                         img { src: "{url}", class: "w-full h-full object-cover group-hover:scale-105 transition-transform duration-500", decoding: "async", loading: "lazy" }
@@ -974,9 +981,7 @@ fn render_continue_listening(
                                         style: "background: var(--color-indigo-500);",
                                         onclick: move |evt| {
                                             evt.stop_propagation();
-                                            if let Some(id) = album_id_play.clone() {
-                                                on_play_album.call(id);
-                                            }
+                                            on_play_track.call(track_play.clone());
                                         },
                                         i { class: "fa-solid fa-play text-white text-xs ml-0.5" }
                                     }

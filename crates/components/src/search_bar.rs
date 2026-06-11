@@ -101,12 +101,14 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
                     }
                 },
                 onkeydown: move |e| e.stop_propagation(),
-                option { value: "local", "{i18n::t(\"local\")}" }
+                // `selected` makes the <select> properly controlled — without it
+                // the webview drops back to the first option (Local) on re-render.
+                option { value: "local", selected: current == SearchSource::Local, "{i18n::t(\"local\")}" }
                 if let Some(label) = server_label {
-                    option { value: "server", "{label}" }
+                    option { value: "server", selected: current == SearchSource::Server, "{label}" }
                 }
                 if soundcloud_ok {
-                    option { value: "soundcloud", "SoundCloud" }
+                    option { value: "soundcloud", selected: current == SearchSource::SoundCloud, "SoundCloud" }
                 }
             }
         }
