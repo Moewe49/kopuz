@@ -194,6 +194,16 @@ impl YouTubeMusicClient {
         mutations::add_to_playlist(playlist_id, video_id, cookies).await
     }
 
+    /// Add many videos to a playlist in one request (used by Spotify import).
+    pub async fn add_videos_to_playlist(
+        &self,
+        playlist_id: &str,
+        video_ids: &[&str],
+    ) -> Result<(), String> {
+        let cookies = self.cookies.as_deref().ok_or(ANON_AUTH_REQUIRED)?;
+        mutations::add_videos_to_playlist(playlist_id, video_ids, cookies).await
+    }
+
     pub async fn remove_from_playlist(
         &self,
         playlist_id: &str,

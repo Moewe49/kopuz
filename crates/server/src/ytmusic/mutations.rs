@@ -79,6 +79,31 @@ pub async fn add_to_playlist(
     post("browse/edit_playlist", body, cookies).await.map(|_| ())
 }
 
+/// Add MANY videos to a playlist in a single `edit_playlist` request. YouTube's
+/// edit endpoint accepts an array of `ACTION_ADD_VIDEO` actions, so one call can
+/// add dozens of tracks. Doing this instead of one request per track is what
+/// keeps a large Spotify import from tripping YT's write-abuse 403 (and makes it
+/// far faster).
+pub async fn add_videos_to_playlist(
+    playlist_id: &str,
+    video_ids: &[&str],
+    cookies: &str,
+) -> Result<(), String> {
+    if video_ids.is_empty() {
+        return Ok(());
+    }
+    let actions: Vec<Value> = video_ids
+        .iter()
+        .map(|vid| json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": vid }))
+        .collect();
+    let body = json!({
+        "context": { "client": ytmusic_context()["client"], "user": { "lockedSafetyMode": false } },
+        "playlistId": playlist_id,
+        "actions": actions,
+    });
+    post("browse/edit_playlist", body, cookies).await.map(|_| ())
+}
+
 /// Remove a video from a user playlist by video ID. (YT's API also
 /// supports remove-by-setVideoId for repeats; we use the simpler
 /// by-video-ID form which removes the first occurrence.)

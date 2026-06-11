@@ -19,9 +19,11 @@ const MIN_SCORE: f64 = 0.55;
 const CANDIDATE_LIMIT: usize = 8;
 /// Parallel YT searches during the match phase.
 const MATCH_CONCURRENCY: usize = 4;
-/// Videos sent inline with the playlist/create call; the rest go
-/// through edit_playlist one by one.
+/// Videos sent inline with the playlist/create call.
 const CREATE_BATCH: usize = 50;
+/// Videos added per `edit_playlist` request for the rest — batched so a big
+/// import is a few requests instead of hundreds (which trip YT's 403).
+const ADD_BATCH: usize = 50;
 
 #[derive(Debug, Clone)]
 pub struct TrackMatch {
@@ -169,13 +171,17 @@ where
 
     let rest = &matched_ids[first.len().min(matched_ids.len())..];
     let total_rest = rest.len();
-    for (i, vid) in rest.iter().enumerate() {
-        // Gentle pacing — edit_playlist is a write endpoint and bursty
-        // adds trip YT's abuse heuristics.
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-        yt.add_to_playlist(&playlist_id, vid).await?;
+    // Add the remaining tracks in BATCHES (one edit_playlist request per chunk),
+    // not one request per track — hundreds of individual writes are what trip
+    // YouTube's abuse 403 and cap the import. A handful of batched requests sail
+    // through and finish in seconds.
+    let mut done = 0usize;
+    for chunk in rest.chunks(ADD_BATCH) {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        yt.add_videos_to_playlist(&playlist_id, chunk).await?;
+        done += chunk.len();
         on_event(CloneEvent::Adding {
-            done: i + 1,
+            done,
             total: total_rest,
         });
     }
