@@ -237,21 +237,40 @@ impl YouTubeMusicClient {
     /// bot-check machinery and uses our cookies). yt-dlp is never the
     /// primary path, so binary-free installs are unaffected.
     pub async fn get_stream(&self, video_id: &str) -> Result<YtStreamInfo, String> {
-        match player::resolve(video_id, self.cookies.as_deref()).await {
-            Ok(info) => Ok(info),
-            Err(native_err) => {
-                if ytdlp_resolve::find_ytdlp().is_none() {
-                    return Err(native_err);
+        let native = player::resolve(video_id, self.cookies.as_deref()).await;
+        let native_err = match native {
+            Ok(info) => return Ok(info),
+            Err(e) => e,
+        };
+        if ytdlp_resolve::find_ytdlp().is_none() {
+            return Err(native_err);
+        }
+        eprintln!("[yt-player] native resolve failed ({native_err}) — trying yt-dlp fallback");
+
+        // Try yt-dlp WITH cookies first (needed for Premium / age-gated), but
+        // if that fails retry ANONYMOUSLY: a signed-in session that's been
+        // flagged as a bot returns an empty format list ("Requested format is
+        // not available"), whereas the same track resolves fine without
+        // cookies. Non-Premium playback doesn't need the cookies anyway.
+        // When the native error is itself a bot check, the cookies are already
+        // flagged — skip straight to the anonymous attempt to save a round.
+        let bot_flagged = native_err.contains("LOGIN_REQUIRED") || native_err.contains("not a bot");
+        let mut ydl_err = None;
+        if self.cookies.is_some() && !bot_flagged {
+            match ytdlp_resolve::resolve(video_id, self.cookies.as_deref()).await {
+                Ok(info) => return Ok(info),
+                Err(e) => {
+                    eprintln!("[yt-player] yt-dlp (signed-in) failed ({e}) — retrying anonymously");
+                    ydl_err = Some(e);
                 }
-                eprintln!(
-                    "[yt-player] native resolve failed ({native_err}) — trying yt-dlp fallback"
-                );
-                ytdlp_resolve::resolve(video_id, self.cookies.as_deref())
-                    .await
-                    .map_err(|ydl_err| {
-                        format!("{native_err}; yt-dlp fallback also failed: {ydl_err}")
-                    })
             }
+        }
+        match ytdlp_resolve::resolve(video_id, None).await {
+            Ok(info) => Ok(info),
+            Err(anon_err) => Err(format!(
+                "{native_err}; yt-dlp fallback also failed: {}",
+                ydl_err.unwrap_or(anon_err)
+            )),
         }
     }
 

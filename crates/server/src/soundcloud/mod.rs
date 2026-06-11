@@ -114,16 +114,8 @@ fn build_track(
     duration: u64,
     thumbnail: Option<&str>,
 ) -> Track {
-    let hex_url = hex::encode(url.as_bytes());
-    let path = match thumbnail.filter(|t| !t.is_empty() && *t != "NA") {
-        Some(thumb) => PathBuf::from(format!(
-            "{SOURCE_PREFIX}:{hex_url}:urlhex_{}",
-            hex::encode(thumb.as_bytes())
-        )),
-        None => PathBuf::from(format!("{SOURCE_PREFIX}:{hex_url}")),
-    };
     Track {
-        path,
+        path: PathBuf::from(make_path(url, title, uploader, duration, thumbnail)),
         album_id: format!("{SOURCE_PREFIX}:set:{}", hex::encode(uploader.as_bytes())),
         title: title.to_string(),
         artist: uploader.to_string(),
@@ -145,12 +137,84 @@ fn build_track(
     }
 }
 
+/// Self-describing track path:
+/// `soundcloud:<hexUrl>:<cover>:t<hexTitle>:a<hexArtist>:d<duration>`
+/// where `<cover>` is `urlhex_<hexThumb>` or `none`. Carrying title/artist/
+/// duration lets the track be reconstructed for display + playback when it
+/// lives in a local playlist (it's not in any scanned library), so SoundCloud
+/// songs can sit in playlists and queue up like anything else.
+fn make_path(url: &str, title: &str, artist: &str, duration: u64, thumbnail: Option<&str>) -> String {
+    let cover = thumbnail
+        .filter(|t| !t.is_empty() && *t != "NA")
+        .map(|t| format!("urlhex_{}", hex::encode(t.as_bytes())))
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "{SOURCE_PREFIX}:{}:{}:t{}:a{}:d{}",
+        hex::encode(url.as_bytes()),
+        cover,
+        hex::encode(title.as_bytes()),
+        hex::encode(artist.as_bytes()),
+        duration,
+    )
+}
+
+/// Reconstruct a [`Track`] from a `soundcloud:` path — used by playlist views
+/// and the queue builder so SoundCloud entries in a local playlist render and
+/// play even though they're in no scanned library. Returns `None` for
+/// non-SoundCloud paths.
+pub fn track_from_path(track_path: &str) -> Option<Track> {
+    let rest = track_path.strip_prefix(SOURCE_PREFIX)?.strip_prefix(':')?;
+    let parts: Vec<&str> = rest.split(':').collect();
+    // parts: [hexUrl, cover, t<title>, a<artist>, d<dur>]
+    let hex_decode = |s: &str| hex::decode(s).ok().and_then(|b| String::from_utf8(b).ok());
+    let title = parts
+        .get(2)
+        .and_then(|s| s.strip_prefix('t'))
+        .and_then(hex_decode)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "SoundCloud track".to_string());
+    let artist = parts
+        .get(3)
+        .and_then(|s| s.strip_prefix('a'))
+        .and_then(hex_decode)
+        .unwrap_or_default();
+    let duration = parts
+        .get(4)
+        .and_then(|s| s.strip_prefix('d'))
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    Some(Track {
+        path: PathBuf::from(track_path),
+        album_id: format!("{SOURCE_PREFIX}:set:{}", hex::encode(artist.as_bytes())),
+        title,
+        artist: artist.clone(),
+        album: String::new(),
+        duration,
+        khz: 0,
+        bitrate: 0,
+        track_number: None,
+        disc_number: None,
+        musicbrainz_release_id: None,
+        musicbrainz_recording_id: None,
+        musicbrainz_track_id: None,
+        playlist_item_id: None,
+        artists: if artist.is_empty() { Vec::new() } else { vec![artist] },
+    })
+}
+
 /// Decode the permalink URL from a `soundcloud:<hexUrl>[:…]` path.
 fn decode_url_from_path(track_path: &str) -> Option<String> {
     let rest = track_path.strip_prefix(SOURCE_PREFIX)?.strip_prefix(':')?;
     let hex_url = rest.split(':').next()?;
     let bytes = hex::decode(hex_url).ok()?;
     String::from_utf8(bytes).ok()
+}
+
+/// Cheap check used by playlist/queue resolvers to spot external SoundCloud
+/// entries that must be reconstructed from their path rather than looked up
+/// in a scanned library.
+pub fn is_soundcloud_path(track_path: &str) -> bool {
+    track_path.starts_with("soundcloud:")
 }
 
 fn na(s: Option<&str>) -> Option<String> {
@@ -195,5 +259,33 @@ mod tests {
     #[test]
     fn rejects_non_soundcloud_path() {
         assert_eq!(decode_url_from_path("ytmusic:abc:def"), None);
+    }
+
+    #[test]
+    fn reconstructs_track_from_self_describing_path() {
+        let t = build_track(
+            "https://soundcloud.com/a/b",
+            "Cool Song",
+            "Cool Artist",
+            215,
+            Some("https://i1.sndcdn.com/x.jpg"),
+        );
+        let path = t.path.to_string_lossy().to_string();
+        let rebuilt = track_from_path(&path).expect("should reconstruct");
+        assert_eq!(rebuilt.title, "Cool Song");
+        assert_eq!(rebuilt.artist, "Cool Artist");
+        assert_eq!(rebuilt.duration, 215);
+        assert_eq!(rebuilt.path, t.path);
+        // Playback still decodes the permalink from segment 1.
+        assert_eq!(
+            decode_url_from_path(&path).as_deref(),
+            Some("https://soundcloud.com/a/b")
+        );
+    }
+
+    #[test]
+    fn is_soundcloud_path_detects_scheme() {
+        assert!(is_soundcloud_path("soundcloud:abc:none:t01:a02:d0"));
+        assert!(!is_soundcloud_path("ytmusic:vid:cover"));
     }
 }

@@ -62,7 +62,18 @@ pub fn PlaylistDetail(
     if !is_jellyfin {
         let local_tracks: Vec<_> = local_tracks_paths
             .iter()
-            .filter_map(|path| lib.tracks.iter().find(|t| t.path == *path).cloned())
+            .filter_map(|path| {
+                lib.tracks
+                    .iter()
+                    .find(|t| t.path == *path)
+                    .cloned()
+                    // External entries (e.g. SoundCloud) aren't in the scanned
+                    // library — rebuild them from their self-describing path so
+                    // they show and play inside the playlist.
+                    .or_else(|| {
+                        server::soundcloud::track_from_path(&path.to_string_lossy())
+                    })
+            })
             .collect();
         let local_tracks_for_effect = local_tracks.clone();
         use_effect(move || {

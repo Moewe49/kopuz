@@ -51,7 +51,12 @@ pub fn AddToPlaylistHost(
         return rsx! {};
     };
 
-    let is_server = config.read().active_source == MusicSource::Server;
+    // SoundCloud tracks always go to LOCAL playlists: the server backends
+    // (YT/Jellyfin/Subsonic) only accept their own catalog ids, but a local
+    // playlist stores the self-describing path and resolves it at play time —
+    // so the SoundCloud song really lives in the playlist and queues up.
+    let is_external = server::soundcloud::is_soundcloud_path(&track.path.to_string_lossy());
+    let is_server = !is_external && config.read().active_source == MusicSource::Server;
 
     let mut add_local = move |playlist_id: String, track: Track| {
         let mut store = playlist_store.write();
