@@ -259,7 +259,7 @@ async fn run_auto_refresh(mut config: Signal<config::AppConfig>) {
 /// (access tokens live ~1h). Browser-free, so it works on every platform —
 /// this is the "set up once, always signed in" path.
 async fn run_oauth_refresh(mut config: Signal<config::AppConfig>) {
-    let (active_yt, refresh_token) = {
+    let (active_yt, refresh_token, client_id, client_secret) = {
         let c = config.peek();
         (
             c.server
@@ -267,12 +267,14 @@ async fn run_oauth_refresh(mut config: Signal<config::AppConfig>) {
                 .map(|s| s.service == config::MusicService::YtMusic)
                 .unwrap_or(false),
             c.yt_oauth_refresh_token.clone(),
+            c.yt_oauth_client_id.clone(),
+            c.yt_oauth_client_secret.clone(),
         )
     };
-    if !active_yt || refresh_token.is_empty() {
+    if !active_yt || refresh_token.is_empty() || client_id.is_empty() {
         return;
     }
-    match server::ytmusic::oauth::refresh(&refresh_token).await {
+    match server::ytmusic::oauth::refresh(&client_id, &client_secret, &refresh_token).await {
         Ok((access, _ttl)) => {
             let sentinel = server::ytmusic::oauth::to_sentinel(&access);
             let mut cfg = config.write();

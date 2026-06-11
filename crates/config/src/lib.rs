@@ -555,6 +555,14 @@ pub struct AppConfig {
     /// runtime as `oauth:<access_token>`.
     #[serde(default)]
     pub yt_oauth_refresh_token: String,
+    /// The user's own Google Cloud OAuth client (type "TV and Limited Input
+    /// Devices"). Required because Google disabled the YouTube Data API on the
+    /// old shared ytmusicapi client, so a personal client whose project has the
+    /// API enabled is the only OAuth path that works. Empty = not configured.
+    #[serde(default)]
+    pub yt_oauth_client_id: String,
+    #[serde(default)]
+    pub yt_oauth_client_secret: String,
     #[serde(default = "default_language")]
     pub language: String,
     #[serde(default)]
@@ -884,6 +892,8 @@ impl Default for AppConfig {
             spotify_refresh_token: String::new(),
             yt_auto_refresh: false,
             yt_oauth_refresh_token: String::new(),
+            yt_oauth_client_id: String::new(),
+            yt_oauth_client_secret: String::new(),
             language: default_language(),
             reduce_animations: false,
             auto_check_updates: default_auto_check_updates(),

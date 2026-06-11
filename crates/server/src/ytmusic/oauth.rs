@@ -24,14 +24,12 @@ use serde::Deserialize;
 
 use super::innertube::http_client;
 
-/// The OAuth client baked into the YouTube on TV / limited-input-device app.
-/// This is **not** a secret — it ships publicly in the TV client and is used
-/// verbatim by ytmusicapi and yt-dlp. The device-code grant still requires
-/// explicit user consent in a browser, so possessing these identifiers grants
-/// nothing on its own.
-pub const CLIENT_ID: &str =
-    "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com";
-pub const CLIENT_SECRET: &str = "SboVhoG9s0rNafixCSGGKXAT";
+// Google disabled the YouTube Data API on the old shared ytmusicapi OAuth
+// client (project 861556708454), so device-code tokens minted from it are
+// rejected by InnerTube with HTTP 400 INVALID_ARGUMENT. The only working OAuth
+// path is the user's OWN client (type "TV and Limited Input Devices") from a
+// Google Cloud project where they've enabled the YouTube Data API v3. The
+// client_id/secret are therefore supplied by the caller, not baked in.
 
 const SCOPE: &str = "https://www.googleapis.com/auth/youtube";
 const DEVICE_CODE_URL: &str = "https://www.youtube.com/o/oauth2/device/code";
@@ -92,11 +90,15 @@ struct TokenResponse {
     error: Option<String>,
 }
 
-/// Step 1: ask Google for a device code to show the user.
-pub async fn request_device_code() -> Result<DeviceCode, String> {
+/// Step 1: ask Google for a device code to show the user. `client_id` is the
+/// user's own OAuth client id (see the module note on why it can't be baked in).
+pub async fn request_device_code(client_id: &str) -> Result<DeviceCode, String> {
+    if client_id.trim().is_empty() {
+        return Err("no OAuth client configured".to_string());
+    }
     let resp = http_client()
         .post(DEVICE_CODE_URL)
-        .form(&[("client_id", CLIENT_ID), ("scope", SCOPE)])
+        .form(&[("client_id", client_id), ("scope", SCOPE)])
         .send()
         .await
         .map_err(|e| format!("device code HTTP: {e}"))?;
@@ -113,12 +115,12 @@ pub async fn request_device_code() -> Result<DeviceCode, String> {
 
 /// Step 3: poll once. Call repeatedly (every `interval` s) until it returns
 /// [`PollResult::Authorized`] or [`PollResult::Failed`].
-pub async fn poll_once(device_code: &str) -> PollResult {
+pub async fn poll_once(client_id: &str, client_secret: &str, device_code: &str) -> PollResult {
     let resp = match http_client()
         .post(TOKEN_URL)
         .form(&[
-            ("client_id", CLIENT_ID),
-            ("client_secret", CLIENT_SECRET),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
             ("code", device_code),
             ("grant_type", GRANT_DEVICE),
         ])
@@ -155,12 +157,16 @@ pub async fn poll_once(device_code: &str) -> PollResult {
 
 /// Exchange a stored refresh token for a fresh access token. Returns the
 /// access token and its lifetime in seconds.
-pub async fn refresh(refresh_token: &str) -> Result<(String, u64), String> {
+pub async fn refresh(
+    client_id: &str,
+    client_secret: &str,
+    refresh_token: &str,
+) -> Result<(String, u64), String> {
     let resp = http_client()
         .post(TOKEN_URL)
         .form(&[
-            ("client_id", CLIENT_ID),
-            ("client_secret", CLIENT_SECRET),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
             ("refresh_token", refresh_token),
             ("grant_type", "refresh_token"),
         ])

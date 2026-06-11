@@ -41,7 +41,15 @@ pub fn sapisid_hash(cookies: &str, origin: &str) -> Option<String> {
 /// thread the stored token through, whatever it is.
 pub fn apply_auth(req: reqwest::RequestBuilder, auth: &str, origin: &str) -> reqwest::RequestBuilder {
     if let Some(token) = auth.strip_prefix(super::oauth::OAUTH_PREFIX) {
-        return req.header("Authorization", format!("Bearer {token}"));
+        // Match ytmusicapi's OAuth request shape: Bearer token + a request
+        // timestamp. No Cookie / SAPISIDHASH / InnerTube key for OAuth.
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        return req
+            .header("Authorization", format!("Bearer {token}"))
+            .header("X-Goog-Request-Time", ts.to_string());
     }
     let req = req.header("Cookie", auth);
     match sapisid_hash(auth, origin) {

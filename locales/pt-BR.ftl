@@ -514,3 +514,11 @@ download_song = Download
 
 # Delete playlist
 delete_playlist_confirm = Permanently delete “{ $name }”? This cannot be undone.
+
+# YT OAuth client setup
+yt_oauth_setup_title = One-time setup: your own Google OAuth client
+yt_oauth_setup_step1 = Open the link below, create a project, and enable “YouTube Data API v3”.
+yt_oauth_setup_step2 = Credentials → Create credentials → OAuth client ID → type “TVs and Limited Input devices”.
+yt_oauth_setup_step3 = On the OAuth consent screen, add your Google account under “Test users”.
+yt_oauth_setup_step4 = Paste the Client ID and Client secret below — you only do this once.
+yt_oauth_need_creds = Enter your Client ID and Client secret above first.

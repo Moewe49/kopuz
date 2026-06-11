@@ -63,7 +63,14 @@ pub fn PlaylistsPage(
                             let remote = SubsonicClient::new(&url, &user_id, &token);
                             remote.create_playlist(&name, &[]).await
                         }
-                        MusicService::YtMusic => Err("YouTube Music not yet implemented".to_string()),
+                        MusicService::YtMusic => {
+                            // Create an empty private playlist in the user's YT
+                            // Music account. `token` is the session (cookie
+                            // header or `oauth:` sentinel); the client handles
+                            // both auth schemes transparently.
+                            let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(token);
+                            yt.create_playlist(&name, "", &[]).await
+                        }
                     };
                     saving.set(false);
                     match result {

@@ -438,14 +438,33 @@ fn OAuthSignIn(yt_pasted_cookies: Signal<String>) -> Element {
     let mut user_code = use_signal(|| None::<(String, String)>);
     let mut done = use_signal(|| false);
 
+    // The user's own Google Cloud OAuth client (the shared one is dead — see
+    // oauth.rs). Bound to config so it persists and the boot refresh can reuse
+    // it. Both fields must be filled before sign-in is possible.
+    let cfg_ctx = try_consume_context::<Signal<config::AppConfig>>();
+    let client_id = cfg_ctx
+        .map(|c| c.read().yt_oauth_client_id.clone())
+        .unwrap_or_default();
+    let client_secret = cfg_ctx
+        .map(|c| c.read().yt_oauth_client_secret.clone())
+        .unwrap_or_default();
+    let creds_ready = !client_id.trim().is_empty() && !client_secret.trim().is_empty();
+
     let start = move |_| {
         busy.set(true);
         error.set(None);
         done.set(false);
         user_code.set(None);
+        // Snapshot creds at click time.
+        let (cid, csec) = cfg_ctx
+            .map(|c| {
+                let r = c.read();
+                (r.yt_oauth_client_id.clone(), r.yt_oauth_client_secret.clone())
+            })
+            .unwrap_or_default();
         spawn(async move {
             use server::ytmusic::oauth;
-            let dc = match oauth::request_device_code().await {
+            let dc = match oauth::request_device_code(&cid).await {
                 Ok(dc) => dc,
                 Err(e) => {
                     error.set(Some(e));
@@ -465,11 +484,11 @@ fn OAuthSignIn(yt_pasted_cookies: Signal<String>) -> Element {
                     error.set(Some(i18n::t("yt_oauth_timeout").to_string()));
                     break;
                 }
-                match oauth::poll_once(&dc.device_code).await {
+                match oauth::poll_once(&cid, &csec, &dc.device_code).await {
                     oauth::PollResult::Pending => continue,
                     oauth::PollResult::SlowDown => interval += 5,
                     oauth::PollResult::Authorized(tok) => {
-                        if let Some(mut cfg) = try_consume_context::<Signal<config::AppConfig>>() {
+                        if let Some(mut cfg) = cfg_ctx {
                             cfg.write().yt_oauth_refresh_token = tok.refresh_token.clone();
                         }
                         yt_pasted_cookies.set(oauth::to_sentinel(&tok.access_token));
@@ -490,6 +509,42 @@ fn OAuthSignIn(yt_pasted_cookies: Signal<String>) -> Element {
     rsx! {
         div { class: "flex flex-col gap-2",
             p { class: "text-xs text-white/60", "{i18n::t(\"yt_oauth_explainer\")}" }
+            // One-time Google Cloud client setup.
+            if let Some(mut cfg) = cfg_ctx {
+                details { class: "text-xs text-white/70 bg-white/5 border border-white/10 rounded-lg p-2",
+                    summary { class: "cursor-pointer select-none text-white/80",
+                        i { class: "fa-solid fa-key mr-1.5" }
+                        "{i18n::t(\"yt_oauth_setup_title\")}"
+                    }
+                    ol { class: "list-decimal list-inside space-y-0.5 mt-2 text-white/55",
+                        li { "{i18n::t(\"yt_oauth_setup_step1\")}" }
+                        li { "{i18n::t(\"yt_oauth_setup_step2\")}" }
+                        li { "{i18n::t(\"yt_oauth_setup_step3\")}" }
+                        li { "{i18n::t(\"yt_oauth_setup_step4\")}" }
+                    }
+                    a {
+                        class: "text-indigo-300 underline mt-1 inline-block",
+                        href: "https://console.cloud.google.com/apis/credentials",
+                        "console.cloud.google.com/apis/credentials"
+                    }
+                    input {
+                        r#type: "text",
+                        class: "w-full mt-2 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs font-mono placeholder:text-white/30 focus:outline-none focus:border-indigo-400",
+                        placeholder: "Client ID (…apps.googleusercontent.com)",
+                        value: "{cfg.read().yt_oauth_client_id}",
+                        oninput: move |e| cfg.write().yt_oauth_client_id = e.value(),
+                        onkeydown: move |e| e.stop_propagation(),
+                    }
+                    input {
+                        r#type: "password",
+                        class: "w-full mt-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs font-mono placeholder:text-white/30 focus:outline-none focus:border-indigo-400",
+                        placeholder: "Client secret (GOCSPX-…)",
+                        value: "{cfg.read().yt_oauth_client_secret}",
+                        oninput: move |e| cfg.write().yt_oauth_client_secret = e.value(),
+                        onkeydown: move |e| e.stop_propagation(),
+                    }
+                }
+            }
             if *done.read() {
                 p { class: "text-xs text-emerald-300",
                     i { class: "fa-solid fa-circle-check mr-1" }
@@ -513,11 +568,14 @@ fn OAuthSignIn(yt_pasted_cookies: Signal<String>) -> Element {
                 }
             } else {
                 button {
-                    class: "px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium transition-colors disabled:opacity-50 self-start",
-                    disabled: *busy.read(),
+                    class: "px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed self-start",
+                    disabled: *busy.read() || !creds_ready,
                     onclick: start,
                     i { class: "fa-brands fa-google mr-2" }
                     "{i18n::t(\"yt_oauth_button\")}"
+                }
+                if !creds_ready {
+                    p { class: "text-[11px] text-amber-300/80", "{i18n::t(\"yt_oauth_need_creds\")}" }
                 }
             }
             if let Some(err) = error.read().clone() {
