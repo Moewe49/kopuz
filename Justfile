@@ -43,6 +43,11 @@ android-patch:
     mkdir -p {{android_release_base}}/java/com/temidaradev/kopuz {{android_release_base}}/kotlin/dev/dioxus/main
     cp -rv {{android_src}}/java/com/temidaradev/kopuz/. {{android_release_base}}/java/com/temidaradev/kopuz/
     cp -rv {{android_src}}/kotlin/dev/dioxus/main/. {{android_release_base}}/kotlin/dev/dioxus/main/
+    # dx 0.7.x also scaffolds the app classes (MusicService/MediaReceiver/...)
+    # under kotlin/com/temidaradev/kopuz. Kotlin treats java/ and kotlin/ as a
+    # single source set, so keeping both copies is a "Redeclaration" error.
+    # Our android-src/java versions are authoritative — drop the dx dup.
+    rm -rf {{android_release_base}}/kotlin/com/temidaradev/kopuz
     @echo "Patching manifest and icons..."
     python3 {{android_src}}/patch_manifest.py {{android_release_base}}/AndroidManifest.xml
     @echo "Building APK..."

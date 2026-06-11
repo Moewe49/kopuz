@@ -23,9 +23,15 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67 # v1.20.0
       - name: Install dioxus-cli
-        run: cargo binstall dioxus-cli@0.7.9 -y --disable-strategies compile
+        # --force: the rust-cache can restore a "dx already installed" marker
+        # without a usable binary, which then isn't found below. Forcing the
+        # install guarantees dx.exe is actually present.
+        run: cargo binstall dioxus-cli@0.7.9 -y --force --disable-strategies compile
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add cargo bin to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
       - name: Build CSS
         run: |
           npm install
@@ -86,6 +92,14 @@ jobs:
           npx @tailwindcss/cli -i ./tailwind.css -o ./crates/kopuz/assets/tailwind.css
       - name: Build binary
         run: dx build --package kopuz --release
+      # Guaranteed portable download: tar the runnable app dir. Works even if
+      # the AppImage packaging (below) flakes.
+      - name: Portable tarball
+        run: |
+          mkdir -p dist
+          app=target/dx/kopuz/release/linux/app
+          cp scripts/install-linux.sh "$app/" || true
+          tar -czf dist/Kopuz-linux-x86_64.tar.gz -C "$app" .
       - name: Prepare AppDir
         run: |
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
@@ -93,32 +107,36 @@ jobs:
           cp data/com.temidaradev.kopuz.desktop AppDir/usr/share/applications/
           # Icon basename must match the desktop file's Icon= key.
           cp crates/kopuz/assets/logo.png AppDir/usr/share/icons/hicolor/256x256/apps/com.temidaradev.kopuz.png
-      - name: Download linuxdeploy
-        run: |
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
-          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh
+      # AppImage is best-effort — appimagetool occasionally exits non-zero on
+      # the runner (AppStream/FUSE quirks). The tarball already guarantees a
+      # Linux download, so a failed AppImage must not fail the release.
       - name: Build AppImage
+        continue-on-error: true
         env:
           ARCH: x86_64
           GTK_THEME: Adwaita
           DEPLOY_GTK_VERSION: 3
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
+          set -e
+          # appstreamcli quietens (and avoids) the AppStream failure path.
+          sudo apt-get install -y appstream || true
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --plugin gtk \
             --exclude-library "libwebkit2gtk*" \
             --exclude-library "libjavascriptcoregtk*" \
             --output appimage
-          # linuxdeploy names it from the desktop Name= (Kopuz). Normalize.
           built=$(ls -1 *.AppImage | grep -iv linuxdeploy | head -n1)
-          mv "$built" Kopuz-x86_64.AppImage
+          cp "$built" dist/Kopuz-x86_64.AppImage
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            Kopuz-x86_64.AppImage
+            dist/*
             scripts/install-linux.sh
           fail_on_unmatched_files: false
 
