@@ -514,8 +514,9 @@ delete_playlist_confirm = Permanently delete “{ $name }”? This cannot be und
 
 # YT OAuth client setup
 yt_oauth_setup_title = One-time setup: your own Google OAuth client
-yt_oauth_setup_step1 = Open the link below, create a project, and enable “YouTube Data API v3”.
-yt_oauth_setup_step2 = Credentials → Create credentials → OAuth client ID → type “TVs and Limited Input devices”.
-yt_oauth_setup_step3 = On the OAuth consent screen, add your Google account under “Test users”.
-yt_oauth_setup_step4 = Paste the Client ID and Client secret below — you only do this once.
+yt_oauth_setup_step1 = Create a Google Cloud project and enable “YouTube Data API v3”.
+yt_oauth_setup_step2 = Set up the consent screen (External) and PUBLISH the app, so the login doesn’t expire weekly.
+yt_oauth_setup_step3 = Create an OAuth client of type “TVs and Limited Input devices”.
+yt_oauth_setup_step4 = Paste its Client ID and Client secret below — one time only.
 yt_oauth_need_creds = Enter your Client ID and Client secret above first.
+yt_oauth_full_guide = Open the full step-by-step guide

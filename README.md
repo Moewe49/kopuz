@@ -424,7 +424,14 @@ on your `PATH`. Without it, tracks resolve but fail to play.
 
 ### Choosing a mode
 
-The setup dialog offers three methods:
+The setup dialog offers four methods:
+
+- **Sign in with Google (OAuth)** (all platforms — **recommended**) — stays
+  signed in permanently with no browser kept open and no cookie copying, ideal
+  for lightweight background playback. It needs your own free Google OAuth
+  client (a one-time ~5-minute setup, because Google disabled the old shared
+  client). Full walkthrough: **[English](docs/youtube-login-setup.md)** ·
+  **[Deutsch](docs/youtube-login-einrichten.md)**.
 
 - **Sign in with a browser** (Linux/macOS) — kopuz opens the Google sign-in
   page in an **isolated browser profile** (a fresh, separate session; your

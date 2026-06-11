@@ -519,9 +519,10 @@ download_song = Download
 delete_playlist_confirm = Permanently delete “{ $name }”? This cannot be undone.
 
 # YT OAuth client setup
-yt_oauth_setup_title = One-time setup: your own Google OAuth client
-yt_oauth_setup_step1 = Open the link below, create a project, and enable “YouTube Data API v3”.
-yt_oauth_setup_step2 = Credentials → Create credentials → OAuth client ID → type “TVs and Limited Input devices”.
-yt_oauth_setup_step3 = On the OAuth consent screen, add your Google account under “Test users”.
-yt_oauth_setup_step4 = Paste the Client ID and Client secret below — you only do this once.
-yt_oauth_need_creds = Enter your Client ID and Client secret above first.
+yt_oauth_setup_title = Einmalige Einrichtung: dein eigener Google-OAuth-Client
+yt_oauth_setup_step1 = Google-Cloud-Projekt anlegen und „YouTube Data API v3“ aktivieren.
+yt_oauth_setup_step2 = Zustimmungsbildschirm (Extern) einrichten und App VERÖFFENTLICHEN, damit der Login nicht wöchentlich abläuft.
+yt_oauth_setup_step3 = OAuth-Client vom Typ „Fernseher und Geräte mit begrenzter Eingabe“ erstellen.
+yt_oauth_setup_step4 = Dessen Client-ID und Clientschlüssel unten einfügen — nur einmal nötig.
+yt_oauth_need_creds = Erst oben Client-ID und Client-Secret eintragen.
+yt_oauth_full_guide = Vollständige Schritt-für-Schritt-Anleitung öffnen

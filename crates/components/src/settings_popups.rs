@@ -516,6 +516,12 @@ fn OAuthSignIn(yt_pasted_cookies: Signal<String>) -> Element {
                         i { class: "fa-solid fa-key mr-1.5" }
                         "{i18n::t(\"yt_oauth_setup_title\")}"
                     }
+                    a {
+                        class: "flex items-center gap-1.5 text-indigo-300 underline mt-2 font-medium",
+                        href: "https://github.com/Moewe49/kopuz/blob/master/docs/youtube-login-setup.md",
+                        i { class: "fa-solid fa-book-open" }
+                        "{i18n::t(\"yt_oauth_full_guide\")}"
+                    }
                     ol { class: "list-decimal list-inside space-y-0.5 mt-2 text-white/55",
                         li { "{i18n::t(\"yt_oauth_setup_step1\")}" }
                         li { "{i18n::t(\"yt_oauth_setup_step2\")}" }
@@ -524,8 +530,8 @@ fn OAuthSignIn(yt_pasted_cookies: Signal<String>) -> Element {
                     }
                     a {
                         class: "text-indigo-300 underline mt-1 inline-block",
-                        href: "https://console.cloud.google.com/apis/credentials",
-                        "console.cloud.google.com/apis/credentials"
+                        href: "https://console.cloud.google.com/auth/clients",
+                        "console.cloud.google.com"
                     }
                     input {
                         r#type: "text",
