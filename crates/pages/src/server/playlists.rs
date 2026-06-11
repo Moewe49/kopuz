@@ -23,6 +23,20 @@ pub fn JellyfinPlaylists(
     let mut yt_sync_error = use_signal(|| None::<String>);
     let download_queue = use_context::<Signal<DownloadQueue>>();
 
+    // Auto-refresh: while the playlists page is open, re-sync the playlist list
+    // every few minutes so new imports and server-side changes appear without a
+    // manual refresh. Cheap — this is just the playlist list, not each
+    // playlist's tracks (those load on open). Pauses while offline or syncing.
+    use_future(move || async move {
+        loop {
+            utils::sleep(std::time::Duration::from_secs(180)).await;
+            if !*is_offline.peek() && !*yt_is_syncing.peek() {
+                let next = *yt_refresh_nonce.peek() + 1;
+                yt_refresh_nonce.set(next);
+            }
+        }
+    });
+
     use_effect(move || {
         let yt_nonce = *yt_refresh_nonce.read();
         let trigger = *refresh_trigger.read();
@@ -65,7 +79,11 @@ pub fn JellyfinPlaylists(
         let fetch_key = fetch_context
             .as_ref()
             .map(|(service, url, token, user_id, _)| {
-                format!("{service:?}|{url}|{user_id}|{token}|{trigger}")
+                // Include the refresh nonce so an explicit/auto refresh always
+                // produces a distinct key and actually re-fetches (the dedup
+                // below otherwise treats an unchanged token+trigger as "already
+                // fetched" and silently skips).
+                format!("{service:?}|{url}|{user_id}|{token}|{trigger}|{yt_nonce}")
             });
 
         // peek() rather than read() — we already control re-firing
@@ -91,8 +109,9 @@ pub fn JellyfinPlaylists(
             return;
         }
 
-        // If server identity is the same and we have cached data, only re-fetch on explicit trigger
-        if server_key == last_server_key && has_cached && trigger == 0 {
+        // If server identity is the same and we have cached data, only re-fetch
+        // on an explicit trigger or refresh nonce (manual or periodic auto).
+        if server_key == last_server_key && has_cached && trigger == 0 && yt_nonce == 0 {
             // Update the key so we don't keep hitting this branch, but don't fetch
             last_fetch_key.set(fetch_key.clone());
             return;
