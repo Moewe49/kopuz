@@ -161,7 +161,7 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67 # v1.20.0
       - name: Install dioxus-cli + just
-        run: cargo binstall dioxus-cli@0.7.9 just -y --disable-strategies compile
+        run: cargo binstall dioxus-cli@0.7.9 just -y --force --disable-strategies compile
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build CSS
