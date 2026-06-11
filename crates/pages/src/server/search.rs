@@ -267,7 +267,11 @@ pub fn JellyfinSearch(
                                 }
                             }
                             // Playlist / album / artist shelves below, capped + scrollable.
-                            div { class: "shrink-0 max-h-[38vh] overflow-y-auto border-t border-white/5 pt-2 mt-2",
+                            // Inline max-height (not a Tailwind arbitrary class, which gets
+                            // purged) so full shelves can't eat the track list's height.
+                            div {
+                                class: "shrink-0 overflow-y-auto border-t border-white/5 pt-2 mt-2",
+                                style: "max-height: 36vh;",
                                 for (title_key, items) in [
                                     ("playlists", yt_sections.playlists.clone()),
                                     ("albums", yt_sections.albums.clone()),
