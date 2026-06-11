@@ -53,6 +53,44 @@ async fn try_resume(seed: Option<String>) -> Option<String> {
     None
 }
 
+/// Sentinel `Err` from [`ensure_signed_in`] meaning "no valid session and no
+/// way to refresh silently — the caller must run the interactive login window".
+const NEEDS_LOGIN: &str = "__yt_needs_login__";
+
+/// Adopt a freshly obtained YT cookie header as the active + saved session.
+/// Shared by the silent-refresh path and the interactive-login "Done" handler.
+fn persist_yt_session(
+    mut config: Signal<AppConfig>,
+    mut error: Signal<Option<String>>,
+    cookies: String,
+    browser: Browser,
+    manual: bool,
+) {
+    let yt_user_id =
+        ::server::ytmusic::derive_user_id(&cookies).unwrap_or_else(|| "me".to_string());
+    {
+        let mut cfg = config.write();
+        let saved_id = cfg.server.as_ref().and_then(|s| s.id.clone());
+        if let Some(srv) = cfg.server.as_mut() {
+            srv.access_token = Some(cookies.clone());
+            srv.user_id = Some(yt_user_id);
+            if !manual {
+                srv.yt_browser = Some(browser);
+            }
+        }
+        if let Some(id) = saved_id
+            && let Some(saved) = cfg.servers.iter_mut().find(|s| s.id == id)
+        {
+            if manual {
+                saved.yt_saved_cookies = Some(cookies);
+            } else {
+                saved.yt_browser = Some(browser);
+            }
+        }
+    }
+    error.set(None);
+}
+
 async fn ensure_signed_in(
     config_cookies: Option<String>,
     browser: Browser,
@@ -87,20 +125,11 @@ async fn ensure_signed_in(
         return Ok(c);
     }
 
-    // Not signed in (first run, or logged out): open a VISIBLE window on the
-    // persistent profile for a one-time login, then read the cookies via CDP
-    // (works on Windows too — bypasses App-Bound Encryption).
-    let cookies = ::server::ytmusic::cdp::fetch_cookies(
-        browser,
-        &profile,
-        false,
-        std::time::Duration::from_secs(300),
-    )
-    .await?;
-    if !validate(&cookies).await {
-        return Err("Sign-in completed but YT validation still failed".to_string());
-    }
-    Ok(cookies)
+    // Not signed in (first run, or logged out). The caller has to run the
+    // interactive login: a NORMAL browser window (driving it over CDP here
+    // makes Google reject the sign-in as an "insecure browser"), then a
+    // headless CDP extract once the user confirms they're done.
+    Err(NEEDS_LOGIN.to_string())
 }
 
 #[component]
@@ -186,6 +215,14 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
         });
     };
 
+    // Interactive-login modal state (managed-browser auto-login). When the
+    // silent refresh can't get a session, we open a normal browser window for
+    // the user to sign in, then wait for them to click "Done".
+    let mut yt_login_open = use_signal(|| false);
+    let mut yt_login_busy = use_signal(|| false);
+    let mut yt_login_pid = use_signal(|| None::<u32>);
+    let mut yt_login_ctx = use_signal(|| None::<(Browser, String)>);
+
     let ytmusic_auto_login = move || {
         // Prefer the browser already saved on the active server entry
         // (set during a previous successful sign-in); fall back to the
@@ -205,44 +242,68 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
             ctrl.playback_error.set(Some(msg));
         };
         spawn(async move {
-            let cookies = match ensure_signed_in(existing, browser, &server_id, manual).await {
-                Ok(c) => c,
-                Err(e) if manual => {
-                    report(e);
-                    return;
-                }
-                Err(e) => {
-                    report(format!("YT Music sign-in failed ({browser}): {e}"));
-                    return;
-                }
-            };
-
-            let yt_user_id =
-                ::server::ytmusic::derive_user_id(&cookies).unwrap_or_else(|| "me".to_string());
-            {
-                let mut cfg = config.write();
-                let saved_id = cfg.server.as_ref().and_then(|s| s.id.clone());
-                if let Some(srv) = cfg.server.as_mut() {
-                    srv.access_token = Some(cookies.clone());
-                    srv.user_id = Some(yt_user_id);
-                    if !manual {
-                        srv.yt_browser = Some(browser);
+            match ensure_signed_in(existing, browser, &server_id, manual).await {
+                Ok(cookies) => persist_yt_session(config, error, cookies, browser, manual),
+                Err(e) if e == NEEDS_LOGIN => {
+                    // Open a normal (non-automated) browser window for the
+                    // one-time sign-in, then pop the "Done" modal. The headless
+                    // CDP extract happens when the user confirms.
+                    let profile = ::server::ytmusic::isolated_profile::profile_dir(&server_id);
+                    match ::server::ytmusic::cdp::spawn_login_window(browser, &profile).await {
+                        Ok(pid) => {
+                            yt_login_pid.set(Some(pid));
+                            yt_login_ctx.set(Some((browser, server_id.clone())));
+                            yt_login_open.set(true);
+                        }
+                        Err(err) => report(format!("Could not open the sign-in browser: {err}")),
                     }
                 }
-                if let Some(id) = saved_id
-                    && let Some(saved) = cfg.servers.iter_mut().find(|s| s.id == id)
-                {
-                    if manual {
-                        // Keep the saved copy fresh so switching back to
-                        // this server restores a still-valid session.
-                        saved.yt_saved_cookies = Some(cookies);
-                    } else {
-                        saved.yt_browser = Some(browser);
-                    }
-                }
+                Err(e) if manual => report(e),
+                Err(e) => report(format!("YT Music sign-in failed ({browser}): {e}")),
             }
-            error.set(None);
         });
+    };
+
+    // "Done — I've signed in" handler: close the login window, then read the
+    // now-signed-in cookies headlessly via CDP and adopt the session.
+    let on_login_done = move |_| {
+        let pid = yt_login_pid.write().take();
+        let Some((browser, server_id)) = yt_login_ctx.peek().clone() else {
+            return;
+        };
+        yt_login_busy.set(true);
+        error.set(None);
+        spawn(async move {
+            if let Some(pid) = pid {
+                ::server::ytmusic::cdp::kill_pid(pid).await;
+            }
+            // Give the browser a moment to release the profile lock.
+            utils::sleep(std::time::Duration::from_secs(2)).await;
+            let profile = ::server::ytmusic::isolated_profile::profile_dir(&server_id);
+            match ::server::ytmusic::cdp::fetch_cookies(
+                browser,
+                &profile,
+                true,
+                std::time::Duration::from_secs(60),
+            )
+            .await
+            {
+                Ok(c) if validate(&c).await => {
+                    persist_yt_session(config, error, c, browser, false);
+                    yt_login_open.set(false);
+                }
+                Ok(_) => error.set(Some(i18n::t("yt_login_not_done").to_string())),
+                Err(e) => error.set(Some(format!("Reading the session failed: {e}"))),
+            }
+            yt_login_busy.set(false);
+        });
+    };
+    let on_login_cancel = move |_| {
+        if let Some(pid) = yt_login_pid.write().take() {
+            spawn(async move { ::server::ytmusic::cdp::kill_pid(pid).await });
+        }
+        yt_login_open.set(false);
+        yt_login_busy.set(false);
     };
 
     let handle_add_server = move |_| {
@@ -1071,6 +1132,39 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                             login_error.set(None);
                         },
                         on_save: handle_login
+                    }
+                }
+
+                if yt_login_open() {
+                    div { class: "overlay",
+                        div {
+                            class: "bg-neutral-900 border border-white/10 rounded-xl p-5 max-w-md w-full mx-4 shadow-2xl",
+                            h3 { class: "text-lg font-semibold text-white mb-1",
+                                i { class: "fa-solid fa-right-to-bracket mr-2" }
+                                "{i18n::t(\"yt_login_title\")}"
+                            }
+                            p { class: "text-sm text-white/60 mb-4", "{i18n::t(\"yt_login_body\")}" }
+                            if let Some(err) = error.read().clone() {
+                                p { class: "text-xs text-rose-300 mb-3 break-words", "{err}" }
+                            }
+                            div { class: "flex justify-end gap-2",
+                                button {
+                                    class: "px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors disabled:opacity-50",
+                                    disabled: yt_login_busy(),
+                                    onclick: on_login_cancel,
+                                    "{i18n::t(\"cancel\")}"
+                                }
+                                button {
+                                    class: "px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium transition-colors disabled:opacity-50",
+                                    disabled: yt_login_busy(),
+                                    onclick: on_login_done,
+                                    if yt_login_busy() {
+                                        i { class: "fa-solid fa-arrows-rotate fa-spin mr-1.5" }
+                                    }
+                                    "{i18n::t(\"yt_login_done\")}"
+                                }
+                            }
+                        }
                     }
                 }
             }

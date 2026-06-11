@@ -526,3 +526,9 @@ yt_oauth_setup_step3 = OAuth-Client vom Typ „Fernseher und Geräte mit begrenz
 yt_oauth_setup_step4 = Dessen Client-ID und Clientschlüssel unten einfügen — nur einmal nötig.
 yt_oauth_need_creds = Erst oben Client-ID und Client-Secret eintragen.
 yt_oauth_full_guide = Vollständige Schritt-für-Schritt-Anleitung öffnen
+
+# YT managed-browser login modal
+yt_login_title = Bei YouTube Music anmelden
+yt_login_body = Es hat sich ein Browserfenster geöffnet. Melde dich dort bei deinem YouTube-Konto an und klicke dann auf „Fertig“ — Kopuz übernimmt die Sitzung und hält dich ab jetzt automatisch angemeldet.
+yt_login_done = Fertig – ich bin angemeldet
+yt_login_not_done = Noch nicht angemeldet — bitte im Browserfenster fertig anmelden und erneut auf „Fertig“ klicken.

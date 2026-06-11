@@ -530,3 +530,9 @@ yt_oauth_setup_step3 = On the OAuth consent screen, add your Google account unde
 yt_oauth_setup_step4 = Paste the Client ID and Client secret below — you only do this once.
 yt_oauth_need_creds = Enter your Client ID and Client secret above first.
 yt_oauth_full_guide = Open the full step-by-step guide
+
+# YT managed-browser login modal
+yt_login_title = Sign in to YouTube Music
+yt_login_body = A browser window has opened. Sign in to your YouTube account there, then click Done — kopuz will grab the session and keep you signed in automatically from now on.
+yt_login_done = Done — I have signed in
+yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.

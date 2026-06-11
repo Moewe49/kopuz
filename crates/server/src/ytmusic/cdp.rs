@@ -36,6 +36,77 @@ const YT_URL: &str = "https://music.youtube.com/";
 const SIGNIN_URL: &str =
     "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com%2F";
 
+async fn resolve_bin(browser: Browser) -> Result<String, String> {
+    if in_flatpak() {
+        find_host_browser_bin(browser).await
+    } else {
+        find_browser_bin(browser)
+    }
+    .ok_or_else(|| format!("{browser} not found — install it to use auto-login"))
+}
+
+/// Open a **normal, visible** browser window on the persistent `profile` for the
+/// one-time Google login, and return its process id so the caller can close it
+/// once the user has signed in.
+///
+/// Crucially this launch carries **no** `--remote-debugging-port` / automation
+/// flags: Google blocks sign-in ("this browser or app may not be secure") when
+/// it detects the DevTools debugging pipe. Cookie extraction happens afterwards
+/// in a separate headless CDP launch ([`fetch_cookies`]) on the same profile —
+/// by then there's no login page involved, so the block never triggers.
+pub async fn spawn_login_window(browser: Browser, profile: &Path) -> Result<u32, String> {
+    let bin = resolve_bin(browser).await?;
+    tokio::fs::create_dir_all(profile)
+        .await
+        .map_err(|e| format!("mkdir profile: {e}"))?;
+    for name in ["SingletonLock", "SingletonCookie", "SingletonSocket"] {
+        let _ = tokio::fs::remove_file(profile.join(name)).await;
+    }
+    let profile_arg = format!("--user-data-dir={}", profile.display());
+    let build = |breakaway: bool| {
+        let mut cmd = browser_command(&bin);
+        cmd.arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg(&profile_arg)
+            .arg(SIGNIN_URL)
+            .kill_on_drop(false);
+        #[cfg(target_os = "windows")]
+        if breakaway {
+            cmd.creation_flags(0x0100_0000);
+        }
+        let _ = breakaway;
+        cmd
+    };
+    let child = match build(true).spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            build(false).spawn().map_err(|e| format!("spawn {bin}: {e}"))?
+        }
+        Err(e) => return Err(format!("spawn {bin}: {e}")),
+    };
+    child.id().ok_or_else(|| "browser exited immediately".to_string())
+}
+
+/// Best-effort terminate a login window (and its child processes) by pid.
+pub async fn kill_pid(pid: u32) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = tokio::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = tokio::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .await;
+    }
+}
+
 /// Launch `browser` on the persistent `profile`, drive it over CDP, and return
 /// a `Cookie:` header of the signed-in youtube.com cookies.
 ///
