@@ -20,18 +20,25 @@ percent-encoding = { workspace = true }
 httpdate = "1"
 hex = "0.4"
 web-time = { workspace = true }
-tokio = { workspace = true, features = ["fs", "process", "rt", "sync"] }
+tokio = { workspace = true, features = ["fs", "process", "rt", "sync", "time"] }
 reader = { workspace = true }
 
 # rookie's Chromium cookie decryption (the `get_keys` path) doesn't compile
 # for android/ios, and browser-based sign-in is desktop-only anyway. Mobile
-# uses the manual cookie-paste flow instead.
+# uses the manual cookie-paste flow instead. The CDP cookie-refresh client
+# (tokio-tungstenite + futures-util) is likewise desktop-only.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 rookie = "0.5"
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
 
 [[example]]
 name = "duration_probe"
 path = "examples/duration_probe.rs"
+
+[[example]]
+name = "cdp_probe"
+path = "examples/cdp_probe.rs"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

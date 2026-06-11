@@ -295,6 +295,57 @@ async fn run_oauth_refresh(mut config: Signal<config::AppConfig>) {
     }
 }
 
+#[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+/// Silent "auto-login" refresh: for a YT server set up via the managed-browser
+/// sign-in, drive its persistent profile HEADLESS via CDP to pull freshly
+/// rotated cookies (no visible window). Runs on boot + periodically so the
+/// session the user logged into once stays alive until they actually log out.
+async fn run_browser_refresh(mut config: Signal<config::AppConfig>) {
+    let (browser, server_id) = {
+        let c = config.peek();
+        let srv = c.server.as_ref();
+        let is_yt = srv.map(|s| s.service == config::MusicService::YtMusic).unwrap_or(false);
+        // Only browser-login servers (yt_browser set, not manual paste).
+        let browser = srv.filter(|_| is_yt).and_then(|s| (!s.yt_manual).then_some(()).and(s.yt_browser));
+        (browser, srv.and_then(|s| s.id.clone()).unwrap_or_default())
+    };
+    let Some(browser) = browser else { return };
+
+    let profile = server::ytmusic::isolated_profile::profile_dir(&server_id);
+    if !profile.is_dir() {
+        return;
+    }
+    match server::ytmusic::cdp::fetch_cookies(
+        browser,
+        &profile,
+        true,
+        std::time::Duration::from_secs(25),
+    )
+    .await
+    {
+        Ok(fresh) if !fresh.is_empty() => {
+            let user_id =
+                server::ytmusic::derive_user_id(&fresh).unwrap_or_else(|| "me".to_string());
+            let mut cfg = config.write();
+            let saved_id = cfg.server.as_ref().and_then(|s| s.id.clone());
+            if let Some(srv) = cfg.server.as_mut()
+                && srv.access_token.as_deref() != Some(fresh.as_str())
+            {
+                srv.access_token = Some(fresh.clone());
+                srv.user_id = Some(user_id);
+                eprintln!("[yt-browser] refreshed cookies via headless CDP");
+            }
+            if let Some(id) = saved_id
+                && let Some(saved) = cfg.servers.iter_mut().find(|s| s.id == id)
+            {
+                saved.yt_browser = Some(browser);
+            }
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[yt-browser] headless refresh skipped: {e}"),
+    }
+}
+
 async fn run_rotation(mut config: Signal<config::AppConfig>) {
     let cookies = match config.peek().server.as_ref() {
         Some(s) if s.service == config::MusicService::YtMusic => s.access_token.clone(),
@@ -1425,6 +1476,51 @@ fn App() -> Element {
                     return;
                 }
                 run_oauth_refresh(config).await;
+            }
+        });
+    });
+
+    // Managed-browser "auto-login": refresh the session headlessly via CDP on
+    // boot and every 10 min, so a browser-login YT server stays alive without
+    // any visible window or re-pasting. Desktop only (needs a real browser).
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+    let mut yt_browser_refresh_started = use_signal(|| false);
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+    use_effect(move || {
+        if !*initial_load_done.read() {
+            return;
+        }
+        let want = config
+            .read()
+            .server
+            .as_ref()
+            .map(|s| {
+                s.service == config::MusicService::YtMusic && !s.yt_manual && s.yt_browser.is_some()
+            })
+            .unwrap_or(false);
+        if !want || *yt_browser_refresh_started.peek() {
+            return;
+        }
+        yt_browser_refresh_started.set(true);
+        spawn(async move {
+            run_browser_refresh(config).await;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10 * 60)).await;
+                let still = config
+                    .peek()
+                    .server
+                    .as_ref()
+                    .map(|s| {
+                        s.service == config::MusicService::YtMusic
+                            && !s.yt_manual
+                            && s.yt_browser.is_some()
+                    })
+                    .unwrap_or(false);
+                if !still {
+                    yt_browser_refresh_started.set(false);
+                    return;
+                }
+                run_browser_refresh(config).await;
             }
         });
     });

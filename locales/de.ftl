@@ -475,7 +475,7 @@ sleep_timer_minutes = { $min } Minuten
 sleep_timer_off = Ausschalten
 
 # YT Music manual cookie auth
-yt_auth_browser = Mit einem Browser anmelden
+yt_auth_browser = Auto-Login (verwalteter Browser – empfohlen, bleibt angemeldet)
 yt_auth_paste = Cookies einfügen (funktioniert unter Windows)
 yt_auth_anonymous = Ohne Anmeldung fortfahren (anonym)
 yt_anon_explainer = kopuz nutzt YouTube Music ohne Anmeldung. Stöbern, Suchen und Abspielen funktionieren — aber Lieblingsmusik, Bibliotheks-Playlists und Folgen/Liken sind deaktiviert.

@@ -21,14 +21,11 @@ pub enum YtAuthMethod {
 }
 
 impl YtAuthMethod {
-    /// Windows opens on the paste flow (the only signed-in path
-    /// there); other platforms keep the one-click browser sign-in.
+    /// Default to the managed-browser auto-login on every desktop platform —
+    /// the CDP cookie path works on Windows too now (it bypasses App-Bound
+    /// Encryption), so it's the recommended "sign in once, stays alive" route.
     pub fn default_for_platform() -> Self {
-        if cfg!(target_os = "windows") {
-            Self::PasteCookies
-        } else {
-            Self::BrowserSignin
-        }
+        Self::BrowserSignin
     }
 }
 
@@ -271,13 +268,11 @@ fn ServerServiceFields(
     // and Chrome 127+ App-Bound Encryption blocks decrypting the
     // profile's cookies. Hide that option there; manual cookies are
     // the Windows sign-in path.
-    let windows = cfg!(target_os = "windows");
     use_effect(move || {
-        let m = *yt_auth.peek();
-        // OAuth is hidden (broken by Google) — fall back to paste.
-        if m == YtAuthMethod::OAuth {
-            yt_auth.set(YtAuthMethod::PasteCookies);
-        } else if cfg!(target_os = "windows") && m == YtAuthMethod::BrowserSignin {
+        // OAuth is hidden (broken by Google) — fall back to paste. Browser
+        // sign-in now works on Windows via the headless CDP path, so it's no
+        // longer forced away there.
+        if *yt_auth.peek() == YtAuthMethod::OAuth {
             yt_auth.set(YtAuthMethod::PasteCookies);
         }
     });
@@ -288,18 +283,17 @@ fn ServerServiceFields(
         MusicService::YtMusic => {
             let method = yt_auth();
             rsx! {
-                // Auth method selector (browser sign-in hidden on Windows).
+                // Auth method selector. Browser sign-in (auto-login) is shown on
+                // all desktop platforms — the CDP refresh path works on Windows.
                 div { class: "flex flex-col gap-2 mb-2",
-                    if !windows {
-                        label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
-                            input {
-                                r#type: "radio",
-                                name: "yt-auth-method",
-                                checked: method == YtAuthMethod::BrowserSignin,
-                                onchange: move |_| yt_auth.set(YtAuthMethod::BrowserSignin),
-                            }
-                            span { "{i18n::t(\"yt_auth_browser\")}" }
+                    label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
+                        input {
+                            r#type: "radio",
+                            name: "yt-auth-method",
+                            checked: method == YtAuthMethod::BrowserSignin,
+                            onchange: move |_| yt_auth.set(YtAuthMethod::BrowserSignin),
                         }
+                        span { "{i18n::t(\"yt_auth_browser\")}" }
                     }
                     // NOTE: the OAuth ("Sign in with Google") method is hidden —
                     // Google disabled OAuth against the YouTube Music InnerTube
@@ -393,7 +387,7 @@ fn ServerServiceFields(
                     },
                     YtAuthMethod::BrowserSignin => rsx! {
                         p { class: "text-xs text-white/60",
-                            "Pick which browser kopuz should use for the YouTube Music sign-in window. It opens in an isolated profile (a fresh, separate session) — your normal browsing is untouched. Make sure the browser is installed."
+                            "Sign in once: kopuz opens a small browser window (its own private profile — your normal browsing is untouched). After that, kopuz keeps you signed in automatically by refreshing the session invisibly in the background on each start — no window, no re-pasting, until you actually log out. Pick which installed browser to use."
                         }
                         select {
                             onchange: move |e| {

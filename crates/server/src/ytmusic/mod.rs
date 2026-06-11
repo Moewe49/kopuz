@@ -2,6 +2,8 @@ use reader::models::Track;
 use serde_json::Value;
 
 pub mod botguard;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod cdp;
 pub mod clients;
 pub mod cookies;
 pub mod decipher;

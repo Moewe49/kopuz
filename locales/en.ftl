@@ -469,7 +469,7 @@ sleep_timer_minutes = { $min } minutes
 sleep_timer_off = Turn off
 
 # YT Music manual cookie auth
-yt_auth_browser = Sign in with a browser
+yt_auth_browser = Auto-login (managed browser — recommended, stays signed in)
 yt_auth_paste = Paste cookies (works on Windows)
 yt_auth_anonymous = Continue without signing in (anonymous)
 yt_anon_explainer = kopuz will use YouTube Music without signing in. You can browse, search, and play — but Liked Music, your library playlists, and following/liking are disabled.

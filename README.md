@@ -433,22 +433,24 @@ on your `PATH`. Without it, tracks resolve but fail to play.
 
 The setup dialog offers these methods:
 
-- **Paste cookies (Incognito method — most reliable)** — the fix for "cookies
-  die after a few minutes": YouTube keeps **rotating** the session as long as a
-  YouTube tab stays open in your browser, which invalidates copied cookies
-  within minutes. Instead, open a **private/incognito** window, sign in at
-  music.youtube.com, copy the `Cookie` header (F12 → Network → any request →
-  Request Headers → Cookie), paste it into Kopuz, then **close the incognito
-  window immediately**. The frozen session keeps the cookies valid for days,
-  and Kopuz's keepalive extends them further. The browser is only open for ~30
-  seconds at setup — nothing runs in the background afterwards.
+- **Auto-login (managed browser — recommended, all desktop platforms)** — sign
+  in **once** and stay signed in until you actually log out. kopuz opens a small
+  browser window on its **own private profile** (your normal browsing is never
+  touched) for the one-time login. After that, on every app start and every 10
+  minutes, kopuz launches that browser **headless (invisible)**, lets it reload
+  music.youtube.com to roll the rotating session cookies forward, and pulls the
+  fresh cookies out via the Chrome DevTools Protocol — which also bypasses
+  Chrome 127+ App-Bound Encryption, so it works on Windows. No window after
+  setup, nothing kept open in the background, no re-pasting. Needs a
+  Chromium-family browser installed (Chrome, Edge, Brave, Chromium, or Vivaldi).
 
-- **Sign in with a browser** (Linux/macOS) — kopuz opens the Google sign-in
-  page in an **isolated browser profile** (a fresh, separate session; your
-  normal browsing is never touched), waits for you to log in, and extracts the
-  session cookies. Pick which installed Chromium-family browser to use (Chrome,
-  Chromium, Brave, Edge, or Vivaldi). This unlocks your **library, Liked Music,
-  playlists, and followed artists**.
+- **Paste cookies (Incognito method)** — manual alternative. YouTube keeps
+  **rotating** the session as long as a YouTube tab stays open, which
+  invalidates copied cookies within minutes. So open a **private/incognito**
+  window, sign in at music.youtube.com, copy the `Cookie` header (F12 → Network
+  → any request → Request Headers → Cookie), paste it into Kopuz, then **close
+  the incognito window immediately**. The frozen session keeps the cookies valid
+  for days, and Kopuz's keepalive extends them further.
 
 - **Paste cookies** (all platforms — **the signed-in path on Windows**) — copy
   the `Cookie` request header from a signed-in music.youtube.com tab (F12 →

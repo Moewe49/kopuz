@@ -70,18 +70,30 @@ async fn ensure_signed_in(
     }
 
     let profile = ::server::ytmusic::isolated_profile::profile_dir(server_id);
-    if profile.is_dir() {
-        let from_profile = ::server::ytmusic::cookies::extract_from(browser, &profile)
-            .await
-            .ok();
-        if let Some(c) = try_resume(from_profile).await {
-            return Ok(c);
-        }
+
+    // Silent refresh: drive the persistent managed profile HEADLESS via CDP.
+    // If we're still signed in there, this rolls the rotating cookies forward
+    // and returns fresh ones with no visible window — the everyday path.
+    if profile.is_dir()
+        && let Ok(c) = ::server::ytmusic::cdp::fetch_cookies(
+            browser,
+            &profile,
+            true,
+            std::time::Duration::from_secs(25),
+        )
+        .await
+        && validate(&c).await
+    {
+        return Ok(c);
     }
 
-    let cookies = ::server::ytmusic::isolated_profile::launch_signin_and_extract(
+    // Not signed in (first run, or logged out): open a VISIBLE window on the
+    // persistent profile for a one-time login, then read the cookies via CDP
+    // (works on Windows too — bypasses App-Bound Encryption).
+    let cookies = ::server::ytmusic::cdp::fetch_cookies(
         browser,
-        server_id,
+        &profile,
+        false,
         std::time::Duration::from_secs(300),
     )
     .await?;
