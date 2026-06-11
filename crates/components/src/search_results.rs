@@ -63,7 +63,10 @@ pub fn SearchResults(
     );
 
     rsx! {
-        div { class: "mt-8 w-full max-w-[1600px] mx-auto select-none flex-1 min-h-0 flex flex-col",
+        // Full width so the scroll area spans the whole pane — scrolling used to
+        // only work over the centered (max-w-[1600px]) column, dead in the side
+        // margins. Rows now use the full width.
+        div { class: "mt-8 w-full select-none flex-1 min-h-0 flex flex-col",
             if !tracks.is_empty() {
                 div { class: "shrink-0 mb-4",
                     h2 { class: "text-xl font-semibold text-white/80 mb-4", "{i18n::t(\"tracks\")}" }
