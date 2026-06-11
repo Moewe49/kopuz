@@ -1,5 +1,12 @@
 # Set up YouTube Music login (your own Google client)
 
+> ⛔ **CURRENTLY NOT WORKING — do not follow this guide.** Google disabled OAuth
+> against the YouTube Music API in 2025/2026: every request returns HTTP 400
+> `INVALID_ARGUMENT` even with a correctly configured personal client (verified;
+> the same change broke ytmusicapi and yt-dlp OAuth). **Use the Incognito cookie
+> method instead** — see the README's "YouTube Music Setup" section. This guide
+> is kept for reference in case Google re-enables OAuth.
+
 To keep you **permanently** signed in to YouTube Music — with no browser kept
 open and no cookie copying — Kopuz needs your own Google OAuth client. It sounds
 technical, but it takes **~5 minutes** and you only do it **once**.

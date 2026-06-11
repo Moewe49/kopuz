@@ -273,7 +273,11 @@ fn ServerServiceFields(
     // the Windows sign-in path.
     let windows = cfg!(target_os = "windows");
     use_effect(move || {
-        if cfg!(target_os = "windows") && *yt_auth.peek() == YtAuthMethod::BrowserSignin {
+        let m = *yt_auth.peek();
+        // OAuth is hidden (broken by Google) — fall back to paste.
+        if m == YtAuthMethod::OAuth {
+            yt_auth.set(YtAuthMethod::PasteCookies);
+        } else if cfg!(target_os = "windows") && m == YtAuthMethod::BrowserSignin {
             yt_auth.set(YtAuthMethod::PasteCookies);
         }
     });
@@ -297,15 +301,12 @@ fn ServerServiceFields(
                             span { "{i18n::t(\"yt_auth_browser\")}" }
                         }
                     }
-                    label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
-                        input {
-                            r#type: "radio",
-                            name: "yt-auth-method",
-                            checked: method == YtAuthMethod::OAuth,
-                            onchange: move |_| yt_auth.set(YtAuthMethod::OAuth),
-                        }
-                        span { "{i18n::t(\"yt_auth_oauth\")}" }
-                    }
+                    // NOTE: the OAuth ("Sign in with Google") method is hidden —
+                    // Google disabled OAuth against the YouTube Music InnerTube
+                    // API in 2025/2026 (every browse/playlist call returns HTTP
+                    // 400 INVALID_ARGUMENT even with a correct personal client),
+                    // a server-side change that also broke ytmusicapi/yt-dlp
+                    // OAuth. The code path stays for if/when Google reopens it.
                     label { class: "flex items-center gap-2 text-sm text-white cursor-pointer",
                         input {
                             r#type: "radio",

@@ -424,14 +424,24 @@ on your `PATH`. Without it, tracks resolve but fail to play.
 
 ### Choosing a mode
 
-The setup dialog offers four methods:
+> **About OAuth ("Sign in with Google"):** Google disabled OAuth against the
+> YouTube Music API in 2025/2026 — every call returns HTTP 400 even with a
+> correct personal OAuth client (the same server-side change broke ytmusicapi
+> and yt-dlp OAuth). The option is therefore hidden. Use the cookie methods
+> below. See [docs/youtube-login-setup.md](docs/youtube-login-setup.md) for the
+> background.
 
-- **Sign in with Google (OAuth)** (all platforms — **recommended**) — stays
-  signed in permanently with no browser kept open and no cookie copying, ideal
-  for lightweight background playback. It needs your own free Google OAuth
-  client (a one-time ~5-minute setup, because Google disabled the old shared
-  client). Full walkthrough: **[English](docs/youtube-login-setup.md)** ·
-  **[Deutsch](docs/youtube-login-einrichten.md)**.
+The setup dialog offers these methods:
+
+- **Paste cookies (Incognito method — most reliable)** — the fix for "cookies
+  die after a few minutes": YouTube keeps **rotating** the session as long as a
+  YouTube tab stays open in your browser, which invalidates copied cookies
+  within minutes. Instead, open a **private/incognito** window, sign in at
+  music.youtube.com, copy the `Cookie` header (F12 → Network → any request →
+  Request Headers → Cookie), paste it into Kopuz, then **close the incognito
+  window immediately**. The frozen session keeps the cookies valid for days,
+  and Kopuz's keepalive extends them further. The browser is only open for ~30
+  seconds at setup — nothing runs in the background afterwards.
 
 - **Sign in with a browser** (Linux/macOS) — kopuz opens the Google sign-in
   page in an **isolated browser profile** (a fresh, separate session; your
