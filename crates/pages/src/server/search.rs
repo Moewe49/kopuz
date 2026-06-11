@@ -234,69 +234,10 @@ pub fn JellyfinSearch(
                 SearchBar { search_query: data.search_query }
 
                 if let Some((tracks, albums)) = tracks_ready.clone() {
-                    // YT Music entity shelves — whole playlists, albums
-                    // and artists straight from the search bar, with the
-                    // same play-all tiles as Discover. The shelf block is
-                    // height-capped with its own scroll so SearchResults
-                    // below keeps the flex height chain its virtualized
-                    // track list depends on.
-                    if !yt_sections.is_empty() {
-                        div { class: "flex flex-col flex-1 min-h-0",
-                            // Songs first (Spotify-style): the track list gets the
-                            // main area at the top so it's immediately visible.
-                            div { class: "flex-1 min-h-0 flex flex-col",
-                                SearchResults {
-                                    search_query: data.search_query.read().clone(),
-                                    tracks: tracks.clone(),
-                                    albums: albums.clone(),
-                                    library,
-                                    playlist_store,
-                                    player,
-                                    is_playing,
-                                    current_song_cover_url,
-                                    current_song_title,
-                                    current_song_artist,
-                                    current_song_duration,
-                                    current_song_progress,
-                                    queue,
-                                    current_queue_index,
-                                    active_menu_track,
-                                    show_playlist_modal,
-                                    selected_track_for_playlist,
-                                    on_select_album,
-                                }
-                            }
-                            // Playlist / album / artist shelves below, capped + scrollable.
-                            // Inline max-height (not a Tailwind arbitrary class, which gets
-                            // purged) so full shelves can't eat the track list's height.
-                            div {
-                                class: "shrink-0 overflow-y-auto border-t border-white/5 pt-2 mt-2",
-                                style: "max-height: 36vh;",
-                                for (title_key, items) in [
-                                    ("playlists", yt_sections.playlists.clone()),
-                                    ("albums", yt_sections.albums.clone()),
-                                    ("artists", yt_sections.artists.clone()),
-                                ] {
-                                    if !items.is_empty() {
-                                        ShelfRow {
-                                            shelf: server::ytmusic::discover::DiscoverShelf {
-                                                title: i18n::t(title_key),
-                                                strapline: None,
-                                                more_browse_id: None,
-                                                items,
-                                                is_song_list: false,
-                                            },
-                                            scroll_id: format!("search-shelf-{title_key}"),
-                                            on_select_album: on_select_album,
-                                            on_select_playlist: on_select_playlist,
-                                            on_open_artist: on_open_artist,
-                                            on_search_artist: on_search_artist,
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
+                    // One scroll: songs at the top, then the playlist / album /
+                    // artist shelves right below in the SAME scroll (passed as
+                    // extra_below). Scrolling down reaches everything — no more
+                    // cramped, separately-scrolling shelf box.
                     SearchResults {
                         search_query: data.search_query.read().clone(),
                         tracks: tracks.clone(),
@@ -316,7 +257,34 @@ pub fn JellyfinSearch(
                         show_playlist_modal,
                         selected_track_for_playlist,
                         on_select_album,
-                    }
+                        extra_below: Some(rsx! {
+                            if !yt_sections.is_empty() {
+                                div { class: "mt-10 space-y-4",
+                                    for (title_key, items) in [
+                                        ("playlists", yt_sections.playlists.clone()),
+                                        ("albums", yt_sections.albums.clone()),
+                                        ("artists", yt_sections.artists.clone()),
+                                    ] {
+                                        if !items.is_empty() {
+                                            ShelfRow {
+                                                shelf: server::ytmusic::discover::DiscoverShelf {
+                                                    title: i18n::t(title_key),
+                                                    strapline: None,
+                                                    more_browse_id: None,
+                                                    items,
+                                                    is_song_list: false,
+                                                },
+                                                scroll_id: format!("search-shelf-{title_key}"),
+                                                on_select_album: on_select_album,
+                                                on_select_playlist: on_select_playlist,
+                                                on_open_artist: on_open_artist,
+                                                on_search_artist: on_search_artist,
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }),
                     }
                 } else {
                     SearchGenres {

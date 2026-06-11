@@ -29,6 +29,11 @@ pub fn SearchResults(
     mut show_playlist_modal: Signal<bool>,
     mut selected_track_for_playlist: Signal<Option<std::path::PathBuf>>,
     on_select_album: EventHandler<String>,
+    /// Extra content rendered at the very bottom of the track scroll (used by
+    /// YT search to put the playlist/album/artist shelves in the SAME scroll as
+    /// the tracks, so everything scrolls together).
+    #[props(default)]
+    extra_below: Option<Element>,
 ) -> Element {
     let mut ctrl = use_context::<PlayerController>();
     let config = use_context::<Signal<AppConfig>>();
@@ -113,6 +118,9 @@ pub fn SearchResults(
                                         }
                                     }
                                 }
+                            }
+                            if let Some(extra) = extra_below.clone() {
+                                {extra}
                             }
                         },
                         for (idx, (track, cover_url)) in sorted_tracks.iter().enumerate().skip(scroll_info.start_index).take(scroll_info.items_to_render) {
