@@ -493,3 +493,6 @@ no_results = No results
 
 # Toast
 added_to_playlist_toast = Added to “{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = Stay signed in automatically — re-read cookies from a signed-in browser on startup (keep YouTube open in Firefox; works without F12 again).

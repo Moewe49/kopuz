@@ -98,6 +98,55 @@ pub async fn extract_from_firefox() -> Result<String, String> {
     })
 }
 
+/// Scan every supported desktop browser for a signed-in YouTube session and
+/// return the first valid `Cookie:` header. Powers "stay signed in
+/// automatically": the browser keeps the session (and its rotating cookies)
+/// alive, and kopuz re-reads them on boot + periodically — no F12, no
+/// re-pasting. Firefox is tried first (no app-bound encryption, always
+/// readable); Chromium browsers follow (may be blocked by Chrome 127+ ABE on
+/// Windows, in which case Firefox is the reliable choice).
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn extract_from_any_browser() -> Result<String, String> {
+    Err("Browser cookie auto-refresh is not available on mobile".to_string())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub async fn extract_from_any_browser() -> Result<String, String> {
+    tokio::task::spawn_blocking(|| {
+        let domains = || Some(vec!["youtube.com".to_string()]);
+        type Reader = fn(Option<Vec<String>>) -> rookie::Result<Vec<rookie::enums::Cookie>>;
+        let readers: [(&str, Reader); 7] = [
+            ("Firefox", rookie::firefox),
+            ("LibreWolf", rookie::librewolf),
+            ("Chrome", rookie::chrome),
+            ("Brave", rookie::brave),
+            ("Edge", rookie::edge),
+            ("Chromium", rookie::chromium),
+            ("Vivaldi", rookie::vivaldi),
+        ];
+        for (_name, read) in readers {
+            let Ok(cookies) = read(domains()) else {
+                continue;
+            };
+            let header = cookies
+                .iter()
+                .filter(|c| !c.value.is_empty() && header_safe(&c.name) && header_safe(&c.value))
+                .map(|c| format!("{}={}", c.name, c.value))
+                .collect::<Vec<_>>()
+                .join("; ");
+            if let Ok(h) = sanitize_header(&header) {
+                return Ok(h);
+            }
+        }
+        Err("No signed-in YouTube session found in any browser — open \
+             music.youtube.com in Firefox (or Chrome/Brave/Edge), sign in, and keep \
+             that browser installed."
+            .to_string())
+    })
+    .await
+    .map_err(|e| format!("cookie task: {e}"))?
+}
+
 fn looks_like_netscape(s: &str) -> bool {
     s.starts_with("# Netscape") || s.lines().any(|l| l.split('\t').count() >= 7)
 }

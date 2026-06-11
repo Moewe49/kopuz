@@ -497,3 +497,6 @@ no_results = Sonuç yok
 
 # Toast
 added_to_playlist_toast = “{ $name }” listesine eklendi
+
+# YT auto-refresh
+yt_auto_refresh_label = Otomatik oturum açık kalsın — başlangıçta oturum açık bir tarayıcıdan çerezleri yeniden okur (YouTube'u Firefox'ta açık tut; F12'ye gerek yok).

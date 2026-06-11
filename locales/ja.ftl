@@ -503,3 +503,6 @@ no_results = 結果なし
 
 # Toast
 added_to_playlist_toast = 「{ $name }」に追加しました
+
+# YT auto-refresh
+yt_auto_refresh_label = 自動的にログイン状態を維持 — 起動時にログイン済みブラウザから Cookie を再読み込み（Firefox で YouTube を開いたままに。F12 不要）。

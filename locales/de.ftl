@@ -499,3 +499,6 @@ no_results = Keine Ergebnisse
 
 # Toast
 added_to_playlist_toast = Zu „{ $name }“ hinzugefügt
+
+# YT auto-refresh
+yt_auto_refresh_label = Automatisch eingeloggt bleiben — Cookies beim Start aus einem eingeloggten Browser holen (in Firefox bei YouTube angemeldet bleiben; kein F12 mehr nötig).

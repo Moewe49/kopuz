@@ -497,3 +497,6 @@ no_results = Nincs találat
 
 # Toast
 added_to_playlist_toast = Hozzáadva: „{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = Automatikus bejelentkezve maradás — indításkor újraolvassa a sütiket egy bejelentkezett böngészőből (tartsd nyitva a YouTube-ot Firefoxban; nincs több F12).

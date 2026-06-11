@@ -542,6 +542,12 @@ pub struct AppConfig {
     /// Rotating PKCE refresh token for the connected Spotify account.
     #[serde(default)]
     pub spotify_refresh_token: String,
+    /// "Stay signed in to YouTube Music automatically": when true, kopuz
+    /// re-reads YouTube cookies from a signed-in desktop browser (Firefox /
+    /// Chrome / Brave / Edge / …) on startup and periodically, so the session
+    /// never has to be pasted again. The browser keeps the cookies fresh.
+    #[serde(default)]
+    pub yt_auto_refresh: bool,
     #[serde(default = "default_language")]
     pub language: String,
     #[serde(default)]
@@ -869,6 +875,7 @@ impl Default for AppConfig {
             lastfm_session_key: String::new(),
             spotify_client_id: String::new(),
             spotify_refresh_token: String::new(),
+            yt_auto_refresh: false,
             language: default_language(),
             reduce_animations: false,
             auto_check_updates: default_auto_check_updates(),

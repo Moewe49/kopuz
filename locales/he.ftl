@@ -497,3 +497,6 @@ no_results = אין תוצאות
 
 # Toast
 added_to_playlist_toast = נוסף ל-“{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = להישאר מחובר אוטומטית — קורא מחדש עוגיות מדפדפן מחובר בהפעלה (השאר את YouTube פתוח ב-Firefox; ללא F12).

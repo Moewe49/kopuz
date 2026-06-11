@@ -497,3 +497,6 @@ no_results = 无结果
 
 # Toast
 added_to_playlist_toast = 已添加到“{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = 自动保持登录 — 启动时从已登录的浏览器重新读取 Cookie（在 Firefox 中保持 YouTube 登录；无需再用 F12）。

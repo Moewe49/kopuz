@@ -496,3 +496,6 @@ no_results = Tidak ada hasil
 
 # Toast
 added_to_playlist_toast = Ditambahkan ke “{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = Tetap masuk otomatis — membaca ulang cookie dari browser yang sudah login saat mulai (biarkan YouTube terbuka di Firefox; tanpa F12 lagi).

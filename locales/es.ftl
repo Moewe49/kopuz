@@ -498,3 +498,6 @@ no_results = Sin resultados
 
 # Toast
 added_to_playlist_toast = Añadido a “{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = Mantener la sesión automáticamente: relee las cookies de un navegador con sesión al iniciar (mantén YouTube abierto en Firefox; sin F12 otra vez).

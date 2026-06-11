@@ -497,3 +497,6 @@ no_results = Κανένα αποτέλεσμα
 
 # Toast
 added_to_playlist_toast = Προστέθηκε στο «{ $name }»
+
+# YT auto-refresh
+yt_auto_refresh_label = Παραμονή σύνδεσης αυτόματα — διαβάζει ξανά τα cookies από συνδεδεμένο πρόγραμμα περιήγησης κατά την εκκίνηση (κράτα το YouTube ανοιχτό στο Firefox· χωρίς F12).

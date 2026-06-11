@@ -497,3 +497,6 @@ no_results = ijo ala li lon
 
 # Toast
 added_to_playlist_toast = li kama lon kulupu “{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = o awen lon kepeken ilo ante — ilo li kama jo e sitelen tan ilo lukin lon open (o awen lon YouTube lon ilo Firefox).

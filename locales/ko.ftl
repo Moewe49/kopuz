@@ -497,3 +497,6 @@ no_results = 결과 없음
 
 # Toast
 added_to_playlist_toast = “{ $name }”에 추가됨
+
+# YT auto-refresh
+yt_auto_refresh_label = 자동으로 로그인 유지 — 시작 시 로그인된 브라우저에서 쿠키를 다시 읽습니다(Firefox에서 YouTube를 열어두세요; F12 불필요).

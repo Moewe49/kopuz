@@ -497,3 +497,6 @@ no_results = Niciun rezultat
 
 # Toast
 added_to_playlist_toast = Adăugat la „{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = Rămâi conectat automat — recitește cookie-urile dintr-un browser conectat la pornire (ține YouTube deschis în Firefox; fără F12).

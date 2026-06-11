@@ -497,3 +497,6 @@ no_results = Brak wyników
 
 # Toast
 added_to_playlist_toast = Dodano do „{ $name }”
+
+# YT auto-refresh
+yt_auto_refresh_label = Pozostań zalogowany automatycznie — odczytuje pliki cookie z zalogowanej przeglądarki przy starcie (trzymaj YouTube w Firefoksie; bez F12).

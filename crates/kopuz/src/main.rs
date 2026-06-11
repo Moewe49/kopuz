@@ -213,6 +213,46 @@ fn persist_config_snapshot(config_snapshot: config::AppConfig, _path: std::path:
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// "Stay signed in automatically": pull a fresh YouTube cookie header from a
+/// signed-in desktop browser and adopt it as the active session. Runs on boot
+/// and periodically so a pasted session never has to be refreshed by hand.
+#[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+async fn run_auto_refresh(mut config: Signal<config::AppConfig>) {
+    let active_yt = config
+        .peek()
+        .server
+        .as_ref()
+        .map(|s| s.service == config::MusicService::YtMusic)
+        .unwrap_or(false);
+    if !active_yt || !config.peek().yt_auto_refresh {
+        return;
+    }
+    match server::ytmusic::manual_cookies::extract_from_any_browser().await {
+        Ok(fresh) => {
+            let user_id =
+                server::ytmusic::derive_user_id(&fresh).unwrap_or_else(|| "me".to_string());
+            let mut cfg = config.write();
+            let saved_id = cfg.server.as_ref().and_then(|s| s.id.clone());
+            if let Some(srv) = cfg.server.as_mut() {
+                // Only swap if it actually changed, to avoid churn.
+                if srv.access_token.as_deref() != Some(fresh.as_str()) {
+                    srv.access_token = Some(fresh.clone());
+                    srv.user_id = Some(user_id);
+                    srv.yt_manual = true;
+                    eprintln!("[yt-auto] refreshed cookies from browser");
+                }
+            }
+            if let Some(id) = saved_id
+                && let Some(saved) = cfg.servers.iter_mut().find(|s| s.id == id)
+            {
+                saved.yt_manual = true;
+                saved.yt_saved_cookies = Some(fresh);
+            }
+        }
+        Err(e) => eprintln!("[yt-auto] browser refresh failed: {e}"),
+    }
+}
+
 async fn run_rotation(mut config: Signal<config::AppConfig>) {
     let cookies = match config.peek().server.as_ref() {
         Some(s) if s.service == config::MusicService::YtMusic => s.access_token.clone(),
@@ -1278,6 +1318,41 @@ fn App() -> Element {
     // re-runs cheap, but only spawns a new loop when the identity
     // changes (sign-in, account switch). Sign-out clears the
     // identity and the running loop exits on its next tick.
+    // "Stay signed in automatically": when enabled, re-read YouTube cookies
+    // from a signed-in browser on boot and every 15 min, so the session never
+    // has to be pasted again. The keepalive loop above then keeps the adopted
+    // cookies fresh between refreshes.
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+    let mut yt_auto_refresh_started = use_signal(|| false);
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+    use_effect(move || {
+        if !*initial_load_done.read() {
+            return;
+        }
+        let want = config.read().yt_auto_refresh
+            && config
+                .read()
+                .server
+                .as_ref()
+                .map(|s| s.service == config::MusicService::YtMusic)
+                .unwrap_or(false);
+        if !want || *yt_auto_refresh_started.peek() {
+            return;
+        }
+        yt_auto_refresh_started.set(true);
+        spawn(async move {
+            run_auto_refresh(config).await;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
+                if !config.peek().yt_auto_refresh {
+                    yt_auto_refresh_started.set(false);
+                    return;
+                }
+                run_auto_refresh(config).await;
+            }
+        });
+    });
+
     #[cfg(not(target_arch = "wasm32"))]
     let mut yt_keepalive_identity = use_signal(|| None::<String>);
     #[cfg(not(target_arch = "wasm32"))]

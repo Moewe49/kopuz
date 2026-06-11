@@ -503,3 +503,6 @@ no_results = لا نتائج
 
 # Toast
 added_to_playlist_toast = تمت الإضافة إلى ”{ $name }“
+
+# YT auto-refresh
+yt_auto_refresh_label = البقاء مسجلاً تلقائياً — يعيد قراءة ملفات تعريف الارتباط من متصفح مسجّل عند بدء التشغيل (أبقِ YouTube مفتوحاً في Firefox؛ دون F12).

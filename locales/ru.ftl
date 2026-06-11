@@ -498,3 +498,6 @@ no_results = Ничего не найдено
 
 # Toast
 added_to_playlist_toast = Добавлено в «{ $name }»
+
+# YT auto-refresh
+yt_auto_refresh_label = Оставаться в системе автоматически — читает cookies из браузера с входом при запуске (держите YouTube открытым в Firefox; без F12).

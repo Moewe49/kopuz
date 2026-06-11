@@ -356,6 +356,22 @@ fn ServerServiceFields(
                         if let Some(err) = firefox_error.read().clone() {
                             p { class: "text-xs text-rose-300 mt-1 break-words", "{err}" }
                         }
+                        // Stay signed in automatically — re-read cookies from a
+                        // signed-in browser on every start + periodically.
+                        if let Some(mut cfg) = try_consume_context::<Signal<config::AppConfig>>() {
+                            label { class: "flex items-start gap-2 mt-3 text-xs text-white cursor-pointer",
+                                input {
+                                    r#type: "checkbox",
+                                    class: "mt-0.5",
+                                    checked: cfg.read().yt_auto_refresh,
+                                    onchange: move |e| cfg.write().yt_auto_refresh = e.checked(),
+                                }
+                                span {
+                                    class: "text-white/80",
+                                    "{i18n::t(\"yt_auto_refresh_label\")}"
+                                }
+                            }
+                        }
                     },
                     YtAuthMethod::BrowserSignin => rsx! {
                         p { class: "text-xs text-white/60",
