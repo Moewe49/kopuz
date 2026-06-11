@@ -7,6 +7,8 @@ use rand::seq::SliceRandom;
 use reader::{Album, FavoritesStore, Library, PlaylistStore, Track};
 use std::collections::HashMap;
 
+use crate::server::discover::ShelfRow;
+
 type AlbumCard = (String, String, String, Option<String>);
 
 fn is_unknown_artist(value: &str) -> bool {
@@ -93,6 +95,47 @@ pub fn JellyfinHome(
         let mut ctrl = ctrl;
         ctrl.play_queue_linear(vec![t]);
     });
+
+    // YT Music "For You": the personalized home feed (new releases, mixed-for-
+    // you, listen again, quick picks…) shown at the top of the home for YT
+    // accounts. Fetched once via the same FEmusic_home browse the Discover page
+    // uses, rendered with the shared ShelfRow tiles.
+    let active_service_is_ytmusic = config
+        .peek()
+        .server
+        .as_ref()
+        .map(|s| s.service == MusicService::YtMusic)
+        .unwrap_or(false);
+    let mut for_you = use_signal(Vec::<server::ytmusic::discover::DiscoverShelf>::new);
+    use_effect(move || {
+        let is_yt = config
+            .read()
+            .server
+            .as_ref()
+            .map(|s| s.service == MusicService::YtMusic)
+            .unwrap_or(false);
+        if !is_yt || !for_you.peek().is_empty() {
+            return;
+        }
+        let cookies = config
+            .peek()
+            .server
+            .as_ref()
+            .and_then(|s| s.access_token.clone())
+            .unwrap_or_default();
+        spawn(async move {
+            let yt = server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+            if let Ok(home) = yt.discover_home().await {
+                for_you.set(home.shelves);
+            }
+        });
+    });
+    // ShelfRow wants pair handlers; the home only has single-arg ones. Adapt:
+    // playlist → use its id; artist → search by name.
+    let on_select_playlist_pair =
+        EventHandler::new(move |(id, _title): (String, String)| on_select_playlist.call(id));
+    let on_open_artist_pair =
+        EventHandler::new(move |(_cid, name): (String, String)| on_search_artist.call(name));
 
     let mut fetch_jellyfin = move || {
         has_fetched.set(true);
@@ -478,6 +521,21 @@ pub fn JellyfinHome(
 
     rsx! {
         div {
+            // YT Music "For You" — personalized home feed at the very top.
+            if active_service_is_ytmusic && !for_you.read().is_empty() {
+                div { class: "mb-10 space-y-4",
+                    for shelf in for_you.read().iter() {
+                        ShelfRow {
+                            shelf: shelf.clone(),
+                            scroll_id: format!("home-foryou-{}", shelf.title),
+                            on_select_album,
+                            on_select_playlist: on_select_playlist_pair,
+                            on_open_artist: on_open_artist_pair,
+                            on_search_artist,
+                        }
+                    }
+                }
+            }
             for (idx, (key, enabled)) in sections.into_iter().enumerate() {
                 {
                     let key_for_render = key.clone();
