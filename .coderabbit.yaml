@@ -1,0 +1,48 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/guides/configure-coderabbit
+# Free for public repositories. Install the GitHub App on Moewe49/kopuz:
+#   https://github.com/apps/coderabbitai
+# Reviews run on pull requests; CodeRabbit does NOT consume GitHub Actions
+# minutes (it runs on its own infrastructure). For best results, push feature
+# work to a branch and open a PR into master instead of committing straight to
+# master — CodeRabbit reviews the PR diff.
+language: en-US
+
+reviews:
+  # "chill" = focus on real issues, less nitpicking. Use "assertive" for stricter.
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - master
+  # Don't waste review budget on generated / vendored / lock files.
+  path_filters:
+    - "!**/target/**"
+    - "!**/*.lock"
+    - "!**/dist/**"
+    - "!**/assets/tailwind.css"
+  path_instructions:
+    - path: "crates/**/*.rs"
+      instructions: >-
+        Rust (workspace crates). Flag: unwrap()/expect()/panic! in non-test code,
+        missing error propagation, blocking calls inside async, needless clones,
+        and non-idiomatic patterns. Auth/cookie/token handling and any code that
+        shells out (yt-dlp) deserves extra scrutiny. Prefer small, focused diffs.
+    - path: "crates/**/*.rs"
+      instructions: >-
+        Dioxus 0.7 UI: watch for signal misuse (reading a written signal in the
+        same scope), missing event-handler cleanup, and rsx! that animates
+        layout-bound CSS properties instead of transform/opacity.
+    - path: "locales/*.ftl"
+      instructions: >-
+        All 21 locale files must stay key-for-key identical to en.ftl — CI fails
+        on any missing or extra key. If a key is added/removed in one file, it
+        must change in ALL of them.
+
+chat:
+  auto_reply: true
