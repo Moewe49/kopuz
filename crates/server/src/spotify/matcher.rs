@@ -109,11 +109,12 @@ where
         .collect()
 }
 
-async fn match_one(cookies: Option<String>, sp: &SpotifyTrack) -> TrackMatch {
-    let client = match cookies {
-        Some(c) if !c.is_empty() => YouTubeMusicClient::with_cookies(c),
-        _ => YouTubeMusicClient::new(),
-    };
+async fn match_one(_cookies: Option<String>, sp: &SpotifyTrack) -> TrackMatch {
+    // Match via ANONYMOUS YT search: matching by title/artist needs no
+    // personalization, and an anonymous client does one search instead of the
+    // signed-in path's cookie'd-then-retry (which doubles every lookup when the
+    // session is stale) — much faster import, and immune to cookie expiry.
+    let client = YouTubeMusicClient::new();
     let query = format!("{} {}", sp.title, sp.artists.join(" "));
     let candidates = client.search_tracks(&query).await.unwrap_or_default();
 

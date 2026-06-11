@@ -304,6 +304,8 @@ pub fn PlaylistDetail(
     // implement). Jellyfin/Subsonic hide the button until their delete is wired.
     let can_delete_playlist = !is_jellyfin || active_service_is_ytmusic;
     let mut confirm_delete = use_signal(|| false);
+    let mut delete_busy = use_signal(|| false);
+    let mut delete_error = use_signal(|| None::<String>);
     let pid_for_delete = playlist_id.clone();
     let is_local_playlist = !is_jellyfin;
 
@@ -629,46 +631,77 @@ pub fn PlaylistDetail(
                     p { class: "text-sm text-white/60 mb-4",
                         "{i18n::t_with(\"delete_playlist_confirm\", &[(\"name\", playlist_name.clone())])}"
                     }
+                    if let Some(err) = delete_error.read().clone() {
+                        p { class: "text-xs text-rose-300 mb-3 break-words",
+                            i { class: "fa-solid fa-triangle-exclamation mr-1" }
+                            "{err}"
+                        }
+                    }
                     div { class: "flex justify-end gap-2",
                         button {
-                            class: "px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors",
+                            class: "px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors disabled:opacity-50",
+                            disabled: delete_busy(),
                             onclick: move |_| confirm_delete.set(false),
                             "{i18n::t(\"cancel\")}"
                         }
                         button {
-                            class: "px-4 py-2 rounded-lg bg-red-500/90 hover:bg-red-500 text-white text-sm font-medium transition-colors",
+                            class: "px-4 py-2 rounded-lg bg-red-500/90 hover:bg-red-500 text-white text-sm font-medium transition-colors disabled:opacity-50",
+                            disabled: delete_busy(),
                             onclick: {
                                 let pid = pid_for_delete.clone();
                                 move |_| {
                                     let pid = pid.clone();
-                                    // Server-side delete first (best-effort) for YT playlists.
-                                    if !is_local_playlist && active_service_is_ytmusic {
-                                        let cookies = config
-                                            .peek()
-                                            .server
-                                            .as_ref()
-                                            .and_then(|s| s.access_token.clone())
-                                            .unwrap_or_default();
-                                        let pid_srv = pid.clone();
-                                        spawn(async move {
-                                            let yt = server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-                                            if let Err(e) = yt.delete_playlist(&pid_srv).await {
-                                                eprintln!("[yt] delete_playlist failed: {e}");
+                                    // Local playlist: nothing server-side to do.
+                                    if is_local_playlist || !active_service_is_ytmusic {
+                                        {
+                                            let mut store = playlist_store.write();
+                                            store.playlists.retain(|p| p.id != pid);
+                                            store.jellyfin_playlists.retain(|p| p.id != pid);
+                                            store.external_tracks.remove(&pid);
+                                        }
+                                        confirm_delete.set(false);
+                                        on_close.call(());
+                                        return;
+                                    }
+                                    // YT server playlist: delete on the server FIRST and
+                                    // only drop it locally if that succeeds — otherwise a
+                                    // failed delete would just reappear on the next refresh.
+                                    let cookies = config
+                                        .peek()
+                                        .server
+                                        .as_ref()
+                                        .and_then(|s| s.access_token.clone())
+                                        .unwrap_or_default();
+                                    let pid_srv = pid.clone();
+                                    delete_busy.set(true);
+                                    delete_error.set(None);
+                                    spawn(async move {
+                                        let yt = server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+                                        match yt.delete_playlist(&pid_srv).await {
+                                            Ok(()) => {
+                                                {
+                                                    let mut store = playlist_store.write();
+                                                    store.playlists.retain(|p| p.id != pid_srv);
+                                                    store.jellyfin_playlists.retain(|p| p.id != pid_srv);
+                                                    store.external_tracks.remove(&pid_srv);
+                                                }
+                                                delete_busy.set(false);
+                                                confirm_delete.set(false);
+                                                on_close.call(());
                                             }
-                                        });
-                                    }
-                                    // Drop it from every local store view + overlay.
-                                    {
-                                        let mut store = playlist_store.write();
-                                        store.playlists.retain(|p| p.id != pid);
-                                        store.jellyfin_playlists.retain(|p| p.id != pid);
-                                        store.external_tracks.remove(&pid);
-                                    }
-                                    confirm_delete.set(false);
-                                    on_close.call(());
+                                            Err(e) => {
+                                                delete_error.set(Some(e));
+                                                delete_busy.set(false);
+                                            }
+                                        }
+                                    });
                                 }
                             },
-                            i { class: "fa-solid fa-trash mr-1.5" }
+                            if delete_busy() {
+                                i { class: "fa-solid fa-arrows-rotate fa-spin mr-1.5" }
+                            } else {
+                                i { class: "fa-solid fa-trash mr-1.5" }
+                            }
                             "{i18n::t(\"delete\")}"
                         }
                     }
