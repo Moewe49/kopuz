@@ -81,6 +81,33 @@ pub async fn list_user_playlists(token: &str) -> Result<Vec<PlaylistSummary>, St
     Ok(out)
 }
 
+/// Every track of one album, paginated. Album track objects are simplified
+/// (no `track` wrapper), so they parse slightly differently from playlists.
+pub async fn fetch_album(token: &str, id: &str) -> Result<SpotifyPlaylist, String> {
+    let meta = get_json(&format!("{API}/albums/{id}?market=US"), token).await?;
+    let name = meta
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Spotify import")
+        .to_string();
+
+    let mut tracks = Vec::new();
+    let mut url = format!("{API}/albums/{id}/tracks?limit=50&market=US");
+    loop {
+        let page = get_json(&url, token).await?;
+        if let Some(items) = page.get("items").and_then(|v| v.as_array()) {
+            for track in items {
+                push_track(track, &mut tracks);
+            }
+        }
+        match page.get("next").and_then(|v| v.as_str()) {
+            Some(next) => url = next.to_string(),
+            None => break,
+        }
+    }
+    Ok(SpotifyPlaylist { name, tracks })
+}
+
 /// Every track of one playlist, paginated 100 at a time.
 pub async fn fetch_playlist(token: &str, id: &str) -> Result<SpotifyPlaylist, String> {
     let meta = get_json(&format!("{API}/playlists/{id}?fields=name"), token).await?;
@@ -128,35 +155,41 @@ fn collect_track_items(page: &Value, out: &mut Vec<SpotifyTrack>) {
         return;
     };
     for it in items {
-        // Local files and removed tracks come back as null / no name.
+        // Playlist items wrap the track; local/removed entries are null.
         let Some(track) = it.get("track").filter(|t| !t.is_null()) else {
             continue;
         };
-        let Some(title) = track.get("name").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        if title.is_empty() {
-            continue;
-        }
-        let artists: Vec<String> = track
-            .get("artists")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
-                    .map(|s| s.to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let duration_secs = track
-            .get("duration_ms")
-            .and_then(|v| v.as_u64())
-            .map(|ms| ms / 1000)
-            .unwrap_or(0);
-        out.push(SpotifyTrack {
-            title: title.to_string(),
-            artists,
-            duration_secs,
-        });
+        push_track(track, out);
     }
+}
+
+/// Append one Spotify track object (`{name, duration_ms, artists}`) to `out`,
+/// skipping unnamed entries. Shared by playlist and album parsing.
+fn push_track(track: &Value, out: &mut Vec<SpotifyTrack>) {
+    let Some(title) = track.get("name").and_then(|v| v.as_str()) else {
+        return;
+    };
+    if title.is_empty() {
+        return;
+    }
+    let artists: Vec<String> = track
+        .get("artists")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let duration_secs = track
+        .get("duration_ms")
+        .and_then(|v| v.as_u64())
+        .map(|ms| ms / 1000)
+        .unwrap_or(0);
+    out.push(SpotifyTrack {
+        title: title.to_string(),
+        artists,
+        duration_secs,
+    });
 }

@@ -171,8 +171,13 @@ impl YouTubeMusicClient {
             return Ok(());
         };
         let resp: Value = innertube::browse("VLLM", cookies).await?;
-        if !has_playlist_shelf(&resp) {
+        // Only a genuine sign-in prompt means expired. No shelf with no
+        // prompt just means the user has no liked songs — return empty.
+        if is_signed_out(&resp) {
             return Err("Sign-in prompt returned — cookies expired".to_string());
+        }
+        if !has_playlist_shelf(&resp) {
+            return Ok(());
         }
         // YT's continuation pagination commonly repeats one or more tracks at page
         // boundaries; dedup against a video-id set across the entire stream so the
@@ -288,12 +293,26 @@ impl YouTubeMusicClient {
         let Some(cookies) = self.cookies.as_deref() else {
             return Ok(());
         };
-        let json: Value = innertube::browse("VLLM", cookies).await?;
-        if has_playlist_shelf(&json) {
-            Ok(())
-        } else {
-            Err("YouTube returned no playlist shelf — cookies expired or browser signed out".into())
+        // Expiry is signalled by a SIGN-IN PROMPT, not by the absence of a
+        // playlist shelf — a user with zero liked songs / saved playlists is
+        // still validly signed in. Probing on the shelf alone produced false
+        // "expired" errors (empty playlists, empty library). One transient
+        // retry guards against a flaky single response.
+        for attempt in 0..2 {
+            match innertube::browse("VLLM", cookies).await {
+                Ok(json) if is_signed_out(&json) => {
+                    return Err(
+                        "Sign-in prompt returned — YouTube cookies expired or signed out".into(),
+                    );
+                }
+                Ok(_) => return Ok(()),
+                Err(e) if attempt == 1 => return Err(e),
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                }
+            }
         }
+        Ok(())
     }
 
     /// True when no cookies are configured — the YT backend is in
@@ -306,6 +325,25 @@ impl YouTubeMusicClient {
         // exactly anonymous mode.
         self.cookies.is_none()
     }
+}
+
+/// True only when the response carries a sign-in prompt — the real signal
+/// that cookies expired. A `signInEndpoint` anywhere, or a button/message
+/// pointing at the accounts page, both count. Absence of content does NOT.
+fn is_signed_out(json: &Value) -> bool {
+    fn walk(v: &Value) -> bool {
+        match v {
+            Value::Object(map) => {
+                if map.contains_key("signInEndpoint") {
+                    return true;
+                }
+                map.values().any(walk)
+            }
+            Value::Array(arr) => arr.iter().any(walk),
+            _ => false,
+        }
+    }
+    walk(json)
 }
 
 fn has_playlist_shelf(json: &Value) -> bool {

@@ -55,9 +55,25 @@ fn resolve_blocking(
     let mut cmd = std::process::Command::new(binary);
     cmd.arg("--no-playlist")
         .arg("--no-warnings")
+        // SoundCloud (and YT under load) intermittently 403 the metadata
+        // fetch; retry the extractor + transport a few times, and present a
+        // real browser UA so the client-id negotiation isn't blocked.
+        .args(["--extractor-retries", "3"])
+        .args(["--retries", "5"])
+        .args([
+            "--user-agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        ])
         .arg("-f")
-        // Prefer opus/webm (the symphonia+libopus fast path), then any audio.
-        .arg("bestaudio[acodec=opus]/bestaudio/best")
+        // Force a PROGRESSIVE (range-seekable) stream — exclude HLS m3u8,
+        // which the player's range source can't decode. SoundCloud's
+        // http_mp3_128 and YT's progressive/dash audio all qualify. Prefer
+        // opus/webm (symphonia+libopus fast path) when present.
+        .arg(
+            "bestaudio[protocol!*=m3u8][acodec=opus]/\
+             bestaudio[protocol!*=m3u8]/bestaudio[protocol^=http]/bestaudio/best",
+        )
         // One field per --print line, after format selection so these reflect
         // the chosen format.
         .args(["--print", "%(url)s"])
@@ -107,7 +123,9 @@ fn resolve_blocking(
     let format = match ext {
         "webm" | "opus" => AudioFormat::Webm,
         "m4a" | "mp4" => AudioFormat::M4a,
+        "mp3" | "mpeg" => AudioFormat::Mp3,
         _ if url.contains("mime=audio%2Fwebm") => AudioFormat::Webm,
+        _ if url.contains(".mp3") => AudioFormat::Mp3,
         _ => AudioFormat::M4a,
     };
     let user_agent = if ua.is_empty() || ua == "NA" {

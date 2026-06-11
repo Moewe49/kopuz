@@ -1,10 +1,9 @@
-//! Anonymous fetch of a public playlist/album via the
-//! `open.spotify.com/embed` page. The page inlines a Next.js
-//! `__NEXT_DATA__` JSON blob whose
-//! `props.pageProps.state.data.entity` carries the name and a
-//! `trackList` of `{title, subtitle, duration}` rows — verified live
-//! against both playlist and album embeds. The embed serves roughly
-//! the first 100 tracks; callers surface that cap to the user.
+//! Anonymous fetch of a public playlist/album. Primary path: pull the
+//! anonymous Web API bearer token the `open.spotify.com/embed` page carries
+//! and page through the FULL track list via the public API (no login, no
+//! cap). Fallback: parse the ≈100 tracks the embed inlines in its Next.js
+//! `__NEXT_DATA__` blob (`props.pageProps.state.data.entity.trackList`) if
+//! the token path fails.
 
 use serde_json::Value;
 
@@ -27,7 +26,35 @@ pub async fn fetch_public(kind: SpotifyEntityKind, id: &str) -> Result<SpotifyPl
         .text()
         .await
         .map_err(|e| format!("Spotify embed body: {e}"))?;
+
+    // The embed page only inlines ~100 tracks, but it also ships an
+    // anonymous Web API access token. Use it to page through the FULL
+    // track list (no user login needed) for public playlists/albums.
+    // Fall back to the inlined ≈100-track list if the token path fails.
+    if let Some(token) = extract_access_token(&html) {
+        let full = match kind {
+            SpotifyEntityKind::Playlist => super::api::fetch_playlist(&token, id).await,
+            SpotifyEntityKind::Album => super::api::fetch_album(&token, id).await,
+        };
+        if let Ok(pl) = full
+            && !pl.tracks.is_empty()
+        {
+            return Ok(pl);
+        }
+    }
     parse_embed_html(&html)
+}
+
+/// Pull the anonymous Web API bearer token the embed page carries
+/// (`"accessToken":"BQ…"`). Present on the public embed; absent only if
+/// Spotify changes the page shape, in which case we fall back to scraping.
+fn extract_access_token(html: &str) -> Option<String> {
+    let marker = "\"accessToken\":\"";
+    let start = html.find(marker)? + marker.len();
+    let rest = &html[start..];
+    let end = rest.find('"')?;
+    let token = &rest[..end];
+    (token.len() > 20).then(|| token.to_string())
 }
 
 fn parse_embed_html(html: &str) -> Result<SpotifyPlaylist, String> {

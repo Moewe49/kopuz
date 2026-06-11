@@ -27,6 +27,8 @@ use super::innertube::{self, PlayerExtras};
 pub enum AudioFormat {
     Webm,
     M4a,
+    /// Progressive MP3 — SoundCloud's `http_mp3_*` and some podcast feeds.
+    Mp3,
 }
 
 impl AudioFormat {
@@ -34,6 +36,7 @@ impl AudioFormat {
         match self {
             AudioFormat::Webm => "webm",
             AudioFormat::M4a => "m4a",
+            AudioFormat::Mp3 => "mp3",
         }
     }
 
@@ -42,6 +45,8 @@ impl AudioFormat {
             Some(AudioFormat::Webm)
         } else if mime.contains("mp4") {
             Some(AudioFormat::M4a)
+        } else if mime.contains("mpeg") || mime.contains("mp3") {
+            Some(AudioFormat::Mp3)
         } else {
             None
         }

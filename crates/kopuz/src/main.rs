@@ -1309,7 +1309,12 @@ fn App() -> Element {
         spawn(async move {
             run_rotation(config).await;
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                // 3 min, not 5: YouTube rotates __Secure-*PSIDTS roughly every
+                // few minutes and tears idle sessions down near the 10-min
+                // mark. Refreshing more often captures the rotated cookies
+                // before they go stale, which is the main lever on how long a
+                // pasted session survives.
+                tokio::time::sleep(std::time::Duration::from_secs(180)).await;
                 if yt_keepalive_identity
                     .peek()
                     .as_deref()
@@ -2200,6 +2205,12 @@ fn App() -> Element {
                         if route == Route::Artist {
                             selected_artist_name.set(String::new());
                             selected_artist_channel_id.set(None);
+                        }
+                        // Clicking "Playlists" in the sidebar should always land
+                        // on the overview, not whichever playlist was last open.
+                        if route == Route::Playlists {
+                            selected_playlist_id.set(None);
+                            discover_selected_playlist_id.set(None);
                         }
                         current_route.set(route);
                     }
