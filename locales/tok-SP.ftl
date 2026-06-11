@@ -495,3 +495,6 @@ soundcloud_download = o kama jo kepeken yt-dlp
 soundcloud_hint = o sitelen lon sewi tawa alasa SoundCloud.
 soundcloud_needs_ytdlp = alasa SoundCloud li wile e ilo yt-dlp lon ilo sina.
 no_results = ijo ala li lon
+
+# Toast
+added_to_playlist_toast = li kama lon kulupu “{ $name }”

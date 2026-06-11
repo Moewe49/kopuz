@@ -187,6 +187,23 @@ pub fn AddToPlaylistHost(
             is_jellyfin: is_server,
             on_close: move |_| pending.set(None),
             on_add_to_playlist: move |playlist_id: String| {
+                // Resolve the playlist's name for the confirmation toast.
+                let pl_name = {
+                    let store = playlist_store.peek();
+                    store
+                        .jellyfin_playlists
+                        .iter()
+                        .find(|p| p.id == playlist_id)
+                        .map(|p| p.name.clone())
+                        .or_else(|| {
+                            store
+                                .playlists
+                                .iter()
+                                .find(|p| p.id == playlist_id)
+                                .map(|p| p.name.clone())
+                        })
+                        .unwrap_or_default()
+                };
                 if is_external {
                     // Can't live in the server catalog → store in the overlay
                     // for this playlist id (works for both server and local).
@@ -196,18 +213,26 @@ pub fn AddToPlaylistHost(
                 } else {
                     add_local(playlist_id, track_for_add.clone());
                 }
+                crate::toast::show_toast(i18n::t_with(
+                    "added_to_playlist_toast",
+                    &[("name", pl_name)],
+                ));
                 pending.set(None);
             },
             on_create_playlist: move |name: String| {
                 if is_external {
                     // A brand-new playlist holding only an external track is a
                     // local playlist (no point creating an empty server one).
-                    create_local(name, track_for_create.clone());
+                    create_local(name.clone(), track_for_create.clone());
                 } else if is_server {
-                    server_create(name, track_for_create.clone());
+                    server_create(name.clone(), track_for_create.clone());
                 } else {
-                    create_local(name, track_for_create.clone());
+                    create_local(name.clone(), track_for_create.clone());
                 }
+                crate::toast::show_toast(i18n::t_with(
+                    "added_to_playlist_toast",
+                    &[("name", name)],
+                ));
                 pending.set(None);
             },
         }

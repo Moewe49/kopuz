@@ -494,3 +494,6 @@ soundcloud_download = yt-dlp ile indir
 soundcloud_hint = SoundCloud'da aramak için yukarı yazın.
 soundcloud_needs_ytdlp = SoundCloud araması için sisteminizde yt-dlp kurulu olmalı.
 no_results = Sonuç yok
+
+# Toast
+added_to_playlist_toast = “{ $name }” listesine eklendi

@@ -487,3 +487,6 @@ soundcloud_download = Scarica con yt-dlp
 soundcloud_hint = Digita sopra per cercare su SoundCloud.
 soundcloud_needs_ytdlp = La ricerca su SoundCloud richiede yt-dlp installato sul sistema.
 no_results = Nessun risultato
+
+# Toast
+added_to_playlist_toast = Aggiunto a “{ $name }”

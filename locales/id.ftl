@@ -493,3 +493,6 @@ soundcloud_download = Unduh via yt-dlp
 soundcloud_hint = Ketik di atas untuk mencari di SoundCloud.
 soundcloud_needs_ytdlp = Pencarian SoundCloud memerlukan yt-dlp terpasang di sistem.
 no_results = Tidak ada hasil
+
+# Toast
+added_to_playlist_toast = Ditambahkan ke “{ $name }”

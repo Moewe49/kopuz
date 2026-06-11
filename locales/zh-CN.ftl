@@ -494,3 +494,6 @@ soundcloud_download = 通过 yt-dlp 下载
 soundcloud_hint = 在上方输入以搜索 SoundCloud。
 soundcloud_needs_ytdlp = SoundCloud 搜索需要系统安装 yt-dlp。
 no_results = 无结果
+
+# Toast
+added_to_playlist_toast = 已添加到“{ $name }”

@@ -494,3 +494,6 @@ soundcloud_download = yt-dlp로 다운로드
 soundcloud_hint = 위에 입력하여 SoundCloud를 검색하세요.
 soundcloud_needs_ytdlp = SoundCloud 검색에는 시스템에 yt-dlp가 설치되어 있어야 합니다.
 no_results = 결과 없음
+
+# Toast
+added_to_playlist_toast = “{ $name }”에 추가됨

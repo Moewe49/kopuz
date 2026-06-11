@@ -1900,6 +1900,8 @@ fn App() -> Element {
     provide_context(components::add_to_playlist::AddToPlaylistState(
         add_to_playlist_pending,
     ));
+    let toast_message = use_signal(|| None::<String>);
+    provide_context(components::toast::ToastState(toast_message));
     // SoundCloud "download" buttons drop a permalink here; the Downloads
     // (yt-dlp) page reads + clears it on open.
     let ytdlp_prefill_url = use_signal(|| None::<String>);
@@ -2194,6 +2196,7 @@ fn App() -> Element {
                 config: config,
                 playlist_store: playlist_store,
             }
+            components::toast::ToastHost {}
             div {
                 class: "{content_row_class}",
                 Sidebar {

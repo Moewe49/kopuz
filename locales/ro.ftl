@@ -494,3 +494,6 @@ soundcloud_download = Descărcare prin yt-dlp
 soundcloud_hint = Scrie mai sus pentru a căuta pe SoundCloud.
 soundcloud_needs_ytdlp = Căutarea SoundCloud necesită yt-dlp instalat pe sistem.
 no_results = Niciun rezultat
+
+# Toast
+added_to_playlist_toast = Adăugat la „{ $name }”

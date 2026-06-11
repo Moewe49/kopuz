@@ -500,3 +500,6 @@ soundcloud_download = التنزيل عبر yt-dlp
 soundcloud_hint = اكتب في الأعلى للبحث في SoundCloud.
 soundcloud_needs_ytdlp = يتطلب بحث SoundCloud تثبيت yt-dlp على نظامك.
 no_results = لا نتائج
+
+# Toast
+added_to_playlist_toast = تمت الإضافة إلى ”{ $name }“

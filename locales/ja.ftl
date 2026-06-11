@@ -500,3 +500,6 @@ soundcloud_download = yt-dlp でダウンロード
 soundcloud_hint = 上に入力して SoundCloud を検索します。
 soundcloud_needs_ytdlp = SoundCloud 検索にはシステムに yt-dlp のインストールが必要です。
 no_results = 結果なし
+
+# Toast
+added_to_playlist_toast = 「{ $name }」に追加しました

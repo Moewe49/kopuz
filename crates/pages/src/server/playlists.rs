@@ -502,6 +502,15 @@ pub fn JellyfinPlaylists(
                                 false
                             }
                         });
+                        // Count SoundCloud overlay tracks attached to this YT
+                        // playlist so the overview total matches the detail.
+                        let total_tracks = playlist.tracks.len()
+                            + playlist_store
+                                .read()
+                                .external_tracks
+                                .get(&playlist.id)
+                                .map(|v| v.len())
+                                .unwrap_or(0);
 
                         rsx! {
                             div {
@@ -525,7 +534,7 @@ pub fn JellyfinPlaylists(
                                     }
                                 }
                                 h3 { class: "text-xl font-bold text-white mb-1 truncate", "{playlist.name}" }
-                                p { class: "text-sm text-slate-400", "Server • {playlist.tracks.len()} tracks" }
+                                p { class: "text-sm text-slate-400", "Server • {total_tracks} tracks" }
 
                                 button {
                                     class: "absolute top-4 right-4 w-8 h-8 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:border-white/30 transition-colors opacity-0 group-hover:opacity-100",

@@ -33,6 +33,7 @@ pub mod showcase;
 pub mod sidebar;
 pub mod sleep_timer;
 pub mod soundcloud_search;
+pub mod toast;
 pub mod spotify_import;
 pub mod stat_card;
 pub mod titlebar;

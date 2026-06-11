@@ -494,3 +494,6 @@ soundcloud_download = Letöltés yt-dlp-vel
 soundcloud_hint = Írj felülre a SoundCloud kereséséhez.
 soundcloud_needs_ytdlp = A SoundCloud-kereséshez telepített yt-dlp szükséges.
 no_results = Nincs találat
+
+# Toast
+added_to_playlist_toast = Hozzáadva: „{ $name }”

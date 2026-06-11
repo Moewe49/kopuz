@@ -494,3 +494,6 @@ soundcloud_download = הורדה דרך yt-dlp
 soundcloud_hint = הקלד למעלה כדי לחפש ב-SoundCloud.
 soundcloud_needs_ytdlp = חיפוש SoundCloud דורש yt-dlp מותקן במערכת.
 no_results = אין תוצאות
+
+# Toast
+added_to_playlist_toast = נוסף ל-“{ $name }”
