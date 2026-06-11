@@ -242,7 +242,32 @@ pub fn JellyfinSearch(
                     // track list depends on.
                     if !yt_sections.is_empty() {
                         div { class: "flex flex-col flex-1 min-h-0",
-                            div { class: "shrink-0 max-h-[45vh] overflow-y-auto pt-4",
+                            // Songs first (Spotify-style): the track list gets the
+                            // main area at the top so it's immediately visible.
+                            div { class: "flex-1 min-h-0 flex flex-col",
+                                SearchResults {
+                                    search_query: data.search_query.read().clone(),
+                                    tracks: tracks.clone(),
+                                    albums: albums.clone(),
+                                    library,
+                                    playlist_store,
+                                    player,
+                                    is_playing,
+                                    current_song_cover_url,
+                                    current_song_title,
+                                    current_song_artist,
+                                    current_song_duration,
+                                    current_song_progress,
+                                    queue,
+                                    current_queue_index,
+                                    active_menu_track,
+                                    show_playlist_modal,
+                                    selected_track_for_playlist,
+                                    on_select_album,
+                                }
+                            }
+                            // Playlist / album / artist shelves below, capped + scrollable.
+                            div { class: "shrink-0 max-h-[38vh] overflow-y-auto border-t border-white/5 pt-2 mt-2",
                                 for (title_key, items) in [
                                     ("playlists", yt_sections.playlists.clone()),
                                     ("albums", yt_sections.albums.clone()),
@@ -265,26 +290,6 @@ pub fn JellyfinSearch(
                                         }
                                     }
                                 }
-                            }
-                            SearchResults {
-                                search_query: data.search_query.read().clone(),
-                                tracks: tracks.clone(),
-                                albums: albums.clone(),
-                                library,
-                                playlist_store,
-                                player,
-                                is_playing,
-                                current_song_cover_url,
-                                current_song_title,
-                                current_song_artist,
-                                current_song_duration,
-                                current_song_progress,
-                                queue,
-                                current_queue_index,
-                                active_menu_track,
-                                show_playlist_modal,
-                                selected_track_for_playlist,
-                                on_select_album,
                             }
                         }
                     } else {
