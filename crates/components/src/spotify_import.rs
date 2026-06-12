@@ -150,6 +150,11 @@ pub fn SpotifyImportModal(
             };
             match result {
                 Ok(playlist) => run_import(playlist),
+                Err(e) if e.contains("403") => {
+                    // Spotify dev-mode apps can't read playlists the user doesn't
+                    // own or follow — turn the raw 403 into something actionable.
+                    phase.set(ImportPhase::Failed(i18n::t("spotify_403_follow")));
+                }
                 Err(e) => phase.set(ImportPhase::Failed(e)),
             }
         });

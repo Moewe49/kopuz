@@ -534,3 +534,5 @@ yt_login_done = Fertig – ich bin angemeldet
 yt_login_not_done = Noch nicht angemeldet — bitte im Browserfenster fertig anmelden und erneut auf „Fertig“ klicken.
 
 autoradio_setting = Autoplay radio when the queue ends
+
+spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
