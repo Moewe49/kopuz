@@ -43,6 +43,26 @@ async fn get_json(url: &str, token: &str) -> Result<Value, String> {
         .map_err(|e| format!("Spotify API JSON: {e}"))
 }
 
+/// Follow (save) a playlist into the user's library. A dev-mode app can only
+/// read the full track list of playlists the user owns or follows, so we follow
+/// first to lift the 403 on other people's public playlists. Best-effort: a
+/// failure here just means the later read may be capped.
+pub async fn follow_playlist(token: &str, id: &str) -> Result<(), String> {
+    let resp = http_client()
+        .put(format!("{API}/playlists/{id}/followers"))
+        .bearer_auth(token)
+        .header("Content-Type", "application/json")
+        .body("{\"public\":false}")
+        .send()
+        .await
+        .map_err(|e| format!("Spotify follow HTTP: {e}"))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Spotify follow {}", resp.status()))
+    }
+}
+
 /// All playlists in the user's library (owned + followed).
 pub async fn list_user_playlists(token: &str) -> Result<Vec<PlaylistSummary>, String> {
     let mut out = Vec::new();

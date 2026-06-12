@@ -19,7 +19,10 @@ use sha2::{Digest, Sha256};
 /// registers in their Spotify app. Documented in the import dialog.
 pub const REDIRECT_PORT: u16 = 8898;
 pub const REDIRECT_URI: &str = "http://127.0.0.1:8898/callback";
-const SCOPES: &str = "playlist-read-private playlist-read-collaborative user-library-read";
+// modify-* scopes let kopuz auto-follow a playlist before importing it — a
+// dev-mode app can only read the FULL track list of playlists the user owns or
+// follows, so following first lifts the 403 on other people's public playlists.
+const SCOPES: &str = "playlist-read-private playlist-read-collaborative user-library-read playlist-modify-private playlist-modify-public";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {

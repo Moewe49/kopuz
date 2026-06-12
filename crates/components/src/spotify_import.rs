@@ -133,6 +133,10 @@ pub fn SpotifyImportModal(
                         let tok = tokens.access_token;
                         match kind {
                             spotify::SpotifyEntityKind::Playlist => {
+                                // Auto-follow first so a playlist you don't own
+                                // becomes readable in full (lifts the dev-mode
+                                // 403). Best-effort — ignore follow errors.
+                                let _ = spotify::api::follow_playlist(&tok, &id).await;
                                 spotify::api::fetch_playlist(&tok, &id).await
                             }
                             spotify::SpotifyEntityKind::Album => {
