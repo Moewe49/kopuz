@@ -134,10 +134,25 @@ pub fn SpotifyImportModal(
                         match kind {
                             spotify::SpotifyEntityKind::Playlist => {
                                 // Auto-follow first so a playlist you don't own
-                                // becomes readable in full (lifts the dev-mode
-                                // 403). Best-effort — ignore follow errors.
-                                let _ = spotify::api::follow_playlist(&tok, &id).await;
-                                spotify::api::fetch_playlist(&tok, &id).await
+                                // becomes readable in full (should lift the
+                                // dev-mode 403).
+                                let follow = spotify::api::follow_playlist(&tok, &id).await;
+                                match spotify::api::fetch_playlist(&tok, &id).await {
+                                    Ok(pl) => Ok(pl),
+                                    Err(e) if e.contains("403") => {
+                                        // Distinguish the two failure modes so the
+                                        // message is actionable (not the generic 403).
+                                        match &follow {
+                                            Err(fe)
+                                                if fe.contains("401") || fe.contains("403") =>
+                                            {
+                                                Err(i18n::t("spotify_reconnect_follow"))
+                                            }
+                                            _ => Err(i18n::t("spotify_follow_no_help")),
+                                        }
+                                    }
+                                    Err(e) => Err(e),
+                                }
                             }
                             spotify::SpotifyEntityKind::Album => {
                                 spotify::api::fetch_album(&tok, &id).await
