@@ -1,5 +1,22 @@
 use ::server::{DownloadItem, DownloadProgress, DownloadQueue, DownloadStatus};
+use config::AppConfig;
 use dioxus::prelude::*;
+
+/// Open the downloads folder in the OS file manager. Desktop-only; a no-op
+/// where there's no file manager to launch (Android/wasm).
+#[cfg(not(target_arch = "wasm32"))]
+fn open_folder(path: &std::path::Path) {
+    let _ = std::fs::create_dir_all(path);
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(path).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(path).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_folder(_path: &std::path::Path) {}
 
 fn compute_eta(
     in_flight: &[DownloadItem],
@@ -47,6 +64,7 @@ fn fmt_bytes(b: u64) -> String {
 #[component]
 pub fn DownloadOverlay(mut queue: Signal<DownloadQueue>) -> Element {
     let progress = use_context::<Signal<DownloadProgress>>();
+    let config = use_context::<Signal<AppConfig>>();
     let mut collapsed = use_signal(|| false);
 
     let q = queue.read();
@@ -112,6 +130,15 @@ pub fn DownloadOverlay(mut queue: Signal<DownloadQueue>) -> Element {
                 }
 
                 div { class: "flex items-center gap-2",
+                    button {
+                        class: "text-white/40 hover:text-white/80 transition-colors text-xs px-2 py-0.5 rounded bg-white/5 hover:bg-white/10",
+                        title: "Open downloads folder",
+                        onclick: move |evt| {
+                            evt.stop_propagation();
+                            open_folder(&config.read().resolved_download_dir());
+                        },
+                        i { class: "fa-solid fa-folder-open" }
+                    }
                     if is_active {
                         button {
                             class: "text-red-400/70 hover:text-red-400 transition-colors text-xs px-2 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20",
@@ -226,32 +253,41 @@ pub fn DownloadOverlay(mut queue: Signal<DownloadQueue>) -> Element {
                                     for item in visible {
                                         div {
                                             key: "{item.id}",
-                                            class: "flex items-center gap-2 text-xs",
-                                            match item.status {
-                                                DownloadStatus::Done => rsx! {
-                                                    i { class: "fa-solid fa-check text-emerald-400 w-3 shrink-0" }
-                                                },
-                                                DownloadStatus::Failed => rsx! {
-                                                    i { class: "fa-solid fa-xmark text-red-400 w-3 shrink-0" }
-                                                },
-                                                DownloadStatus::Queued => rsx! {
-                                                    i { class: "fa-regular fa-clock text-slate-500 w-3 shrink-0" }
-                                                },
-                                                _ => rsx! {}
-                                            }
-                                            span {
-                                                class: format!(
-                                                    "truncate {}",
-                                                    match item.status {
-                                                        DownloadStatus::Done => "text-slate-400",
-                                                        DownloadStatus::Failed => "text-red-400/70",
-                                                        _ => "text-slate-500",
+                                            class: "text-xs",
+                                            div { class: "flex items-center gap-2",
+                                                match item.status {
+                                                    DownloadStatus::Done => rsx! {
+                                                        i { class: "fa-solid fa-check text-emerald-400 w-3 shrink-0" }
+                                                    },
+                                                    DownloadStatus::Failed => rsx! {
+                                                        i { class: "fa-solid fa-xmark text-red-400 w-3 shrink-0" }
+                                                    },
+                                                    DownloadStatus::Queued => rsx! {
+                                                        i { class: "fa-regular fa-clock text-slate-500 w-3 shrink-0" }
+                                                    },
+                                                    _ => rsx! {}
+                                                }
+                                                span {
+                                                    class: format!(
+                                                        "truncate {}",
+                                                        match item.status {
+                                                            DownloadStatus::Done => "text-slate-400",
+                                                            DownloadStatus::Failed => "text-red-400/70",
+                                                            _ => "text-slate-500",
+                                                        }
+                                                    ),
+                                                    if item.title.is_empty() {
+                                                        "Track {&item.id[..item.id.len().min(8)]}"
+                                                    } else {
+                                                        "{item.title}"
                                                     }
-                                                ),
-                                                if item.title.is_empty() {
-                                                    "Track {&item.id[..item.id.len().min(8)]}"
-                                                } else {
-                                                    "{item.title}"
+                                                }
+                                            }
+                                            if matches!(item.status, DownloadStatus::Failed) {
+                                                if let Some(err) = item.error.clone() {
+                                                    p { class: "text-[10px] text-red-400/50 leading-snug pl-5 mt-0.5 break-words",
+                                                        "{err}"
+                                                    }
                                                 }
                                             }
                                         }

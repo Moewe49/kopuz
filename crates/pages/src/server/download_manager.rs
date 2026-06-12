@@ -73,6 +73,7 @@ pub fn queue_downloads(
                 status: DownloadStatus::Queued,
                 bytes_done: 0,
                 bytes_total: 0,
+                error: None,
             });
             added = true;
         }
@@ -121,8 +122,9 @@ async fn download_worker(
         }
 
         // Atomic claim: find + status flip in one write lock prevents two workers
-        // grabbing the same id.
-        let next_id = {
+        // grabbing the same id. Grab the metadata too so the file can be named
+        // `Artist - Title.ext` instead of an opaque video id.
+        let claimed = {
             let mut q = queue.write();
             let claimed = q
                 .items
@@ -131,12 +133,12 @@ async fn download_worker(
             match claimed {
                 Some(item) => {
                     item.status = DownloadStatus::Downloading;
-                    Some(item.id.clone())
+                    Some((item.id.clone(), item.title.clone(), item.artist.clone()))
                 }
                 None => None,
             }
         };
-        let Some(id) = next_id else {
+        let Some((id, title, artist)) = claimed else {
             return;
         };
 
@@ -180,17 +182,31 @@ async fn download_worker(
         let (url, ext_hint, user_agent, content_length) = match resolved {
             Some(v) => v,
             None => {
+                let reason = if matches!(service, Some(MusicService::YtMusic)) {
+                    "Could not resolve a stream — the track may be unavailable in your region, age-restricted, or yt-dlp needs updating."
+                } else {
+                    "Could not build a download URL for this track."
+                };
                 if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                     item.status = DownloadStatus::Failed;
+                    item.error = Some(reason.to_string());
                 }
                 continue;
             }
+        };
+
+        // Save into the browsable downloads folder as `Artist - Title.ext`.
+        let dest_no_ext = {
+            let conf = config.read();
+            let dir = super::downloads_dir(&conf);
+            super::download_dest_no_ext(&dir, &artist, &title, &id)
         };
 
         match download_with_progress(
             &id,
             &url,
             ext_hint,
+            &dest_no_ext,
             user_agent.as_deref(),
             content_length,
             &mut queue,
@@ -213,6 +229,7 @@ async fn download_worker(
                 eprintln!("Download failed for {id}: {e}");
                 if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                     item.status = DownloadStatus::Failed;
+                    item.error = Some(e);
                 }
                 clear_progress(&id);
             }
@@ -245,6 +262,7 @@ async fn download_with_progress(
     item_id: &str,
     url: &str,
     ext_hint: &'static str,
+    dest_no_ext: &std::path::Path,
     user_agent: Option<&str>,
     content_length: Option<u64>,
     queue: &mut Signal<DownloadQueue>,
@@ -259,14 +277,15 @@ async fn download_with_progress(
         .build()
         .map_err(|e| format!("Client build error: {e}"))?;
 
-    let dir = super::offline_cache_dir();
-    let file_path_tentative = dir.join(format!("{item_id}.{ext_hint}"));
+    // Destination is `<downloads>/Artist - Title.<ext>`; the stem was already
+    // resolved (collision-free) by the caller — we just attach the extension.
+    let with_ext = |ext: &str| dest_no_ext.with_extension(ext);
+    let file_path_tentative = with_ext(ext_hint);
 
     // YT googlevideo URLs throttle single sequential GETs to ~1 MB/s; Range-chunking
     // sidesteps the throttle and saturates the link.
     if let (Some(ua), Some(total)) = (user_agent, content_length) {
-        let ext = ext_hint;
-        let file_path = dir.join(format!("{item_id}.{ext}"));
+        let file_path = with_ext(ext_hint);
         let file = tokio::fs::File::create(&file_path)
             .await
             .map_err(|e| format!("Create file: {e}"))?;
@@ -396,7 +415,7 @@ async fn download_with_progress(
     let file_path = if ext == ext_hint {
         file_path_tentative
     } else {
-        dir.join(format!("{item_id}.{ext}"))
+        with_ext(ext)
     };
 
     {

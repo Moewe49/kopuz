@@ -29,6 +29,92 @@ pub(super) fn offline_cache_dir() -> PathBuf {
     PathBuf::from("./cache/offline_tracks")
 }
 
+/// The user-facing, browsable downloads folder. Uses
+/// `config.download_directory` when set, otherwise defaults to
+/// `<Music>/Kopuz` (falling back to `<home>/Music/Kopuz`, then `./downloads`).
+/// Unlike [`offline_cache_dir`] this holds readable `Artist - Title.ext`
+/// files the user can open in a file manager or import into another player.
+pub fn downloads_dir(config: &AppConfig) -> PathBuf {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = config.resolved_download_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = config;
+        PathBuf::from("./downloads")
+    }
+}
+
+/// Strip characters that are illegal in filenames on Windows/macOS/Linux and
+/// collapse whitespace, so a track title can become a safe filename.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn sanitize_filename(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => ' ',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim_matches([' ', '.']).to_string();
+    if trimmed.is_empty() {
+        "track".to_string()
+    } else {
+        // Keep filenames well under the 255-byte limit even with long titles.
+        trimmed.chars().take(120).collect()
+    }
+}
+
+/// Build the destination path (without extension) for a download under `dir`,
+/// named `Artist - Title`. Appends ` (n)` to dodge collisions with existing
+/// files of any extension. Falls back to the item id when there's no metadata.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn download_dest_no_ext(
+    dir: &std::path::Path,
+    artist: &str,
+    title: &str,
+    item_id: &str,
+) -> PathBuf {
+    let artist = sanitize_filename(artist);
+    let title = sanitize_filename(title);
+    let base = match (artist.as_str(), title.as_str()) {
+        ("track", "track") => sanitize_filename(item_id),
+        (_, t) if t != "track" && artist != "track" => format!("{artist} - {title}"),
+        (_, t) if t != "track" => title.clone(),
+        _ => sanitize_filename(item_id),
+    };
+    let mut candidate = dir.join(&base);
+    let mut n = 1;
+    // Collide on the stem regardless of extension (we don't yet know the
+    // final ext here): check for any file starting with the same stem.
+    while stem_taken(dir, candidate.file_name().and_then(|f| f.to_str()).unwrap_or(&base)) {
+        n += 1;
+        candidate = dir.join(format!("{base} ({n})"));
+    }
+    candidate
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn stem_taken(dir: &std::path::Path, stem: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            let entry_stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+            if entry_stem.eq_ignore_ascii_case(stem) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn build_download_url(item_id: &str, config: &AppConfig) -> Option<(String, &'static str)> {
     let server = config.server.as_ref()?;
     let quality = config.offline_quality;

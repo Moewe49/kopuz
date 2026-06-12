@@ -417,6 +417,9 @@ radio_registries_active = { $enabled_count }/{ $total } active
 radio_registries_empty = No registries configured
 offline_downloads = Offline Downloads
 download_quality = Download Quality
+download_folder = Download Folder
+choose_folder = Choose…
+reset_to_default = Reset to default
 saving = Saving...
 
 # Metadata Viewer / Editor

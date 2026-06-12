@@ -25,6 +25,9 @@ pub struct DownloadItem {
     pub status: DownloadStatus,
     pub bytes_done: u64,
     pub bytes_total: u64,
+    /// Human-readable reason when `status` is `Failed`. Surfaced in the
+    /// download overlay so a failure isn't just a silent red dot.
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]

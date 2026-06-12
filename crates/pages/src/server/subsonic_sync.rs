@@ -337,7 +337,81 @@ pub async fn sync_server_library(
             }
             info!("Subsonic/Custom sync completed successfully.");
         }
-        MusicService::YtMusic => {}
+        MusicService::YtMusic => {
+            // YT Music has no library-albums/artists endpoint, but the
+            // signed-in user's Liked Songs carry album + artist, which is
+            // enough to populate the Library, Albums and Artists views
+            // (the Artists grid derives purely from track/album metadata).
+            // Without this the YT branch was a no-op and those views were
+            // empty — the "library albums/artist alles leer" report.
+            info!("Fetching YouTube Music library (liked songs)...");
+            let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(token.clone());
+            let mut tracks = match yt.get_liked_songs().await {
+                Ok(t) => t,
+                Err(e) => {
+                    info!("YT liked-songs fetch failed: {e}");
+                    Vec::new()
+                }
+            };
+
+            // Group tracks into albums. Liked-song rows often don't carry an
+            // album browse id, so synthesize a stable key from album+artist
+            // and rewrite each track's album_id to match — otherwise the
+            // album-detail view couldn't find the album's tracks.
+            let mut albums: Vec<Album> = Vec::new();
+            let mut album_keys: HashSet<String> = HashSet::new();
+            for t in &mut tracks {
+                if t.album.trim().is_empty() {
+                    continue;
+                }
+                let key = if !t.album_id.trim().is_empty() {
+                    t.album_id.clone()
+                } else {
+                    format!(
+                        "ytalbum:{}|{}",
+                        t.album.to_lowercase().trim(),
+                        t.artist.to_lowercase().trim()
+                    )
+                };
+                t.album_id = key.clone();
+                if album_keys.insert(key.clone()) {
+                    albums.push(Album {
+                        id: key,
+                        title: t.album.clone(),
+                        artist: t.artist.clone(),
+                        genre: String::new(),
+                        year: 0,
+                        cover_path: None,
+                        manual_cover: false,
+                    });
+                }
+            }
+
+            let mut lib_write = library.write();
+            if clear_first {
+                lib_write.jellyfin_albums.clear();
+                lib_write.jellyfin_tracks.clear();
+            }
+            for album in albums {
+                if !lib_write.jellyfin_albums.iter().any(|a| a.id == album.id) {
+                    lib_write.jellyfin_albums.push(album);
+                }
+            }
+            for track in tracks {
+                if !lib_write
+                    .jellyfin_tracks
+                    .iter()
+                    .any(|t| t.path == track.path)
+                {
+                    lib_write.jellyfin_tracks.push(track);
+                }
+            }
+            info!(
+                "YouTube Music library sync completed: {} tracks, {} albums.",
+                lib_write.jellyfin_tracks.len(),
+                lib_write.jellyfin_albums.len()
+            );
+        }
     }
 
     Ok(())

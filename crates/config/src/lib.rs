@@ -603,6 +603,11 @@ pub struct AppConfig {
     pub offline_quality: OfflineQuality,
     #[serde(default)]
     pub offline_tracks: HashMap<String, String>,
+    /// Folder downloads are saved to. `None` resolves to `<Music>/Kopuz` at
+    /// download time (see `server::downloads_dir`). Stored as a real, browsable
+    /// path with human-readable `Artist - Title.ext` filenames.
+    #[serde(default)]
+    pub download_directory: Option<PathBuf>,
     #[serde(default)]
     pub player_bar_position: PlayerBarPosition,
     #[serde(default)]
@@ -917,6 +922,7 @@ impl Default for AppConfig {
             titlebar_mode: TitlebarMode::Custom,
             offline_quality: OfflineQuality::default(),
             offline_tracks: HashMap::new(),
+            download_directory: None,
             player_bar_position: PlayerBarPosition::Bottom,
             ui_style: UiStyle::Normal,
             hero_height: default_hero_height(),
@@ -934,6 +940,19 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// The browsable downloads folder: `download_directory` when set, else
+    /// `<Music>/Kopuz` (falling back to `<home>/Music/Kopuz`, then `./downloads`).
+    /// Does NOT create the directory — callers that write into it should.
+    pub fn resolved_download_dir(&self) -> PathBuf {
+        self.download_directory.clone().unwrap_or_else(|| {
+            directories::UserDirs::new()
+                .and_then(|u| u.audio_dir().map(|p| p.to_path_buf()))
+                .or_else(|| directories::UserDirs::new().map(|u| u.home_dir().join("Music")))
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("Kopuz")
+        })
+    }
+
     pub fn migrate_home_sections(&mut self) {
         let allowed: std::collections::HashSet<&&str> = HOME_SECTION_KEYS.iter().collect();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();

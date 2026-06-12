@@ -21,9 +21,9 @@ fn theme_editor_section(_config: Signal<AppConfig>) -> Element {
 }
 use components::settings_items::{
     BackBehaviorSelector, ChannelModeSelector, DiscordPresencePausedSettings,
-    DiscordPresenceSettings, EqualizerPanel, LanguageSelector, LastFmSettings,
-    MultiDirectoryPicker, MusicBrainzSettings, RadioRegistryDropdown, ServerSettings, SettingItem,
-    ThemeSelector, ToggleSetting,
+    DiscordPresenceSettings, DownloadFolderSetting, EqualizerPanel, LanguageSelector,
+    LastFmSettings, MultiDirectoryPicker, MusicBrainzSettings, RadioRegistryDropdown,
+    ServerSettings, SettingItem, ThemeSelector, ToggleSetting,
 };
 use components::settings_popups::{AddRegistryPopup, AddServerPopup, LoginPopup, YtAuthMethod};
 use config::{AppConfig, ArtistPhotoSource, Browser, FetchStrategy, MusicService, OfflineQuality};
@@ -905,6 +905,12 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                                             }
                                         }
                                     }
+                                }
+                            }
+                            if !cfg!(target_arch = "wasm32") {
+                                div { class: "py-2",
+                                    p { class: "text-white font-medium mb-2", "{i18n::t(\"download_folder\")}" }
+                                    DownloadFolderSetting { config }
                                 }
                             }
                         }

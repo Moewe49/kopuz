@@ -192,6 +192,96 @@ fn AddFolderButton(on_add: EventHandler<std::path::PathBuf>, add_text: String) -
     rsx! {}
 }
 
+/// Reveal a folder in the OS file manager. Desktop-only.
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+fn reveal_folder(path: &std::path::Path) {
+    let _ = std::fs::create_dir_all(path);
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(path).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(path).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
+/// Settings row for the browsable downloads folder: shows the resolved path,
+/// plus Open / Choose / Reset controls on desktop. Downloads are saved here as
+/// readable `Artist - Title.ext` files.
+#[component]
+pub fn DownloadFolderSetting(config: Signal<AppConfig>) -> Element {
+    let display = config.read().resolved_download_dir().display().to_string();
+    let is_custom = config.read().download_directory.is_some();
+    rsx! {
+        div { class: "flex flex-col gap-2 w-full",
+            div { class: "flex items-center justify-between gap-3 bg-white/5 p-2 rounded w-full",
+                span {
+                    class: "text-xs text-slate-400 font-mono truncate flex-1",
+                    title: "{display}",
+                    "{display}"
+                }
+                OpenFolderButton { config }
+            }
+            div { class: "flex items-center gap-2",
+                ChooseDownloadFolderButton { config }
+                if is_custom {
+                    button {
+                        class: "text-xs text-white/50 hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors",
+                        onclick: move |_| { config.write().download_directory = None; },
+                        "{i18n::t(\"reset_to_default\")}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+#[component]
+fn OpenFolderButton(config: Signal<AppConfig>) -> Element {
+    rsx! {
+        button {
+            class: "text-white/50 hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors shrink-0",
+            title: "{i18n::t(\"download_folder\")}",
+            onclick: move |_| reveal_folder(&config.read().resolved_download_dir()),
+            i { class: "fa-solid fa-folder-open" }
+        }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", target_os = "android", target_os = "ios"))]
+#[component]
+fn OpenFolderButton(config: Signal<AppConfig>) -> Element {
+    let _ = config;
+    rsx! {}
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+#[component]
+fn ChooseDownloadFolderButton(config: Signal<AppConfig>) -> Element {
+    rsx! {
+        button {
+            class: "text-xs text-white px-3 py-1 rounded bg-white/10 hover:bg-white/20 transition-colors",
+            onclick: move |_| {
+                let mut config = config;
+                spawn(async move {
+                    if let Some(handle) = AsyncFileDialog::new().pick_folder().await {
+                        config.write().download_directory = Some(handle.path().to_path_buf());
+                    }
+                });
+            },
+            i { class: "fa-solid fa-folder mr-1" }
+            "{i18n::t(\"choose_folder\")}"
+        }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", target_os = "android", target_os = "ios"))]
+#[component]
+fn ChooseDownloadFolderButton(config: Signal<AppConfig>) -> Element {
+    let _ = config;
+    rsx! {}
+}
+
 #[component]
 pub fn ServerSettings(
     active: Option<MusicServer>,
