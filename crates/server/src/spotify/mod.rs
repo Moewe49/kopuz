@@ -18,6 +18,7 @@ pub mod api;
 pub mod auth;
 pub mod embed;
 pub mod matcher;
+pub mod pathfinder;
 
 /// One track as Spotify describes it — the matcher's input.
 #[derive(Debug, Clone, PartialEq)]

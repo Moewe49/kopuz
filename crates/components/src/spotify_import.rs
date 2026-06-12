@@ -114,66 +114,15 @@ pub fn SpotifyImportModal(
             return;
         };
         phase.set(ImportPhase::FetchingSource);
-        let (client_id, refresh) = {
-            let c = config.peek();
-            (c.spotify_client_id.clone(), c.spotify_refresh_token.clone())
-        };
         spawn(async move {
-            // When a Spotify account is connected, use ITS token and page the
-            // FULL playlist. The anonymous embed token is heavily rate-limited
-            // (HTTP 429) and only inlines ~100 tracks — so we must NOT silently
-            // fall back to it for a connected user (that's what was capping big
-            // imports at 100). Surface the error instead so they can reconnect.
-            let result = if !client_id.is_empty() && !refresh.is_empty() {
-                match spotify::auth::refresh_token(&client_id, &refresh).await {
-                    Ok(tokens) => {
-                        if let Some(r) = tokens.refresh_token.clone().filter(|r| !r.is_empty()) {
-                            config.write().spotify_refresh_token = r;
-                        }
-                        let tok = tokens.access_token;
-                        match kind {
-                            spotify::SpotifyEntityKind::Playlist => {
-                                // Auto-follow first so a playlist you don't own
-                                // becomes readable in full (should lift the
-                                // dev-mode 403).
-                                let follow = spotify::api::follow_playlist(&tok, &id).await;
-                                match spotify::api::fetch_playlist(&tok, &id).await {
-                                    Ok(pl) => Ok(pl),
-                                    Err(e) if e.contains("403") => {
-                                        // Distinguish the two failure modes so the
-                                        // message is actionable (not the generic 403).
-                                        match &follow {
-                                            Err(fe)
-                                                if fe.contains("401") || fe.contains("403") =>
-                                            {
-                                                Err(i18n::t("spotify_reconnect_follow"))
-                                            }
-                                            _ => Err(i18n::t("spotify_follow_no_help")),
-                                        }
-                                    }
-                                    Err(e) => Err(e),
-                                }
-                            }
-                            spotify::SpotifyEntityKind::Album => {
-                                spotify::api::fetch_album(&tok, &id).await
-                            }
-                        }
-                    }
-                    Err(e) => Err(format!(
-                        "Spotify token refresh failed — reconnect your account: {e}"
-                    )),
-                }
-            } else {
-                // Not connected: anonymous embed (Spotify caps this at ~100).
-                spotify::embed::fetch_public(kind, &id).await
-            };
-            match result {
+            // Anonymous fetch through the embed token. For playlists this goes
+            // via the web player's pathfinder GraphQL endpoint, which reads ANY
+            // public playlist in full — no login, no owning/following, no
+            // ~100-track cap (the old dev-mode REST path 403'd non-owned
+            // playlists and only the anonymous web token works here). Albums
+            // page through the REST API, then the inlined list as a fallback.
+            match spotify::embed::fetch_public(kind, &id).await {
                 Ok(playlist) => run_import(playlist),
-                Err(e) if e.contains("403") => {
-                    // Spotify dev-mode apps can't read playlists the user doesn't
-                    // own or follow — turn the raw 403 into something actionable.
-                    phase.set(ImportPhase::Failed(i18n::t("spotify_403_follow")));
-                }
                 Err(e) => phase.set(ImportPhase::Failed(e)),
             }
         });

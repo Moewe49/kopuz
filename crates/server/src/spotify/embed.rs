@@ -28,12 +28,20 @@ pub async fn fetch_public(kind: SpotifyEntityKind, id: &str) -> Result<SpotifyPl
         .map_err(|e| format!("Spotify embed body: {e}"))?;
 
     // The embed page only inlines ~100 tracks, but it also ships an
-    // anonymous Web API access token. Use it to page through the FULL
-    // track list (no user login needed) for public playlists/albums.
-    // Fall back to the inlined ≈100-track list if the token path fails.
+    // anonymous Web API access token. Use it to fetch the FULL track list
+    // (no user login needed) for public playlists/albums. Playlists go
+    // through the web player's pathfinder GraphQL endpoint — the only path
+    // that reads non-owned playlists in full (the REST API 403s those from a
+    // dev-mode app and 429s the anonymous token). Albums are small enough
+    // that the REST endpoint, then the inlined ≈100, cover them.
+    // Fall back to the inlined ≈100-track list if every token path fails.
     if let Some(token) = extract_access_token(&html) {
         let full = match kind {
-            SpotifyEntityKind::Playlist => super::api::fetch_playlist(&token, id).await,
+            SpotifyEntityKind::Playlist => match super::pathfinder::fetch_playlist(&token, id).await
+            {
+                Ok(pl) if !pl.tracks.is_empty() => Ok(pl),
+                _ => super::api::fetch_playlist(&token, id).await,
+            },
             SpotifyEntityKind::Album => super::api::fetch_album(&token, id).await,
         };
         if let Ok(pl) = full

@@ -1,59 +1,62 @@
-# Spotify-Import einrichten (eigene App)
+# Spotify-Import
 
-Um deine Spotify-Playlists nach YouTube Music zu klonen — **ohne** 100-Track-Limit
-und schnell — verbindest du Kopuz einmal mit einer eigenen Spotify-App. Dauert
-~3 Minuten, ist kostenlos, und du machst es **nur einmal**.
-
-> **Warum?** Spotify hat den anonymen Zugang stark gedrosselt (HTTP 429), wodurch
-> URL-Importe auf ~100 Tracks gedeckelt und langsam werden. Mit deiner eigenen
-> App lädt Kopuz die volle Playlist zuverlässig.
-
-Du brauchst nur ein normales (auch kostenloses) Spotify-Konto.
+Kopuz kann Spotify-Playlists nach YouTube Music klonen. Es gibt zwei Wege —
+für den normalen Fall brauchst du **gar nichts einzurichten**.
 
 ---
 
-## Schritt 1 — App erstellen
+## Weg 1 — Per Playlist-URL (empfohlen, kein Login nötig)
+
+Für **jede öffentliche Playlist** — egal von wem, egal wie groß:
+
+1. In Spotify die Playlist öffnen → **Teilen → Link kopieren**.
+2. In Kopuz das **Spotify-Import**-Fenster öffnen (Playlists-Seite der
+   YouTube-Music-Ansicht → **Import from Spotify**).
+3. Im Tab **URL** den Link einfügen und auf **Import** klicken.
+
+Kopuz holt **alle** Tracks — kein 100-Track-Limit, keine Anmeldung, kein
+API-Key. Das funktioniert, weil Kopuz dieselbe interne Schnittstelle nutzt wie
+der Spotify-Web-Player selbst.
+
+> Voraussetzung: Du musst in Kopuz bei **YouTube Music angemeldet** sein, denn
+> die geklonte Playlist landet in deinem YT-Music-Konto.
+
+---
+
+## Weg 2 — Eigenes Konto verbinden (nur für *private* Playlists & Lieblingssongs)
+
+Nur nötig, wenn du **deine eigenen privaten** Playlists oder deine
+**Lieblingssongs** importieren willst — die sind über die URL nicht erreichbar.
+Öffentliche Playlists brauchen das **nicht** (siehe Weg 1).
+
+### Schritt 1 — App erstellen
 
 1. Öffne **https://developer.spotify.com/dashboard** und melde dich an.
 2. Klick auf **Create app**.
 3. Felder ausfüllen:
    - **App name:** `Kopuz` (oder beliebig)
-   - **App description:** irgendwas, z. B. `Import meiner Spotify-Playlists` (Pflichtfeld)
-   - **Website:** leer lassen (optional)
+   - **App description:** irgendwas (Pflichtfeld)
    - **Redirect URIs:** **exakt** das hier eintragen und auf **Add** klicken:
      ```
      http://127.0.0.1:8898/callback
      ```
-     ⚠️ Genau so — gleicher Port, `/callback` am Ende, kein `https`. Sonst
-     schlägt die Anmeldung fehl.
+     ⚠️ Genau so — gleicher Port, `/callback` am Ende, kein `https`.
    - **Which API/SDKs are you planning to use?** → **Web API** anhaken.
    - Die **Terms of Service** anhaken.
 4. **Save** klicken.
 
----
+### Schritt 2 — Client-ID kopieren
 
-## Schritt 2 — Client-ID kopieren
+1. In der App auf **Settings** gehen.
+2. Die **Client ID** kopieren. Ein **Client Secret** brauchst du **nicht** —
+   Kopuz nutzt PKCE.
 
-1. In der erstellten App auf **Settings** gehen.
-2. Die **Client ID** kopieren (sieht aus wie `a1b2c3d4...`).
-   - Ein **Client Secret** brauchst du **nicht** — Kopuz nutzt PKCE (sicherer,
-     kein Secret nötig).
+### Schritt 3 — In Kopuz verbinden
 
----
-
-## Schritt 3 — In Kopuz verbinden
-
-1. In Kopuz das **Spotify-Import**-Fenster öffnen (auf der Playlists-Seite der
-   YouTube-Music-Ansicht → **Import from Spotify**).
-2. Den Bereich **Connect Spotify** öffnen, die **Client ID** einfügen und auf
-   **Connect** klicken.
-3. Es öffnet sich der Browser → mit deinem Spotify-Konto **einmal autorisieren**.
-4. Zurück in Kopuz: fertig — dein Konto ist verbunden.
-
-Ab jetzt kannst du:
-- deine eigenen Playlists direkt auswählen und importieren, **oder**
-- eine **Playlist-URL** einfügen — Kopuz nutzt dann automatisch deinen
-  verbundenen Zugang und holt **alle** Tracks (kein 100-Limit).
+1. Im Spotify-Import-Fenster den Tab **Account** öffnen.
+2. **Client ID** einfügen → **Connect** → im Browser einmal autorisieren.
+3. Fertig — jetzt kannst du deine eigenen Playlists und Lieblingssongs direkt
+   auswählen.
 
 ---
 
@@ -61,9 +64,9 @@ Ab jetzt kannst du:
 
 | Symptom | Lösung |
 |---|---|
-| „INVALID_CLIENT" / Redirect-Fehler | Die Redirect URI muss **exakt** `http://127.0.0.1:8898/callback` sein (Schritt 1). |
-| Import hängt bei ~100 Tracks | Account nicht verbunden — verbinde Spotify (Schritt 3). Ohne Verbindung limitiert Spotify selbst. |
-| „Cannot bind 127.0.0.1:8898" | Ein anderes Programm belegt den Port 8898 — schließ es und versuch es erneut. |
-| Browser öffnet nicht | Öffne die angezeigte URL manuell und autorisiere dort. |
+| Import schlägt sofort fehl | Bist du in Kopuz bei **YouTube Music** angemeldet? Das ist Pflicht (Ziel des Klons). |
+| „No tracks found" bei URL | Playlist ist **privat** — entweder öffentlich schalten oder über Weg 2 (Konto verbinden) importieren. |
+| „INVALID_CLIENT" / Redirect-Fehler (Weg 2) | Die Redirect URI muss **exakt** `http://127.0.0.1:8898/callback` sein. |
+| „Cannot bind 127.0.0.1:8898" (Weg 2) | Ein anderes Programm belegt Port 8898 — schließ es und versuch es erneut. |
 
 Deine Client-ID wird **nur lokal** in deiner Kopuz-Konfiguration gespeichert.
