@@ -940,17 +940,24 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// The browsable downloads folder: `download_directory` when set, else
-    /// `<Music>/Kopuz` (falling back to `<home>/Music/Kopuz`, then `./downloads`).
+    /// The browsable downloads folder. Resolution order:
+    /// 1. `download_directory` when the user explicitly set one;
+    /// 2. else `<your first music library folder>/Kopuz` so downloads land
+    ///    inside the music folder configured in Settings;
+    /// 3. else `<Music>/Kopuz` (system music dir), then `./downloads`.
     /// Does NOT create the directory — callers that write into it should.
     pub fn resolved_download_dir(&self) -> PathBuf {
-        self.download_directory.clone().unwrap_or_else(|| {
-            directories::UserDirs::new()
-                .and_then(|u| u.audio_dir().map(|p| p.to_path_buf()))
-                .or_else(|| directories::UserDirs::new().map(|u| u.home_dir().join("Music")))
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("Kopuz")
-        })
+        if let Some(dir) = &self.download_directory {
+            return dir.clone();
+        }
+        if let Some(music) = self.music_directory.iter().find(|p| !p.as_os_str().is_empty()) {
+            return music.join("Kopuz");
+        }
+        directories::UserDirs::new()
+            .and_then(|u| u.audio_dir().map(|p| p.to_path_buf()))
+            .or_else(|| directories::UserDirs::new().map(|u| u.home_dir().join("Music")))
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Kopuz")
     }
 
     pub fn migrate_home_sections(&mut self) {

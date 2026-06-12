@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use reader::{Library, PlaylistStore};
 
 use crate::local::playlists::LocalPlaylists;
-use crate::server::download_manager::{DownloadQueue, DownloadStatus, queue_downloads};
+use crate::server::download_manager::{DownloadQueue, DownloadStatus};
 use crate::server::playlists::ServerPlaylists;
 
 #[component]
@@ -158,7 +158,7 @@ pub fn PlaylistsPage(
                             on_close: move |_| selected_playlist_id.set(None),
                             is_downloading_all,
                             on_download_all: move |_| {
-                                let requests: Vec<(String, String, String)> = {
+                                let (requests, name): (Vec<(String, String, String)>, String) = {
                                     let store = playlist_store.read();
                                     let lib = library.read();
                                     store
@@ -166,7 +166,7 @@ pub fn PlaylistsPage(
                                         .iter()
                                         .find(|p| p.id == pid_for_dl)
                                         .map(|p| {
-                                            p
+                                            let reqs = p
                                                 .tracks
                                                 .iter()
                                                 .map(|tid| {
@@ -180,14 +180,20 @@ pub fn PlaylistsPage(
                                                         meta.map(|t| t.artist.clone()).unwrap_or_default(),
                                                     )
                                                 })
-                                                .collect()
+                                                .collect();
+                                            (reqs, p.name.clone())
                                         })
                                         .unwrap_or_default()
                                 };
                                 if requests.is_empty() {
                                     return;
                                 }
-                                queue_downloads(requests, config, download_queue);
+                                crate::server::download_manager::queue_downloads_into(
+                                    requests,
+                                    Some(name),
+                                    config,
+                                    download_queue,
+                                );
                             },
                             on_delete_all: {
                                 move |_| {

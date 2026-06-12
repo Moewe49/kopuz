@@ -45,9 +45,22 @@ fn reset_progress_session() {
     state.session_elapsed_secs = 0.0;
 }
 
+/// Queue tracks for download into the base downloads folder.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn queue_downloads(
     requests: Vec<(String, String, String)>,
+    config: Signal<AppConfig>,
+    queue: Signal<DownloadQueue>,
+) {
+    queue_downloads_into(requests, None, config, queue);
+}
+
+/// Queue tracks for download into `<downloads>/<subdir>/` when `subdir` is
+/// set (e.g. a playlist name), else the base downloads folder.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn queue_downloads_into(
+    requests: Vec<(String, String, String)>,
+    subdir: Option<String>,
     config: Signal<AppConfig>,
     mut queue: Signal<DownloadQueue>,
 ) {
@@ -74,6 +87,7 @@ pub fn queue_downloads(
                 bytes_done: 0,
                 bytes_total: 0,
                 error: None,
+                subdir: subdir.clone(),
             });
             added = true;
         }
@@ -133,12 +147,17 @@ async fn download_worker(
             match claimed {
                 Some(item) => {
                     item.status = DownloadStatus::Downloading;
-                    Some((item.id.clone(), item.title.clone(), item.artist.clone()))
+                    Some((
+                        item.id.clone(),
+                        item.title.clone(),
+                        item.artist.clone(),
+                        item.subdir.clone(),
+                    ))
                 }
                 None => None,
             }
         };
-        let Some((id, title, artist)) = claimed else {
+        let Some((id, title, artist, subdir)) = claimed else {
             return;
         };
 
@@ -162,18 +181,27 @@ async fn download_worker(
             if matches!(service, Some(MusicService::YtMusic)) {
                 let cookies = yt_cookies.unwrap_or_default();
                 let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-                match yt.get_stream(&id).await {
-                    Ok(info) => Some((
+                let info = match yt.get_stream(&id).await {
+                    Ok(info) => Some(info),
+                    Err(e) => {
+                        // The stored video may be unavailable (region/age-locked
+                        // or removed) even though a playable alternative exists.
+                        // Mirror what the user does manually: re-resolve by
+                        // searching title+artist and stream the top playable hit.
+                        eprintln!(
+                            "Download resolve failed for {id} (YT): {e} — trying search fallback"
+                        );
+                        resolve_via_search(&yt, &title, &artist, &id).await
+                    }
+                };
+                info.map(|info| {
+                    (
                         info.url,
                         info.format.extension(),
                         Some(info.user_agent),
                         info.content_length,
-                    )),
-                    Err(e) => {
-                        eprintln!("Download URL resolve failed for {id} (YT): {e}");
-                        None
-                    }
-                }
+                    )
+                })
             } else {
                 let conf = config.read();
                 super::build_download_url(&id, &conf).map(|(u, ext)| (u, ext, None, None))
@@ -196,9 +224,15 @@ async fn download_worker(
         };
 
         // Save into the browsable downloads folder as `Artist - Title.ext`.
+        // Playlist downloads carry a `subdir` so they group under a per-playlist
+        // folder inside the downloads dir.
         let dest_no_ext = {
             let conf = config.read();
-            let dir = super::downloads_dir(&conf);
+            let mut dir = super::downloads_dir(&conf);
+            if let Some(sub) = subdir.as_deref().filter(|s| !s.trim().is_empty()) {
+                dir = dir.join(super::sanitize_filename(sub));
+                let _ = std::fs::create_dir_all(&dir);
+            }
             super::download_dest_no_ext(&dir, &artist, &title, &id)
         };
 
@@ -235,6 +269,40 @@ async fn download_worker(
             }
         }
     }
+}
+
+/// When a stored YT video id won't resolve (unavailable / age- or
+/// region-locked / removed), search the catalog for `title artist` and return
+/// the first alternative that DOES resolve — the same recovery the user does
+/// by hand from the search tab. Skips the id that already failed.
+#[cfg(not(target_arch = "wasm32"))]
+async fn resolve_via_search(
+    yt: &::server::ytmusic::YouTubeMusicClient,
+    title: &str,
+    artist: &str,
+    failed_id: &str,
+) -> Option<::server::ytmusic::YtStreamInfo> {
+    let query = format!("{title} {artist}");
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let results = yt.search_tracks(query).await.ok()?;
+    for t in results.into_iter().take(5) {
+        let vid = t
+            .path
+            .to_string_lossy()
+            .strip_prefix("ytmusic:")
+            .and_then(|s| s.split(':').next())
+            .map(|s| s.to_string());
+        let Some(vid) = vid.filter(|v| !v.is_empty() && v != failed_id) else {
+            continue;
+        };
+        if let Ok(info) = yt.get_stream(&vid).await {
+            return Some(info);
+        }
+    }
+    None
 }
 
 #[cfg(not(target_arch = "wasm32"))]

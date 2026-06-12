@@ -1,4 +1,4 @@
-use crate::server::download_manager::{DownloadQueue, DownloadStatus, queue_downloads};
+use crate::server::download_manager::{DownloadQueue, DownloadStatus, queue_downloads_into};
 use ::server::jellyfin::JellyfinClient;
 use ::server::subsonic::SubsonicClient;
 use config::{AppConfig, MusicService};
@@ -559,13 +559,42 @@ pub fn JellyfinPlaylists(
                                     class: "absolute top-4 right-4 w-8 h-8 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:border-white/30 transition-colors opacity-0 group-hover:opacity-100",
                                     title: if all_downloaded { "Remove downloads" } else { "Download playlist for offline playback" },
                                     disabled: is_dl,
-                                    onclick: move |evt| {
-                                        evt.stop_propagation();
-                                        if all_downloaded {
-                                            let ids_only = playlist.tracks.clone();
-                                            crate::server::download_manager::delete_downloads(ids_only, config, download_queue);
-                                        } else {
-                                            queue_downloads(track_requests_dl.clone(), config, download_queue);
+                                    onclick: {
+                                        let playlist_name_dl = playlist.name.clone();
+                                        let playlist_id_dl2 = playlist.id.clone();
+                                        let known_ids = playlist.tracks.clone();
+                                        move |evt: Event<MouseData>| {
+                                            evt.stop_propagation();
+                                            if all_downloaded {
+                                                crate::server::download_manager::delete_downloads(known_ids.clone(), config, download_queue);
+                                                return;
+                                            }
+                                            let subdir = Some(playlist_name_dl.clone());
+                                            // Group all of a playlist's downloads under
+                                            // <downloads>/<Playlist Name>/.
+                                            if !track_requests_dl.is_empty() {
+                                                queue_downloads_into(track_requests_dl.clone(), subdir, config, download_queue);
+                                                return;
+                                            }
+                                            // Tracks aren't loaded yet (e.g. a freshly
+                                            // imported playlist the bulk sync hasn't
+                                            // filled in) — fetch entries on demand so the
+                                            // download button still works.
+                                            let pid = playlist_id_dl2.clone();
+                                            spawn(async move {
+                                                let cookies = config.peek().server.as_ref().and_then(|s| s.access_token.clone());
+                                                let Some(cookies) = cookies else { return; };
+                                                let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+                                                if let Ok(tracks) = yt.get_playlist_entries(&pid).await {
+                                                    let requests: Vec<(String, String, String)> = tracks.iter().filter_map(|t| {
+                                                        let vid = t.path.to_string_lossy().split(':').nth(1).map(|s| s.to_string())?;
+                                                        Some((vid, t.title.clone(), t.artist.clone()))
+                                                    }).collect();
+                                                    if !requests.is_empty() {
+                                                        queue_downloads_into(requests, subdir, config, download_queue);
+                                                    }
+                                                }
+                                            });
                                         }
                                     },
                                     if is_dl {

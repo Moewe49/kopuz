@@ -28,6 +28,10 @@ pub struct DownloadItem {
     /// Human-readable reason when `status` is `Failed`. Surfaced in the
     /// download overlay so a failure isn't just a silent red dot.
     pub error: Option<String>,
+    /// Optional sub-folder (e.g. a playlist name) under the downloads dir.
+    /// Playlist downloads set this so all of a playlist's tracks land in
+    /// `<downloads>/<Playlist Name>/`. Single-track downloads leave it None.
+    pub subdir: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
