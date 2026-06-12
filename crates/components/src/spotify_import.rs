@@ -119,36 +119,34 @@ pub fn SpotifyImportModal(
             (c.spotify_client_id.clone(), c.spotify_refresh_token.clone())
         };
         spawn(async move {
-            // Prefer the user's OWN Spotify token when connected: the anonymous
-            // embed token is now heavily rate-limited (HTTP 429), which silently
-            // caps URL imports at ~100 tracks and slows them down. The user
-            // token pages the full list reliably. Fall back to the embed only
-            // when no account is connected.
-            let mut result: Option<Result<spotify::SpotifyPlaylist, String>> = None;
-            if !client_id.is_empty() && !refresh.is_empty() {
-                if let Ok(tokens) = spotify::auth::refresh_token(&client_id, &refresh).await {
-                    if let Some(r) = tokens.refresh_token.clone().filter(|r| !r.is_empty()) {
-                        config.write().spotify_refresh_token = r;
-                    }
-                    let tok = tokens.access_token;
-                    let full = match kind {
-                        spotify::SpotifyEntityKind::Playlist => {
-                            spotify::api::fetch_playlist(&tok, &id).await
+            // When a Spotify account is connected, use ITS token and page the
+            // FULL playlist. The anonymous embed token is heavily rate-limited
+            // (HTTP 429) and only inlines ~100 tracks — so we must NOT silently
+            // fall back to it for a connected user (that's what was capping big
+            // imports at 100). Surface the error instead so they can reconnect.
+            let result = if !client_id.is_empty() && !refresh.is_empty() {
+                match spotify::auth::refresh_token(&client_id, &refresh).await {
+                    Ok(tokens) => {
+                        if let Some(r) = tokens.refresh_token.clone().filter(|r| !r.is_empty()) {
+                            config.write().spotify_refresh_token = r;
                         }
-                        spotify::SpotifyEntityKind::Album => {
-                            spotify::api::fetch_album(&tok, &id).await
+                        let tok = tokens.access_token;
+                        match kind {
+                            spotify::SpotifyEntityKind::Playlist => {
+                                spotify::api::fetch_playlist(&tok, &id).await
+                            }
+                            spotify::SpotifyEntityKind::Album => {
+                                spotify::api::fetch_album(&tok, &id).await
+                            }
                         }
-                    };
-                    if let Ok(pl) = &full
-                        && !pl.tracks.is_empty()
-                    {
-                        result = Some(full);
                     }
+                    Err(e) => Err(format!(
+                        "Spotify token refresh failed — reconnect your account: {e}"
+                    )),
                 }
-            }
-            let result = match result {
-                Some(r) => r,
-                None => spotify::embed::fetch_public(kind, &id).await,
+            } else {
+                // Not connected: anonymous embed (Spotify caps this at ~100).
+                spotify::embed::fetch_public(kind, &id).await
             };
             match result {
                 Ok(playlist) => run_import(playlist),

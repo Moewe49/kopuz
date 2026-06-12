@@ -173,24 +173,45 @@ where
     let total_rest = rest.len();
     // Add the remaining tracks in BATCHES (one edit_playlist request per chunk),
     // not one request per track — hundreds of individual writes are what trip
-    // YouTube's abuse 403 and cap the import. A handful of batched requests sail
-    // through and finish in seconds.
+    // YouTube's abuse 403. If a batch still gets throttled, retry it with
+    // backoff instead of bailing, so big playlists fill completely. `added`
+    // tracks what actually landed so the report is honest.
     let mut done = 0usize;
-    for chunk in rest.chunks(ADD_BATCH) {
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        yt.add_videos_to_playlist(&playlist_id, chunk).await?;
-        done += chunk.len();
-        on_event(CloneEvent::Adding {
-            done,
-            total: total_rest,
-        });
+    let mut added = first.len();
+    'batches: for chunk in rest.chunks(ADD_BATCH) {
+        let mut attempt = 0u32;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            match yt.add_videos_to_playlist(&playlist_id, chunk).await {
+                Ok(()) => {
+                    done += chunk.len();
+                    added += chunk.len();
+                    on_event(CloneEvent::Adding {
+                        done,
+                        total: total_rest,
+                    });
+                    break;
+                }
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= 4 {
+                        // Throttled past our patience — stop, but keep (and
+                        // report) everything added so far rather than failing.
+                        eprintln!("[spotify-clone] add batch gave up after retries: {e}");
+                        break 'batches;
+                    }
+                    // Back off progressively (2s, 4s, 6s) to let the limit reset.
+                    tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+                }
+            }
+        }
     }
 
     Ok(CloneReport {
         playlist_id,
         playlist_name: name.to_string(),
         total: matches.len(),
-        matched: matched_ids.len(),
+        matched: added,
         unmatched: matches
             .iter()
             .filter(|m| m.video_id.is_none())
