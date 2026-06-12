@@ -416,11 +416,7 @@ fn parse_playlist_track(
     } else {
         None
     };
-    let duration = row
-        .pointer("/fixedColumns/0/musicResponsiveListItemFixedColumnRenderer/text/runs/0/text")
-        .and_then(|v| v.as_str())
-        .and_then(parse_mm_ss)
-        .unwrap_or(0);
+    let duration = extract_duration(row);
 
     ParsedRow {
         video_id,
@@ -431,6 +427,43 @@ fn parse_playlist_track(
         duration,
         thumbnail_url,
     }
+}
+
+/// Pull a track's duration from a music row. The canonical spot is the
+/// `fixedColumns[0]` cell, but YT inconsistently ships it as `runs` vs
+/// `simpleText`, sometimes with surrounding whitespace, and occasionally in a
+/// different column — all of which made the old single-pointer read return 0
+/// (the "00:00" rows). Scan the column subtrees for the first `m:ss` token,
+/// preferring fixedColumns (where the real duration lives) over flexColumns.
+fn extract_duration(row: &Value) -> u64 {
+    for key in ["fixedColumns", "flexColumns"] {
+        if let Some(cols) = row.get(key)
+            && let Some(d) = find_duration_in(cols)
+        {
+            return d;
+        }
+    }
+    0
+}
+
+/// Recursively find the first string leaf that looks strictly like a duration
+/// (`d:dd`, `d:dd:dd`). Restricted to digit/colon strings so it can't match
+/// ids, view counts, or other ":"-bearing text.
+fn find_duration_in(v: &Value) -> Option<u64> {
+    match v {
+        Value::String(s) => looks_like_duration(s),
+        Value::Array(a) => a.iter().find_map(find_duration_in),
+        Value::Object(o) => o.values().find_map(find_duration_in),
+        _ => None,
+    }
+}
+
+fn looks_like_duration(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if !s.contains(':') || !s.chars().all(|c| c.is_ascii_digit() || c == ':') {
+        return None;
+    }
+    parse_mm_ss(s)
 }
 
 fn parse_search_row(
@@ -840,4 +873,76 @@ fn parse_entity_row(item: &Value) -> Option<super::discover::DiscoverItem> {
         });
     }
     None
+}
+
+#[cfg(test)]
+mod duration_tests {
+    use super::{extract_duration, looks_like_duration};
+    use serde_json::json;
+
+    #[test]
+    fn parses_canonical_fixed_column_runs() {
+        let row = json!({
+            "fixedColumns": [{
+                "musicResponsiveListItemFixedColumnRenderer": {
+                    "text": { "runs": [{ "text": "3:45" }] }
+                }
+            }]
+        });
+        assert_eq!(extract_duration(&row), 225);
+    }
+
+    #[test]
+    fn parses_simple_text_duration() {
+        // YT sometimes ships the duration as simpleText, not runs — this is
+        // the shape that used to render as 00:00.
+        let row = json!({
+            "fixedColumns": [{
+                "musicResponsiveListItemFixedColumnRenderer": {
+                    "text": { "simpleText": "4:05" }
+                }
+            }]
+        });
+        assert_eq!(extract_duration(&row), 245);
+    }
+
+    #[test]
+    fn tolerates_surrounding_whitespace() {
+        let row = json!({
+            "fixedColumns": [{
+                "musicResponsiveListItemFixedColumnRenderer": {
+                    "text": { "runs": [{ "text": " 1:02:03 " }] }
+                }
+            }]
+        });
+        assert_eq!(extract_duration(&row), 3723);
+    }
+
+    #[test]
+    fn falls_back_to_flex_column_when_no_fixed() {
+        let row = json!({
+            "flexColumns": [
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Song" }] } } },
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                    { "text": "Artist" }, { "text": " • " }, { "text": "2:30" }
+                ] } } }
+            ]
+        });
+        assert_eq!(extract_duration(&row), 150);
+    }
+
+    #[test]
+    fn ignores_non_duration_colon_strings() {
+        // View counts / ids carry no m:ss token and must not be misread.
+        assert_eq!(looks_like_duration("1,234,567 views"), None);
+        assert_eq!(looks_like_duration("MPREb_abc123"), None);
+        assert_eq!(looks_like_duration(""), None);
+        assert_eq!(looks_like_duration("3:45"), Some(225));
+    }
+
+    #[test]
+    fn missing_duration_is_zero_not_a_panic() {
+        let row = json!({ "flexColumns": [] });
+        assert_eq!(extract_duration(&row), 0);
+    }
 }
