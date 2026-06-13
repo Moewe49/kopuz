@@ -19,6 +19,19 @@ pub fn ShowcaseModern(props: ShowcaseProps) -> Element {
     let duration_min = total_seconds / 60;
 
     let offline_tracks = config.read().offline_tracks.clone();
+    // Whether every track is already downloaded — drives the single header
+    // toggle button (download vs. remove). Without this the button always
+    // called the delete handler when both were present, so the download button
+    // did nothing on an empty offline set.
+    let all_downloaded = !props.tracks.is_empty()
+        && props.tracks.iter().all(|t| {
+            let p = t.path.to_string_lossy();
+            let id = p.split(':').nth(1).unwrap_or(&p);
+            offline_tracks
+                .get(id)
+                .map(|path_str| std::path::Path::new(path_str).exists())
+                .unwrap_or(false)
+        });
     let _fmt_dur = |s: u64| format!("{}:{:02}", s / 60, s % 60);
     let sort_state = use_signal(|| None);
     let indexed_tracks: Vec<_> = props
@@ -162,8 +175,12 @@ pub fn ShowcaseModern(props: ShowcaseProps) -> Element {
                                     class: "inline-flex items-center justify-center h-9 w-9 rounded-full text-sm font-medium transition-colors border border-white/12 hover:bg-white/10",
                                     style: "color: var(--color-white); opacity: 0.6;",
                                     disabled: props.is_downloading_all,
+                                    title: if all_downloaded { i18n::t("remove_downloads") } else { i18n::t("download_all_offline") },
                                     onclick: move |_| {
-                                        if props.on_delete_all.is_some() {
+                                        // Download when tracks are missing, remove
+                                        // once everything is downloaded — NOT
+                                        // "delete whenever a delete handler exists".
+                                        if all_downloaded {
                                             if let Some(ref h) = props.on_delete_all {
                                                 h.call(());
                                             }
@@ -173,6 +190,9 @@ pub fn ShowcaseModern(props: ShowcaseProps) -> Element {
                                     },
                                     if props.is_downloading_all {
                                         i { class: "fa-solid fa-spinner fa-spin text-xs" }
+                                    } else if all_downloaded {
+                                        // Everything's downloaded — click removes the offline copies.
+                                        i { class: "fa-solid fa-circle-check text-xs" }
                                     } else {
                                         i { class: "fa-solid fa-download text-xs" }
                                     }

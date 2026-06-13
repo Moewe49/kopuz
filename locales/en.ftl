@@ -428,6 +428,8 @@ radio_registries_empty = No registries configured
 offline_downloads = Offline Downloads
 download_quality = Download Quality
 download_folder = Download Folder
+remove_downloads = Remove downloads
+download_all_offline = Download all for offline playback
 premium_downloads = Premium downloads (256 kbps)
 premium_downloads_hint = Signs in to fetch 256 kbps AAC. Only helps YouTube Premium accounts; may rarely trigger a bot-check under heavy load. Off = anonymous 128 kbps.
 choose_folder = Choose…
