@@ -110,8 +110,10 @@ pub fn queue_downloads_into(
 
     let session_start = Instant::now();
     spawn(async move {
+        // 3 parallel workers, not 4 — googlevideo rate-limits per IP, and on
+        // big batches the 4th worker bought little speed but pushed the
+        // 403-on-range rate up noticeably.
         tokio::join!(
-            download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),
@@ -177,52 +179,6 @@ async fn download_worker(
             )
         };
 
-        let resolved: Option<(String, &'static str, Option<String>, Option<u64>)> =
-            if matches!(service, Some(MusicService::YtMusic)) {
-                let cookies = yt_cookies.unwrap_or_default();
-                let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-                let info = match yt.get_stream(&id).await {
-                    Ok(info) => Some(info),
-                    Err(e) => {
-                        // The stored video may be unavailable (region/age-locked
-                        // or removed) even though a playable alternative exists.
-                        // Mirror what the user does manually: re-resolve by
-                        // searching title+artist and stream the top playable hit.
-                        eprintln!(
-                            "Download resolve failed for {id} (YT): {e} — trying search fallback"
-                        );
-                        resolve_via_search(&yt, &title, &artist, &id).await
-                    }
-                };
-                info.map(|info| {
-                    (
-                        info.url,
-                        info.format.extension(),
-                        Some(info.user_agent),
-                        info.content_length,
-                    )
-                })
-            } else {
-                let conf = config.read();
-                super::build_download_url(&id, &conf).map(|(u, ext)| (u, ext, None, None))
-            };
-
-        let (url, ext_hint, user_agent, content_length) = match resolved {
-            Some(v) => v,
-            None => {
-                let reason = if matches!(service, Some(MusicService::YtMusic)) {
-                    "Could not resolve a stream — the track may be unavailable in your region, age-restricted, or yt-dlp needs updating."
-                } else {
-                    "Could not build a download URL for this track."
-                };
-                if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
-                    item.status = DownloadStatus::Failed;
-                    item.error = Some(reason.to_string());
-                }
-                continue;
-            }
-        };
-
         // Save into the browsable downloads folder as `Artist - Title.ext`.
         // Playlist downloads carry a `subdir` so they group under a per-playlist
         // folder inside the downloads dir.
@@ -236,37 +192,130 @@ async fn download_worker(
             super::download_dest_no_ext(&dir, &artist, &title, &id)
         };
 
-        match download_with_progress(
-            &id,
-            &url,
-            ext_hint,
-            &dest_no_ext,
-            user_agent.as_deref(),
-            content_length,
-            &mut queue,
-            &session_start,
-            &cancel_flag,
-        )
-        .await
-        {
-            Ok(path) => {
-                config
-                    .write()
-                    .offline_tracks
-                    .insert(id.clone(), path.to_string_lossy().into_owned());
-                if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
-                    item.status = DownloadStatus::Done;
-                }
-                clear_progress(&id);
+        // Resolve + transfer with retries. googlevideo URLs routinely start
+        // returning 403 on Range requests partway through a big batch (URL
+        // expiry / per-URL rate limiting) — that's transient per-URL, not
+        // per-track, so a fresh resolve almost always recovers. Attempts:
+        //   1: cached resolve (fast path)
+        //   2: FRESH resolve, bypassing the stream cache
+        //   3: fresh resolve again after a longer pause, then search fallback
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut last_err = String::new();
+        let mut done = false;
+        for attempt in 1..=MAX_ATTEMPTS {
+            if cancel_flag.load(Ordering::Relaxed) {
+                break;
             }
-            Err(e) => {
-                eprintln!("Download failed for {id}: {e}");
-                if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
-                    item.status = DownloadStatus::Failed;
-                    item.error = Some(e);
+            let resolved: Option<(String, &'static str, Option<String>, Option<u64>)> =
+                if matches!(service, Some(MusicService::YtMusic)) {
+                    let cookies = yt_cookies.clone().unwrap_or_default();
+                    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+                    let info = if attempt == 1 {
+                        yt.get_stream(&id).await.ok()
+                    } else {
+                        // A URL that 403'd is dead — never retry it from cache.
+                        yt.get_stream_fresh(&id).await.ok()
+                    };
+                    let info = match info {
+                        Some(i) => Some(i),
+                        // The stored video may be unavailable (region/age-locked
+                        // or removed) even though a playable alternative exists.
+                        // Mirror what the user does manually: re-resolve by
+                        // searching title+artist and stream the top playable hit.
+                        // Only on the last attempt — it's the slowest path.
+                        None if attempt == MAX_ATTEMPTS => {
+                            eprintln!(
+                                "Download resolve failed for {id} (YT) — trying search fallback"
+                            );
+                            resolve_via_search(&yt, &title, &artist, &id).await
+                        }
+                        None => None,
+                    };
+                    info.map(|info| {
+                        (
+                            info.url,
+                            info.format.extension(),
+                            Some(info.user_agent),
+                            info.content_length,
+                        )
+                    })
+                } else {
+                    let conf = config.read();
+                    super::build_download_url(&id, &conf).map(|(u, ext)| (u, ext, None, None))
+                };
+
+            let Some((url, ext_hint, user_agent, content_length)) = resolved else {
+                last_err = if matches!(service, Some(MusicService::YtMusic)) {
+                    "Could not resolve a stream — the track may be unavailable in your region, age-restricted, or yt-dlp needs updating.".to_string()
+                } else {
+                    "Could not build a download URL for this track.".to_string()
+                };
+                tokio::time::sleep(std::time::Duration::from_millis(800 * attempt as u64)).await;
+                continue;
+            };
+
+            match download_with_progress(
+                &id,
+                &url,
+                ext_hint,
+                &dest_no_ext,
+                user_agent.as_deref(),
+                content_length,
+                &mut queue,
+                &session_start,
+                &cancel_flag,
+            )
+            .await
+            {
+                Ok(path) => {
+                    config
+                        .write()
+                        .offline_tracks
+                        .insert(id.clone(), path.to_string_lossy().into_owned());
+                    if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
+                        item.status = DownloadStatus::Done;
+                    }
+                    clear_progress(&id);
+                    done = true;
+                    break;
                 }
-                clear_progress(&id);
+                Err(e) => {
+                    if e == "cancelled" {
+                        last_err = e;
+                        break;
+                    }
+                    eprintln!("Download attempt {attempt}/{MAX_ATTEMPTS} failed for {id}: {e}");
+                    last_err = e;
+                    // Back off before re-resolving — a 403 streak usually means
+                    // we're being rate-limited right now.
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        1000 * attempt as u64,
+                    ))
+                    .await;
+                }
             }
+        }
+        if !done {
+            // Don't leave a truncated file behind — anything with this stem is
+            // ours (download_dest_no_ext picked a collision-free name).
+            if let (Some(dir), Some(stem)) = (
+                dest_no_ext.parent(),
+                dest_no_ext.file_name().and_then(|f| f.to_str()),
+            ) && let Ok(entries) = std::fs::read_dir(dir)
+            {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str()
+                        && name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name) == stem
+                    {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+            if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
+                item.status = DownloadStatus::Failed;
+                item.error = Some(last_err);
+            }
+            clear_progress(&id);
         }
     }
 }
@@ -376,6 +425,13 @@ async fn download_with_progress(
         let mut last_update_bytes = 0u64;
         let mut first_update_done = false;
 
+        // Transient-blip retries per range. A single 403/429/5xx or network
+        // hiccup must not kill a download that's 90% done — wait briefly and
+        // re-request the same range. If it STILL fails after the retries the
+        // URL itself is dead (expired / rate-limited), and we bubble the error
+        // up so the worker re-resolves a fresh URL and restarts the track.
+        const RANGE_RETRIES: u32 = 3;
+
         while start < total {
             if cancel_flag.load(Ordering::Relaxed) {
                 drop(writer);
@@ -384,22 +440,34 @@ async fn download_with_progress(
             }
 
             let end = (start + CHUNK - 1).min(total - 1);
-            let resp = tokio::time::timeout(
-                std::time::Duration::from_secs(RANGE_TIMEOUT_SECS),
-                client
-                    .get(url)
-                    .header(reqwest::header::USER_AGENT, ua)
-                    .header("Range", format!("bytes={start}-{end}"))
-                    .send(),
-            )
-            .await
-            .map_err(|_| format!("range request timed out after {RANGE_TIMEOUT_SECS}s"))?
-            .map_err(|e| format!("Range request failed: {e}"))?;
-
+            let mut range_attempt = 0u32;
+            let resp = loop {
+                range_attempt += 1;
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(RANGE_TIMEOUT_SECS),
+                    client
+                        .get(url)
+                        .header(reqwest::header::USER_AGENT, ua)
+                        .header("Range", format!("bytes={start}-{end}"))
+                        .send(),
+                )
+                .await;
+                let err = match result {
+                    Ok(Ok(resp)) if resp.status().is_success() => break Ok(resp),
+                    Ok(Ok(resp)) => format!("HTTP {} on range {start}-{end}", resp.status()),
+                    Ok(Err(e)) => format!("Range request failed: {e}"),
+                    Err(_) => format!("range request timed out after {RANGE_TIMEOUT_SECS}s"),
+                };
+                if range_attempt > RANGE_RETRIES || cancel_flag.load(Ordering::Relaxed) {
+                    break Err(err);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    600 * range_attempt as u64,
+                ))
+                .await;
+            };
+            let resp = resp?;
             let status = resp.status();
-            if !status.is_success() {
-                return Err(format!("HTTP {status} on range {start}-{end}"));
-            }
             // Defensive: a CDN edge ignoring the Range header and
             // returning 200 (full body) plus a CONTENT_LENGTH equal
             // to `total` would otherwise let us write the whole file

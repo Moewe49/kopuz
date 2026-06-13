@@ -324,6 +324,16 @@ impl YouTubeMusicClient {
         Ok(info)
     }
 
+    /// Like [`get_stream`] but skips the read cache and resolves a brand-new
+    /// URL (still refreshing the cache). Needed when a previously-resolved
+    /// googlevideo URL starts returning 403 mid-transfer — retrying the same
+    /// cached URL can never recover.
+    pub async fn get_stream_fresh(&self, video_id: &str) -> Result<YtStreamInfo, String> {
+        let info = self.get_stream_uncached(video_id).await?;
+        stream_cache_put(video_id, &info);
+        Ok(info)
+    }
+
     /// Prefetch and cache a stream so the next play is instant. Errors are
     /// swallowed — it's a best-effort warm-up.
     pub async fn prewarm_stream(&self, video_id: &str) {
