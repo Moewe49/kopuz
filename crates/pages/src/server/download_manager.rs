@@ -158,11 +158,12 @@ pub fn queue_downloads_into(
     // killed the workers mid-run and left the queue frozen at "N queued".
     // The session must belong to the app, not to whichever page started it.
     dioxus::core::spawn_forever(async move {
-        // 3 parallel workers, not 4 — googlevideo rate-limits per IP, and on
-        // big batches the 4th worker bought little speed but pushed the
-        // 403-on-range rate up noticeably.
+        // 2 parallel workers. More throughput is tempting, but YouTube
+        // bot-checks per IP under load — and once the IP is flagged BOTH
+        // downloads AND playback fail (the LOGIN_REQUIRED you hit while a batch
+        // ran). 2 workers + yt-dlp's own parallel fragments keep the pipe busy
+        // while leaving the IP enough headroom that music keeps playing.
         tokio::join!(
-            download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),
         );

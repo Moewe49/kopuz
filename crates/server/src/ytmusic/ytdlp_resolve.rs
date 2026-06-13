@@ -201,13 +201,18 @@ fn download_blocking(
         // A leftover partial from an earlier attempt must not be mistaken
         // for a finished download.
         .arg("--force-overwrites")
-        .args(["--extractor-retries", "3"])
+        .args(["--extractor-retries", "5"])
         .args(["--retries", "10"])
         .args(["--fragment-retries", "10"])
         .args(["--socket-timeout", "30"])
-        // Concurrent fragment downloads sidestep googlevideo's per-connection
-        // throttle — this is what makes the fallback fast, not just reliable.
-        .args(["-N", "8"])
+        // 4 fragments saturate the link without the per-IP hammering that 8
+        // caused (which bot-flagged the IP and broke playback mid-batch).
+        .args(["-N", "4"])
+        // Space the extractor requests. The bot check keys on request RATE
+        // more than volume — a ~1s gap between the player/metadata calls cuts
+        // the LOGIN_REQUIRED rate a lot at almost no throughput cost (the media
+        // transfer itself is unaffected).
+        .args(["--sleep-requests", "1"])
         .args([
             "--user-agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
