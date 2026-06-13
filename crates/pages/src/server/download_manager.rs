@@ -289,17 +289,21 @@ async fn download_worker(
                 // A partial file from a prior attempt must not fool yt-dlp into
                 // thinking the track is already downloaded.
                 remove_stem_files(&dest_no_ext);
-                // ANONYMOUS download (no cookies): hammering googlevideo with
-                // many parallel signed-in downloads bot-flags the ACCOUNT,
-                // which then breaks PLAYBACK (LOGIN_REQUIRED) while a batch is
-                // running. Anonymous keeps the session clean — the cost is
-                // 128k AAC instead of Premium 256k, a fair trade for "music
-                // keeps playing while downloading". (Premium 256k via cookies
-                // is a separate gated path.)
+                // Default ANONYMOUS: hammering googlevideo with many parallel
+                // signed-in downloads can bot-flag the ACCOUNT, which then
+                // breaks PLAYBACK (LOGIN_REQUIRED) mid-batch. Anonymous keeps
+                // the session clean at the cost of 128k vs Premium 256k. The
+                // `premium_downloads` opt-in passes cookies to fetch itag 141
+                // (256k) for users who accept that trade.
+                let dl_cookies = if config.peek().premium_downloads {
+                    yt_cookies.clone()
+                } else {
+                    None
+                };
                 ytdlp_download_with_progress(
                     &id,
                     &dest_no_ext,
-                    None,
+                    dl_cookies.as_deref(),
                     &mut queue,
                     &session_start,
                 )
@@ -381,6 +385,18 @@ async fn download_worker(
                 }
             };
 
+            // Integrity gate: a transfer cut off before the trailing moov atom
+            // yields a file that "downloaded" but won't decode/seek at play
+            // time. Catch it now (cheap probe) so broken files don't silently
+            // pile up — treat a bad file as a failed attempt and retry.
+            let outcome = match outcome {
+                Ok(path) if !verify_audio_file(&path) => {
+                    let _ = std::fs::remove_file(&path);
+                    Err("downloaded file failed integrity check (truncated)".to_string())
+                }
+                other => other,
+            };
+
             match outcome {
                 Ok(path) => {
                     config
@@ -450,6 +466,23 @@ async fn download_worker(
             clear_progress(&id);
         }
     }
+}
+
+/// Cheap validity probe for a freshly downloaded audio file: it must parse and
+/// report a non-zero duration. Catches truncated/interrupted transfers (missing
+/// trailing moov atom) that "complete" but won't play. Downloads are m4a, which
+/// lofty reads; a webm from the rare native fallback that lofty can't parse is
+/// rejected and re-downloaded (cheap, and yt-dlp's m4a path usually succeeds).
+#[cfg(not(target_arch = "wasm32"))]
+fn verify_audio_file(path: &std::path::Path) -> bool {
+    use lofty::file::AudioFile;
+    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) < 4096 {
+        return false;
+    }
+    lofty::probe::Probe::open(path)
+        .and_then(|p| p.read())
+        .map(|tagged| tagged.properties().duration().as_secs() > 0)
+        .unwrap_or(false)
 }
 
 /// Largest on-disk size of any file sharing `dest_no_ext`'s stem — the growing

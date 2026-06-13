@@ -420,6 +420,8 @@ radio_registries_empty = Keine Registries konfiguriert
 offline_downloads = Offline-Downloads
 download_quality = Download-Qualität
 download_folder = Download-Ordner
+premium_downloads = Premium-Downloads (256 kbps)
+premium_downloads_hint = Meldet sich an, um 256-kbps-AAC zu laden. Nur mit YouTube Premium sinnvoll; kann unter hoher Last selten einen Bot-Check auslösen. Aus = anonym 128 kbps.
 choose_folder = Auswählen…
 reset_to_default = Zurücksetzen
 saving = Speichern...
