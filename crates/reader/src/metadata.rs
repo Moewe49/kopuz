@@ -65,8 +65,14 @@ pub fn extract_metadata(
     properties: &FileProperties,
     track_path: &Path,
 ) -> Track {
+    // Downloaded files are named "Artist - Title.ext" and carry no title/artist
+    // tags (we embed only the cover) — recover names from the filename so the
+    // library shows them properly instead of "Unknown Artist".
+    let (stem_artist, stem_title) = parse_stem_artist_title(track_path);
+
     let artist = tag
         .and_then(|t| t.artist().map(|a| a.to_string()))
+        .or_else(|| stem_artist.clone())
         .unwrap_or_else(|| "Unknown Artist".to_string());
 
     let artists: Vec<String> = tag
@@ -104,6 +110,7 @@ pub fn extract_metadata(
 
     let title = tag
         .and_then(|t| t.title().map(|t| t.to_string()))
+        .or_else(|| stem_title.clone())
         .or_else(|| {
             track_path
                 .file_stem()

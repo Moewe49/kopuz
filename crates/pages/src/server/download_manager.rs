@@ -262,16 +262,13 @@ async fn download_worker(
             super::download_dest_no_ext(&dir, &artist, &title, &id)
         };
 
-        // Per-track attempt ladder, most-likely-to-succeed-cheaply first:
-        //   1: native resolve (cached) + our chunked transfer — fastest, has
-        //      live progress.
-        //   2: yt-dlp END-TO-END download — yt-dlp resolves AND transfers in
-        //      one client context (a yt-dlp-resolved URL fetched by OUR HTTP
-        //      stack can 403: googlevideo binds URLs to the client identity).
-        //      Its own bot-check handling + fragment retries make this the
-        //      most reliable path there is, and `-N 4` makes it fast.
-        //   3: FRESH native resolve (never reuse a URL that 403'd), then the
-        //      search-by-title fallback for genuinely dead video ids.
+        // Per-track attempt ladder:
+        //   1-2: yt-dlp end-to-end m4a download (when yt-dlp is installed) —
+        //        clean, playable, seekable file with embedded cover; its own
+        //        bot-check + retries + parallel fragments. Primary path.
+        //   3:   native resolve + our chunked transfer, then search-by-title
+        //        fallback. Also the path for users without yt-dlp.
+        let ytdlp_available = ::server::ytmusic::ytdlp_resolve::find_ytdlp().is_some();
         const MAX_ATTEMPTS: u32 = 3;
         let mut last_err = String::new();
         let mut done = false;
@@ -281,8 +278,14 @@ async fn download_worker(
             }
 
             let is_yt = matches!(service, Some(MusicService::YtMusic));
-            let outcome: Result<std::path::PathBuf, String> = if attempt == 2 && is_yt {
-                // A partial file from attempt 1 must not fool yt-dlp into
+            // yt-dlp end-to-end is the PRIMARY path for YT downloads when it's
+            // installed: it fetches a clean m4a (playable/seekable, with a real
+            // duration and embedded cover), handles its own bot-check + retries,
+            // and downloads fragments in parallel (-N 8). The native chunked
+            // path (attempt 3) stays as a fallback for users without yt-dlp.
+            let use_ytdlp = is_yt && ytdlp_available && attempt <= 2;
+            let outcome: Result<std::path::PathBuf, String> = if use_ytdlp {
+                // A partial file from a prior attempt must not fool yt-dlp into
                 // thinking the track is already downloaded.
                 remove_stem_files(&dest_no_ext);
                 match tokio::time::timeout(

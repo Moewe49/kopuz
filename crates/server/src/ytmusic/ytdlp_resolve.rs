@@ -198,17 +198,26 @@ fn download_blocking(binary: &str, url: &str, dest_no_ext: &std::path::Path) -> 
              (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
         ])
         .arg("-f")
-        // Progressive/DASH audio only — HLS would need ffmpeg to mux.
+        // Prefer m4a/AAC (itag 140) for DOWNLOADS — unlike opus-in-webm it
+        // carries a clean duration header and decodes/seeks reliably in the
+        // local player (symphonia has no Opus seeker and webm has no duration,
+        // which is why downloaded opus files showed 0:00 and wouldn't play).
+        // itag 140 is the source AAC stream — no re-encode, so no quality loss.
+        // Fall back to any non-HLS audio if a track somehow lacks m4a.
         .arg(
-            "bestaudio[protocol!*=m3u8][acodec=opus]/\
-             bestaudio[protocol!*=m3u8]/bestaudio[protocol^=http]/bestaudio/best",
+            "140/bestaudio[ext=m4a][protocol!*=m3u8]/\
+             bestaudio[protocol!*=m3u8][acodec*=mp4a]/\
+             bestaudio[protocol!*=m3u8]/bestaudio/best",
         )
         .args(["-o", &template]);
-    // Embed title/artist/album + cover art so the file is self-describing and
-    // the local library shows proper names and artwork. Needs ffmpeg — only
-    // add these when it's available, else yt-dlp would error out the download.
+    // Embed the cover art so the local library shows artwork. We deliberately
+    // do NOT --embed-metadata: yt-dlp would write YouTube's raw video title
+    // ("… (Official Video) (4K Remaster)") which is uglier than the clean
+    // "Artist - Title" we already named the file, and the library prefers
+    // embedded tags over the filename. Needs ffmpeg — only add when present,
+    // else the postprocessor would abort the download.
     if ffmpeg_available() {
-        cmd.args(["--embed-metadata", "--embed-thumbnail"]);
+        cmd.args(["--embed-thumbnail"]);
     }
     cmd
         // Prints the final path (after any move) once the download finishes.
