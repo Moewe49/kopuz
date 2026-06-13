@@ -32,6 +32,10 @@ pub struct DownloadItem {
     /// Playlist downloads set this so all of a playlist's tracks land in
     /// `<downloads>/<Playlist Name>/`. Single-track downloads leave it None.
     pub subdir: Option<String>,
+    /// How many times this item has been requeued after a rate-limit-shaped
+    /// failure. Rate limiting poisons everything for a while — failing the
+    /// track permanently would be wrong, so it goes back in the queue (capped).
+    pub requeues: u32,
 }
 
 #[derive(Clone, Debug, Default)]

@@ -11,6 +11,30 @@ thread_local! {
     static DOWNLOAD_PROGRESS: Cell<Option<Signal<DownloadProgress>>> = const { Cell::new(None) };
 }
 
+/// Epoch-millis until which ALL workers pause. Set on rate-limit-shaped
+/// failures and on scheduled batch breathers. Global, not per-worker — once
+/// YT throttles the session, every worker pushing on just digs deeper.
+#[cfg(not(target_arch = "wasm32"))]
+static COOLDOWN_UNTIL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Completed downloads this session — drives the every-50-tracks breather.
+#[cfg(not(target_arch = "wasm32"))]
+static SESSION_COMPLETED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Extend the global cooldown to at least `now + secs` (never shortens it).
+#[cfg(not(target_arch = "wasm32"))]
+fn set_cooldown(secs: u64) {
+    let until = epoch_ms() + secs * 1000;
+    COOLDOWN_UNTIL_MS.fetch_max(until, Ordering::Relaxed);
+}
+
 pub fn register_progress_signal(signal: Signal<DownloadProgress>) {
     DOWNLOAD_PROGRESS.with(|s| s.set(Some(signal)));
 }
@@ -88,6 +112,7 @@ pub fn queue_downloads_into(
                 bytes_total: 0,
                 error: None,
                 subdir: subdir.clone(),
+                requeues: 0,
             });
             added = true;
         }
@@ -125,6 +150,7 @@ pub fn queue_downloads_into(
     }
 
     reset_progress_session();
+    SESSION_COMPLETED.store(0, Ordering::Relaxed);
 
     let session_start = Instant::now();
     // spawn_forever, NOT spawn: a scoped task dies when the page that queued
@@ -154,18 +180,18 @@ async fn download_worker(
     session_start: Instant,
     cancel_flag: Arc<AtomicBool>,
 ) {
-    // Consecutive failed tracks in THIS worker. A streak means YT is
-    // rate-limiting the whole session, not that individual tracks are bad —
-    // pushing harder just digs the hole deeper, so cool down instead.
-    let mut failure_streak = 0u32;
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
             return;
         }
-        if failure_streak >= 3 {
-            eprintln!("[downloads] {failure_streak} consecutive failures — cooling down 45s");
-            tokio::time::sleep(std::time::Duration::from_secs(45)).await;
-            failure_streak = 0;
+        // Honor the GLOBAL cooldown (rate-limit recovery / batch breather).
+        // All workers pause together — once YT throttles the session, any
+        // worker pushing on just extends the throttle.
+        let until = COOLDOWN_UNTIL_MS.load(Ordering::Relaxed);
+        let now = epoch_ms();
+        if until > now {
+            tokio::time::sleep(std::time::Duration::from_millis(until - now)).await;
+            continue;
         }
 
         // Atomic claim: find + status flip in one write lock prevents two workers
@@ -185,12 +211,25 @@ async fn download_worker(
                         item.title.clone(),
                         item.artist.clone(),
                         item.subdir.clone(),
+                        item.requeues,
                     ))
                 }
                 None => None,
             }
         };
-        let Some((id, title, artist, subdir)) = claimed else {
+        let Some((id, title, artist, subdir, requeues)) = claimed else {
+            // Nothing claimable — but another worker's in-flight track may
+            // yet get REQUEUED (rate-limit recovery). Only exit once nothing
+            // is downloading anymore; otherwise idle and re-check.
+            let anyone_active = queue
+                .read()
+                .items
+                .iter()
+                .any(|i| matches!(i.status, DownloadStatus::Downloading));
+            if anyone_active {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
             return;
         };
 
@@ -327,7 +366,14 @@ async fn download_worker(
                     }
                     clear_progress(&id);
                     done = true;
-                    failure_streak = 0;
+                    // Batch pacing: a scheduled 20s breather every 50 completed
+                    // tracks keeps a 300-track run under YT's limiter instead of
+                    // slamming into it at ~100 and grinding through cooldowns.
+                    let completed = SESSION_COMPLETED.fetch_add(1, Ordering::Relaxed) + 1;
+                    if completed % 50 == 0 {
+                        eprintln!("[downloads] {completed} done — 20s batch breather");
+                        set_cooldown(20);
+                    }
                     // Tiny pacing pause between tracks — bursts of back-to-back
                     // resolves are what trip YT's limiter on big playlists.
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -350,7 +396,6 @@ async fn download_worker(
             }
         }
         if !done {
-            failure_streak += 1;
             // Don't leave a truncated file behind — anything with this stem is
             // ours (download_dest_no_ext picked a collision-free name).
             if let (Some(dir), Some(stem)) = (
@@ -366,7 +411,30 @@ async fn download_worker(
                     }
                 }
             }
-            if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
+            // Rate-limit-shaped failures (403/429/timeouts/no-resolve) poison
+            // the SESSION, not the track — a track failed during a throttle
+            // window would very likely succeed later. Requeue it (capped) and
+            // give the whole session a cooldown, instead of permanently
+            // failing everything that had the bad luck of being processed
+            // during the throttle. That was the "one error and the rest of
+            // the download is ruined" behavior.
+            let rate_limited = last_err.contains("403")
+                || last_err.contains("429")
+                || last_err.contains("timed out")
+                || last_err.contains("Could not resolve");
+            let cancelled = last_err == "cancelled" || cancel_flag.load(Ordering::Relaxed);
+            if rate_limited && !cancelled && requeues < 2 {
+                eprintln!(
+                    "[downloads] {id} hit rate limit ({last_err}) — requeueing (attempt {}), 60s session cooldown",
+                    requeues + 1
+                );
+                set_cooldown(60);
+                if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
+                    item.status = DownloadStatus::Queued;
+                    item.requeues += 1;
+                    item.error = None;
+                }
+            } else if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                 item.status = DownloadStatus::Failed;
                 item.error = Some(last_err);
             }
