@@ -155,6 +155,86 @@ fn resolve_blocking(
     })
 }
 
+/// Download `video_id`'s best audio END-TO-END with yt-dlp, writing to
+/// `<dest_no_ext>.<ext>`. Returns the final file path.
+///
+/// This exists because resolve-then-download-ourselves has a failure mode the
+/// resolve can't see: the googlevideo URL yt-dlp hands back is bound to
+/// yt-dlp's client context, and fetching it with a different HTTP stack can
+/// 403. Letting yt-dlp do the whole transfer — with its own bot-check
+/// handling, retries and fragment recovery — is the most reliable path there
+/// is, so the download worker uses it as the primary fallback. Anonymous on
+/// purpose: bot-flagged signed-in sessions resolve fine anonymously.
+pub async fn download(video_id: &str, dest_no_ext: &std::path::Path) -> Result<PathBuf, String> {
+    let Some(binary) = find_ytdlp() else {
+        return Err("yt-dlp not installed".to_string());
+    };
+    let url = format!("https://music.youtube.com/watch?v={video_id}");
+    let dest = dest_no_ext.to_path_buf();
+    tokio::task::spawn_blocking(move || download_blocking(&binary, &url, &dest))
+        .await
+        .map_err(|e| format!("yt-dlp task: {e}"))?
+}
+
+fn download_blocking(binary: &str, url: &str, dest_no_ext: &std::path::Path) -> Result<PathBuf, String> {
+    let template = format!("{}.%(ext)s", dest_no_ext.display());
+    let mut cmd = std::process::Command::new(binary);
+    cmd.arg("--no-playlist")
+        .arg("--no-warnings")
+        .arg("--no-simulate")
+        // A leftover partial from an earlier attempt must not be mistaken
+        // for a finished download.
+        .arg("--force-overwrites")
+        .args(["--extractor-retries", "3"])
+        .args(["--retries", "10"])
+        .args(["--fragment-retries", "10"])
+        .args(["--socket-timeout", "30"])
+        // Concurrent fragment downloads sidestep googlevideo's per-connection
+        // throttle — this is what makes the fallback fast, not just reliable.
+        .args(["-N", "4"])
+        .args([
+            "--user-agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        ])
+        .arg("-f")
+        // Progressive/DASH audio only — HLS would need ffmpeg to mux.
+        .arg(
+            "bestaudio[protocol!*=m3u8][acodec=opus]/\
+             bestaudio[protocol!*=m3u8]/bestaudio[protocol^=http]/bestaudio/best",
+        )
+        .args(["-o", &template])
+        // Prints the final path (after any move) once the download finishes.
+        .args(["--print", "after_move:filepath"])
+        .arg(url);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+
+    let output = cmd.output().map_err(|e| format!("yt-dlp spawn: {e}"))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "yt-dlp download exited {}: {}",
+            output.status,
+            first_line(&stderr).or_else(|| first_line(&stdout)).unwrap_or("no output")
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let path = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .next_back()
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .ok_or("yt-dlp finished but reported no output file")?;
+    Ok(path)
+}
+
 struct CookieFile {
     path: PathBuf,
 }

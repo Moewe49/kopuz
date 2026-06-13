@@ -262,13 +262,16 @@ async fn download_worker(
             super::download_dest_no_ext(&dir, &artist, &title, &id)
         };
 
-        // Resolve + transfer with retries. googlevideo URLs routinely start
-        // returning 403 on Range requests partway through a big batch (URL
-        // expiry / per-URL rate limiting) — that's transient per-URL, not
-        // per-track, so a fresh resolve almost always recovers. Attempts:
-        //   1: cached resolve (fast path)
-        //   2: FRESH resolve, bypassing the stream cache
-        //   3: fresh resolve again after a longer pause, then search fallback
+        // Per-track attempt ladder, most-likely-to-succeed-cheaply first:
+        //   1: native resolve (cached) + our chunked transfer — fastest, has
+        //      live progress.
+        //   2: yt-dlp END-TO-END download — yt-dlp resolves AND transfers in
+        //      one client context (a yt-dlp-resolved URL fetched by OUR HTTP
+        //      stack can 403: googlevideo binds URLs to the client identity).
+        //      Its own bot-check handling + fragment retries make this the
+        //      most reliable path there is, and `-N 4` makes it fast.
+        //   3: FRESH native resolve (never reuse a URL that 403'd), then the
+        //      search-by-title fallback for genuinely dead video ids.
         const MAX_ATTEMPTS: u32 = 3;
         let mut last_err = String::new();
         let mut done = false;
@@ -276,86 +279,99 @@ async fn download_worker(
             if cancel_flag.load(Ordering::Relaxed) {
                 break;
             }
-            let resolved: Option<(String, &'static str, Option<String>, Option<u64>)> =
-                if matches!(service, Some(MusicService::YtMusic)) {
-                    let cookies = yt_cookies.clone().unwrap_or_default();
-                    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-                    // HARD timeout on every resolve. The resolve chain (native
-                    // sig decipher, PO-token mint, yt-dlp subprocess) has no
-                    // internal deadline — when YT throttles a long batch, a
-                    // resolve can hang forever, freezing this worker. Three
-                    // frozen workers looked like "downloads just stop at ~100".
-                    const RESOLVE_TIMEOUT: std::time::Duration =
-                        std::time::Duration::from_secs(90);
-                    let info = if attempt == 1 {
-                        tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream(&id))
-                            .await
-                            .ok()
-                            .and_then(|r| r.ok())
-                    } else {
-                        // A URL that 403'd is dead — never retry it from cache.
-                        tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream_fresh(&id))
-                            .await
-                            .ok()
-                            .and_then(|r| r.ok())
-                    };
-                    let info = match info {
-                        Some(i) => Some(i),
-                        // The stored video may be unavailable (region/age-locked
-                        // or removed) even though a playable alternative exists.
-                        // Mirror what the user does manually: re-resolve by
-                        // searching title+artist and stream the top playable hit.
-                        // Only on the last attempt — it's the slowest path.
-                        None if attempt == MAX_ATTEMPTS => {
-                            eprintln!(
-                                "Download resolve failed for {id} (YT) — trying search fallback"
-                            );
-                            tokio::time::timeout(
-                                std::time::Duration::from_secs(120),
-                                resolve_via_search(&yt, &title, &artist, &id),
-                            )
-                            .await
-                            .ok()
-                            .flatten()
-                        }
-                        None => None,
-                    };
-                    info.map(|info| {
-                        (
-                            info.url,
-                            info.format.extension(),
-                            Some(info.user_agent),
-                            info.content_length,
-                        )
-                    })
-                } else {
-                    let conf = config.read();
-                    super::build_download_url(&id, &conf).map(|(u, ext)| (u, ext, None, None))
-                };
 
-            let Some((url, ext_hint, user_agent, content_length)) = resolved else {
-                last_err = if matches!(service, Some(MusicService::YtMusic)) {
-                    "Could not resolve a stream — the track may be unavailable in your region, age-restricted, or yt-dlp needs updating.".to_string()
-                } else {
-                    "Could not build a download URL for this track.".to_string()
-                };
-                tokio::time::sleep(std::time::Duration::from_millis(800 * attempt as u64)).await;
-                continue;
+            let is_yt = matches!(service, Some(MusicService::YtMusic));
+            let outcome: Result<std::path::PathBuf, String> = if attempt == 2 && is_yt {
+                // A partial file from attempt 1 must not fool yt-dlp into
+                // thinking the track is already downloaded.
+                remove_stem_files(&dest_no_ext);
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(600),
+                    ::server::ytmusic::ytdlp_resolve::download(&id, &dest_no_ext),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(_) => Err("yt-dlp download timed out after 600s".to_string()),
+                }
+            } else {
+                let resolved: Option<(String, &'static str, Option<String>, Option<u64>)> =
+                    if is_yt {
+                        let cookies = yt_cookies.clone().unwrap_or_default();
+                        let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+                        // HARD timeout on every resolve. The resolve chain has no
+                        // internal deadline — when YT throttles a long batch, a
+                        // hung resolve froze a worker (the "stops at ~100" bug).
+                        const RESOLVE_TIMEOUT: std::time::Duration =
+                            std::time::Duration::from_secs(90);
+                        let info = if attempt == 1 {
+                            tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream(&id))
+                                .await
+                                .ok()
+                                .and_then(|r| r.ok())
+                        } else {
+                            // A URL that 403'd is dead — never retry it from cache.
+                            tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream_fresh(&id))
+                                .await
+                                .ok()
+                                .and_then(|r| r.ok())
+                        };
+                        let info = match info {
+                            Some(i) => Some(i),
+                            // Stored id unavailable (region/age-locked/removed)?
+                            // Search title+artist and stream the top playable
+                            // alternative — the recovery the user does by hand.
+                            None if attempt == MAX_ATTEMPTS => {
+                                eprintln!(
+                                    "Download resolve failed for {id} (YT) — trying search fallback"
+                                );
+                                tokio::time::timeout(
+                                    std::time::Duration::from_secs(120),
+                                    resolve_via_search(&yt, &title, &artist, &id),
+                                )
+                                .await
+                                .ok()
+                                .flatten()
+                            }
+                            None => None,
+                        };
+                        info.map(|info| {
+                            (
+                                info.url,
+                                info.format.extension(),
+                                Some(info.user_agent),
+                                info.content_length,
+                            )
+                        })
+                    } else {
+                        let conf = config.read();
+                        super::build_download_url(&id, &conf).map(|(u, ext)| (u, ext, None, None))
+                    };
+
+                match resolved {
+                    None => Err(if is_yt {
+                        "Could not resolve a stream — the track may be unavailable in your region, age-restricted, or yt-dlp needs updating.".to_string()
+                    } else {
+                        "Could not build a download URL for this track.".to_string()
+                    }),
+                    Some((url, ext_hint, user_agent, content_length)) => {
+                        download_with_progress(
+                            &id,
+                            &url,
+                            ext_hint,
+                            &dest_no_ext,
+                            user_agent.as_deref(),
+                            content_length,
+                            &mut queue,
+                            &session_start,
+                            &cancel_flag,
+                        )
+                        .await
+                    }
+                }
             };
 
-            match download_with_progress(
-                &id,
-                &url,
-                ext_hint,
-                &dest_no_ext,
-                user_agent.as_deref(),
-                content_length,
-                &mut queue,
-                &session_start,
-                &cancel_flag,
-            )
-            .await
-            {
+            match outcome {
                 Ok(path) => {
                     config
                         .write()
@@ -386,8 +402,8 @@ async fn download_worker(
                     }
                     eprintln!("Download attempt {attempt}/{MAX_ATTEMPTS} failed for {id}: {e}");
                     last_err = e;
-                    // Back off before re-resolving — a 403 streak usually means
-                    // we're being rate-limited right now.
+                    // Back off before the next attempt — a 403 streak usually
+                    // means we're being rate-limited right now.
                     tokio::time::sleep(std::time::Duration::from_millis(
                         1000 * attempt as u64,
                     ))
@@ -398,19 +414,7 @@ async fn download_worker(
         if !done {
             // Don't leave a truncated file behind — anything with this stem is
             // ours (download_dest_no_ext picked a collision-free name).
-            if let (Some(dir), Some(stem)) = (
-                dest_no_ext.parent(),
-                dest_no_ext.file_name().and_then(|f| f.to_str()),
-            ) && let Ok(entries) = std::fs::read_dir(dir)
-            {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str()
-                        && name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name) == stem
-                    {
-                        let _ = std::fs::remove_file(entry.path());
-                    }
-                }
-            }
+            remove_stem_files(&dest_no_ext);
             // Rate-limit-shaped failures (403/429/timeouts/no-resolve) poison
             // the SESSION, not the track — a track failed during a throttle
             // window would very likely succeed later. Requeue it (capped) and
@@ -439,6 +443,30 @@ async fn download_worker(
                 item.error = Some(last_err);
             }
             clear_progress(&id);
+        }
+    }
+}
+
+/// Remove every file sharing `dest_no_ext`'s stem (any extension, including
+/// yt-dlp `.part` leftovers). Safe: download_dest_no_ext picked a
+/// collision-free stem, so anything matching is ours.
+#[cfg(not(target_arch = "wasm32"))]
+fn remove_stem_files(dest_no_ext: &std::path::Path) {
+    let (Some(dir), Some(stem)) = (
+        dest_no_ext.parent(),
+        dest_no_ext.file_name().and_then(|f| f.to_str()),
+    ) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str()
+            && (name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name) == stem
+                || name.starts_with(&format!("{stem}.")))
+        {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
