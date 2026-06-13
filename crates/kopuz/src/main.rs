@@ -1825,6 +1825,31 @@ fn App() -> Element {
                 }
                 if let Ok(loaded) = cfg_res {
                     config.set(loaded.clone());
+                    // One-time cleanup: older builds downloaded opus-in-webm,
+                    // which won't play/seek locally. Drop those offline entries
+                    // and delete the dead files so they re-download as m4a on
+                    // the next playlist download — without this the "already
+                    // downloaded" skip hid them (the 82-of-287 confusion) AND
+                    // they'd never play.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let webm: Vec<String> = config
+                            .peek()
+                            .offline_tracks
+                            .iter()
+                            .filter(|(_, p)| p.to_lowercase().ends_with(".webm"))
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        if !webm.is_empty() {
+                            tracing::info!("Purging {} stale .webm downloads", webm.len());
+                            let mut c = config.write();
+                            for id in webm {
+                                if let Some(path) = c.offline_tracks.remove(&id) {
+                                    let _ = std::fs::remove_file(&path);
+                                }
+                            }
+                        }
+                    }
                     configured_music_dirs.set(loaded.music_directory.clone());
                     volume.set(loaded.volume);
                     persisted_volume.set(loaded.volume);
