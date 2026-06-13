@@ -185,15 +185,53 @@ pub fn PlaylistsPage(
                                         })
                                         .unwrap_or_default()
                                 };
-                                if requests.is_empty() {
+                                let subdir = Some(name);
+                                if !requests.is_empty() {
+                                    crate::server::download_manager::queue_downloads_into(
+                                        requests,
+                                        subdir,
+                                        config,
+                                        download_queue,
+                                    );
                                     return;
                                 }
-                                crate::server::download_manager::queue_downloads_into(
-                                    requests,
-                                    Some(name),
-                                    config,
-                                    download_queue,
-                                );
+                                // The store's track list is empty — common for
+                                // large YT-native playlists the bulk sync didn't
+                                // fill in. Fetch the entries on demand (the detail
+                                // view shows them, but THIS handler reads the
+                                // store) so the download button isn't a no-op.
+                                // spawn_forever: navigating away mustn't cancel it.
+                                let pid_dl = pid_for_dl.clone();
+                                dioxus::core::spawn_forever(async move {
+                                    let cookies = config
+                                        .peek()
+                                        .server
+                                        .as_ref()
+                                        .and_then(|s| s.access_token.clone());
+                                    let Some(cookies) = cookies else { return; };
+                                    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(
+                                        cookies,
+                                    );
+                                    if let Ok(tracks) = yt.get_playlist_entries(&pid_dl).await {
+                                        let reqs: Vec<(String, String, String)> = tracks
+                                            .iter()
+                                            .filter_map(|t| {
+                                                let vid = t
+                                                    .path
+                                                    .to_string_lossy()
+                                                    .split(':')
+                                                    .nth(1)
+                                                    .map(|s| s.to_string())?;
+                                                Some((vid, t.title.clone(), t.artist.clone()))
+                                            })
+                                            .collect();
+                                        if !reqs.is_empty() {
+                                            crate::server::download_manager::queue_downloads_into(
+                                                reqs, subdir, config, download_queue,
+                                            );
+                                        }
+                                    }
+                                });
                             },
                             on_delete_all: {
                                 move |_| {
