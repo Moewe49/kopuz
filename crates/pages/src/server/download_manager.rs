@@ -25,6 +25,16 @@ static SESSION_COMPLETED: std::sync::atomic::AtomicU32 = std::sync::atomic::Atom
 /// Reset on any successful download.
 #[cfg(not(target_arch = "wasm32"))]
 static CONSECUTIVE_RATELIMIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Heartbeat: epoch-ms a worker last did anything. Lets queue_downloads_into
+/// tell a genuinely-live session from a `is_running=true` left stuck by a dead
+/// worker (panic / aborted task) — without it, one bad session bricked the
+/// download button until app restart.
+#[cfg(not(target_arch = "wasm32"))]
+static LAST_WORKER_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(not(target_arch = "wasm32"))]
+fn worker_heartbeat() {
+    LAST_WORKER_TICK.store(epoch_ms(), Ordering::Relaxed);
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn epoch_ms() -> u64 {
@@ -123,12 +133,17 @@ pub fn queue_downloads_into(
             added = true;
         }
 
-        // A session counts as LIVE only if its workers are demonstrably alive
-        // (something is in Downloading state). `is_running` alone is not
-        // trustworthy: a session whose task got cancelled (see spawn_forever
-        // note below) leaves it stuck `true`, and gating on it permanently
-        // bricked the download button — items queued forever, 0 downloading.
+        // A session is LIVE only if a worker has ticked recently AND something
+        // is actually downloading. `is_running` alone lies: a worker that
+        // panicked / had its task aborted leaves `is_running=true` and an item
+        // stuck `Downloading` forever, which used to brick the button until
+        // restart. The heartbeat catches that.
+        let workers_alive = {
+            let tick = LAST_WORKER_TICK.load(Ordering::Relaxed);
+            tick > 0 && epoch_ms().saturating_sub(tick) < 30_000
+        };
         let live = q.is_running
+            && workers_alive
             && q.items
                 .iter()
                 .any(|i| matches!(i.status, DownloadStatus::Downloading));
@@ -137,11 +152,24 @@ pub fn queue_downloads_into(
             let _ = added;
             return;
         }
+        // Not live → any item still marked Downloading belongs to a dead
+        // session. Reclaim it so a fresh worker re-processes it.
+        for item in q.items.iter_mut() {
+            if matches!(item.status, DownloadStatus::Downloading) {
+                item.status = DownloadStatus::Queued;
+            }
+        }
         let has_queued = q
             .items
             .iter()
             .any(|i| matches!(i.status, DownloadStatus::Queued));
         if !has_queued {
+            // Nothing to do. If the caller asked for tracks but every one was
+            // skipped, they're already downloaded — say so instead of looking
+            // like a dead button.
+            if !requests.is_empty() && !added {
+                components::toast::show_toast("Already downloaded");
+            }
             return;
         }
         // Reset cancel flags only once we're sure we're actually starting
@@ -157,6 +185,12 @@ pub fn queue_downloads_into(
 
     reset_progress_session();
     SESSION_COMPLETED.store(0, Ordering::Relaxed);
+    // A user-initiated download wants to start NOW — clear any leftover
+    // cooldown / backoff from a previous session so it doesn't sit idle
+    // waiting out a stale rate-limit timer.
+    COOLDOWN_UNTIL_MS.store(0, Ordering::Relaxed);
+    CONSECUTIVE_RATELIMIT.store(0, Ordering::Relaxed);
+    worker_heartbeat();
 
     let session_start = Instant::now();
     // spawn_forever, NOT spawn: a scoped task dies when the page that queued
@@ -191,6 +225,7 @@ async fn download_worker(
         if cancel_flag.load(Ordering::Relaxed) {
             return;
         }
+        worker_heartbeat();
         // Honor the GLOBAL cooldown (rate-limit recovery / batch breather).
         // All workers pause together — once YT throttles the session, any
         // worker pushing on just extends the throttle.
@@ -556,6 +591,7 @@ async fn ytdlp_download_with_progress(
             r = &mut dl => return r,
             _ = &mut deadline => return Err("yt-dlp download timed out after 600s".to_string()),
             _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                worker_heartbeat();
                 let bytes = largest_stem_file_size(dest_no_ext);
                 if bytes > last_size {
                     last_size = bytes;
