@@ -660,13 +660,16 @@ fn main() {
 
         migrate_legacy_locations();
 
+        // Presence::new never fails on desktop anymore — it connects lazily
+        // and reconnects on its own, so Discord starting AFTER Kopuz (or
+        // restarting mid-session) now picks the status up automatically.
         let presence: Option<Arc<Presence>> = match Presence::new("1470087339639443658") {
             Ok(p) => {
-                tracing::info!("Discord presence connected");
+                tracing::info!("Discord presence initialized (lazy connect)");
                 Some(Arc::new(p))
             }
             Err(e) => {
-                tracing::warn!("Failed to connect to Discord: {e}");
+                tracing::warn!("Discord presence unavailable: {e}");
                 None
             }
         };

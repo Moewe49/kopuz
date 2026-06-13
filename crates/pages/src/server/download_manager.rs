@@ -154,9 +154,18 @@ async fn download_worker(
     session_start: Instant,
     cancel_flag: Arc<AtomicBool>,
 ) {
+    // Consecutive failed tracks in THIS worker. A streak means YT is
+    // rate-limiting the whole session, not that individual tracks are bad —
+    // pushing harder just digs the hole deeper, so cool down instead.
+    let mut failure_streak = 0u32;
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
             return;
+        }
+        if failure_streak >= 3 {
+            eprintln!("[downloads] {failure_streak} consecutive failures — cooling down 45s");
+            tokio::time::sleep(std::time::Duration::from_secs(45)).await;
+            failure_streak = 0;
         }
 
         // Atomic claim: find + status flip in one write lock prevents two workers
@@ -232,11 +241,24 @@ async fn download_worker(
                 if matches!(service, Some(MusicService::YtMusic)) {
                     let cookies = yt_cookies.clone().unwrap_or_default();
                     let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+                    // HARD timeout on every resolve. The resolve chain (native
+                    // sig decipher, PO-token mint, yt-dlp subprocess) has no
+                    // internal deadline — when YT throttles a long batch, a
+                    // resolve can hang forever, freezing this worker. Three
+                    // frozen workers looked like "downloads just stop at ~100".
+                    const RESOLVE_TIMEOUT: std::time::Duration =
+                        std::time::Duration::from_secs(90);
                     let info = if attempt == 1 {
-                        yt.get_stream(&id).await.ok()
+                        tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream(&id))
+                            .await
+                            .ok()
+                            .and_then(|r| r.ok())
                     } else {
                         // A URL that 403'd is dead — never retry it from cache.
-                        yt.get_stream_fresh(&id).await.ok()
+                        tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream_fresh(&id))
+                            .await
+                            .ok()
+                            .and_then(|r| r.ok())
                     };
                     let info = match info {
                         Some(i) => Some(i),
@@ -249,7 +271,13 @@ async fn download_worker(
                             eprintln!(
                                 "Download resolve failed for {id} (YT) — trying search fallback"
                             );
-                            resolve_via_search(&yt, &title, &artist, &id).await
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(120),
+                                resolve_via_search(&yt, &title, &artist, &id),
+                            )
+                            .await
+                            .ok()
+                            .flatten()
                         }
                         None => None,
                     };
@@ -299,6 +327,10 @@ async fn download_worker(
                     }
                     clear_progress(&id);
                     done = true;
+                    failure_streak = 0;
+                    // Tiny pacing pause between tracks — bursts of back-to-back
+                    // resolves are what trip YT's limiter on big playlists.
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     break;
                 }
                 Err(e) => {
@@ -318,6 +350,7 @@ async fn download_worker(
             }
         }
         if !done {
+            failure_streak += 1;
             // Don't leave a truncated file behind — anything with this stem is
             // ours (download_dest_no_ext picked a collision-free name).
             if let (Some(dir), Some(stem)) = (
@@ -501,10 +534,15 @@ async fn download_with_progress(
                 ));
             }
 
-            let bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| format!("Range read error: {e}"))?;
+            // The send() above is deadline-capped but the BODY read wasn't —
+            // a throttled connection could stall here forever.
+            let bytes = tokio::time::timeout(
+                std::time::Duration::from_secs(RANGE_TIMEOUT_SECS),
+                resp.bytes(),
+            )
+            .await
+            .map_err(|_| format!("range body read timed out after {RANGE_TIMEOUT_SECS}s"))?
+            .map_err(|e| format!("Range read error: {e}"))?;
             let expected_len = end - start + 1;
             // Defensive: a short read (network hiccup mid-Range)
             // would otherwise advance `start = end + 1` past where

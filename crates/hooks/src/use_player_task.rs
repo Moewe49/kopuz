@@ -96,6 +96,10 @@ pub fn use_player_task(ctrl: PlayerController) {
     let mut discord_cover_resolving_for = use_signal(String::new);
     #[cfg(not(target_arch = "wasm32"))]
     let mut discord_cover_sent = use_signal(|| false);
+    // True while the last presence update failed (Discord closed / not yet
+    // started). Keeps retrying on later ticks — Presence itself throttles
+    // reconnect attempts to one per 15s, so this is cheap.
+    let mut discord_send_pending = use_signal(|| false);
 
     #[cfg(target_os = "macos")]
     use_hook(move || {
@@ -562,8 +566,17 @@ pub fn use_player_task(ctrl: PlayerController) {
                             let toggled_on = !last_discord_enabled;
                             let cover_just_resolved =
                                 discord_cover_url.peek().is_some() && !*discord_cover_sent.peek();
+                            // A previously failed send keeps retrying so the
+                            // status appears as soon as Discord launches —
+                            // not only on the next song change.
+                            let retry_pending = *discord_send_pending.peek();
 
-                            if song_changed || resumed || toggled_on || cover_just_resolved {
+                            if song_changed
+                                || resumed
+                                || toggled_on
+                                || cover_just_resolved
+                                || retry_pending
+                            {
                                 last_title.set(title.clone());
 
                                 let resolved = discord_cover_url.read().clone();
@@ -573,16 +586,20 @@ pub fn use_player_task(ctrl: PlayerController) {
                                     None
                                 };
 
-                                let _ = p.set_now_playing(
-                                    &title, &artist, &album, progress, duration, cover_ref,
-                                );
+                                let sent = p
+                                    .set_now_playing(
+                                        &title, &artist, &album, progress, duration, cover_ref,
+                                    )
+                                    .is_ok();
+                                discord_send_pending.set(!sent);
 
-                                if resolved.is_some() {
+                                if sent && resolved.is_some() {
                                     discord_cover_sent.set(true);
                                 }
                             }
                         } else if last_discord_enabled {
                             let _ = p.clear_activity();
+                            discord_send_pending.set(false);
                         }
                     }
 

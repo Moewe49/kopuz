@@ -8,26 +8,99 @@ use discord_rich_presence::{
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 use std::sync::Mutex;
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// Self-healing Discord Rich Presence. The connection is established
+/// lazily and re-established automatically:
+///
+/// - If Discord isn't running when the app starts, the first activity
+///   update after Discord launches connects.
+/// - If Discord closes or restarts mid-session, the broken pipe drops the
+///   client and the next update reconnects.
+///
+/// (The old design connected exactly once in `new()` — start Kopuz before
+/// Discord and presence stayed dead for the whole session.)
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 #[derive(Debug)]
 pub struct Presence {
-    client: Mutex<DiscordIpcClient>,
+    client_id: String,
+    client: Mutex<Option<DiscordIpcClient>>,
+    last_attempt: Mutex<Option<Instant>>,
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+const RECONNECT_THROTTLE: Duration = Duration::from_secs(15);
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 impl Presence {
+    /// Never fails on desktop — the actual connect happens lazily on the
+    /// first activity update (and is retried while Discord is closed).
     pub fn new(client_id: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut client = DiscordIpcClient::new(client_id);
-        client.connect()?;
-        Ok(Self {
-            client: Mutex::new(client),
-        })
+        let presence = Self {
+            client_id: client_id.to_string(),
+            client: Mutex::new(None),
+            last_attempt: Mutex::new(None),
+        };
+        // Best-effort eager connect so presence shows immediately when
+        // Discord is already running.
+        presence.ensure_connected();
+        Ok(presence)
+    }
+
+    /// (Re)connect if needed. Attempts are throttled so a closed Discord
+    /// doesn't get hammered every player tick.
+    fn ensure_connected(&self) -> bool {
+        let mut guard = self.client.lock().unwrap();
+        if guard.is_some() {
+            return true;
+        }
+        {
+            let mut last = self.last_attempt.lock().unwrap();
+            if let Some(t) = *last
+                && t.elapsed() < RECONNECT_THROTTLE
+            {
+                return false;
+            }
+            *last = Some(Instant::now());
+        }
+        let mut client = DiscordIpcClient::new(&self.client_id);
+        match client.connect() {
+            Ok(()) => {
+                *guard = Some(client);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Run `f` against a live client; on error assume the pipe died
+    /// (Discord closed/restarted), drop the client so the next call
+    /// reconnects, and surface the error.
+    fn with_client(
+        &self,
+        f: impl FnOnce(&mut DiscordIpcClient) -> Result<(), Box<dyn std::error::Error>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.ensure_connected() {
+            return Err("Discord is not running".into());
+        }
+        let mut guard = self.client.lock().unwrap();
+        let Some(client) = guard.as_mut() else {
+            return Err("Discord is not running".into());
+        };
+        match f(client) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = client.close();
+                *guard = None;
+                Err(e)
+            }
+        }
     }
 
     pub fn disconnect(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.client.lock().unwrap().close()?;
+        if let Some(mut client) = self.client.lock().unwrap().take() {
+            client.close()?;
+        }
         Ok(())
     }
 
@@ -65,8 +138,7 @@ impl Presence {
             activity = activity.assets(assets);
         }
 
-        self.client.lock().unwrap().set_activity(activity)?;
-        Ok(())
+        self.with_client(|c| Ok(c.set_activity(activity)?))
     }
 
     pub fn set_paused(
@@ -88,12 +160,21 @@ impl Presence {
             activity = activity.assets(assets);
         }
 
-        self.client.lock().unwrap().set_activity(activity)?;
-        Ok(())
+        self.with_client(|c| Ok(c.set_activity(activity)?))
     }
 
     pub fn clear_activity(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.client.lock().unwrap().clear_activity()?;
+        // Nothing to clear if we're not even connected — and we must NOT
+        // trigger a reconnect attempt just to clear.
+        let mut guard = self.client.lock().unwrap();
+        let Some(client) = guard.as_mut() else {
+            return Ok(());
+        };
+        if let Err(e) = client.clear_activity() {
+            let _ = client.close();
+            *guard = None;
+            return Err(Box::new(e));
+        }
         Ok(())
     }
 }
@@ -101,11 +182,13 @@ impl Presence {
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 impl Drop for Presence {
     fn drop(&mut self) {
-        let mut client = match self.client.lock() {
+        let mut guard = match self.client.lock() {
             Ok(c) => c,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let _ = client.close();
+        if let Some(client) = guard.as_mut() {
+            let _ = client.close();
+        }
     }
 }
 
