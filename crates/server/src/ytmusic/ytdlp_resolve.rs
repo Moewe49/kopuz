@@ -165,18 +165,34 @@ fn resolve_blocking(
 /// handling, retries and fragment recovery — is the most reliable path there
 /// is, so the download worker uses it as the primary fallback. Anonymous on
 /// purpose: bot-flagged signed-in sessions resolve fine anonymously.
-pub async fn download(video_id: &str, dest_no_ext: &std::path::Path) -> Result<PathBuf, String> {
+pub async fn download(
+    video_id: &str,
+    dest_no_ext: &std::path::Path,
+    cookies: Option<&str>,
+) -> Result<PathBuf, String> {
     let Some(binary) = find_ytdlp() else {
         return Err("yt-dlp not installed".to_string());
     };
     let url = format!("https://music.youtube.com/watch?v={video_id}");
     let dest = dest_no_ext.to_path_buf();
-    tokio::task::spawn_blocking(move || download_blocking(&binary, &url, &dest))
+    let cookies = cookies.map(|c| c.to_string());
+    tokio::task::spawn_blocking(move || download_blocking(&binary, &url, &dest, cookies.as_deref()))
         .await
         .map_err(|e| format!("yt-dlp task: {e}"))?
 }
 
-fn download_blocking(binary: &str, url: &str, dest_no_ext: &std::path::Path) -> Result<PathBuf, String> {
+fn download_blocking(
+    binary: &str,
+    url: &str,
+    dest_no_ext: &std::path::Path,
+    cookies: Option<&str>,
+) -> Result<PathBuf, String> {
+    // Pass the signed-in cookies so a Premium account can fetch the 256 kbps
+    // AAC stream (itag 141); free accounts just get itag 140 (128 kbps).
+    let _cookie_guard = match cookies {
+        Some(c) if !c.is_empty() => Some(write_cookie_file(c)?),
+        _ => None,
+    };
     let template = format!("{}.%(ext)s", dest_no_ext.display());
     let mut cmd = std::process::Command::new(binary);
     cmd.arg("--no-playlist")
@@ -198,14 +214,16 @@ fn download_blocking(binary: &str, url: &str, dest_no_ext: &std::path::Path) -> 
              (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
         ])
         .arg("-f")
-        // Prefer m4a/AAC (itag 140) for DOWNLOADS — unlike opus-in-webm it
-        // carries a clean duration header and decodes/seeks reliably in the
-        // local player (symphonia has no Opus seeker and webm has no duration,
-        // which is why downloaded opus files showed 0:00 and wouldn't play).
-        // itag 140 is the source AAC stream — no re-encode, so no quality loss.
-        // Fall back to any non-HLS audio if a track somehow lacks m4a.
+        // Prefer m4a/AAC for DOWNLOADS — unlike opus-in-webm it carries a clean
+        // duration header and decodes/seeks reliably in the local player
+        // (symphonia has no Opus seeker and webm has no duration, which is why
+        // downloaded opus files showed 0:00 and wouldn't play). These are
+        // YouTube's source AAC streams — no re-encode, no quality loss:
+        //   itag 141 = 256 kbps AAC (Premium, needs cookies)
+        //   itag 140 = 128 kbps AAC (everyone)
+        // Take the highest-bitrate m4a available, then any non-HLS audio.
         .arg(
-            "140/bestaudio[ext=m4a][protocol!*=m3u8]/\
+            "141/140/bestaudio[ext=m4a][protocol!*=m3u8]/\
              bestaudio[protocol!*=m3u8][acodec*=mp4a]/\
              bestaudio[protocol!*=m3u8]/bestaudio/best",
         )

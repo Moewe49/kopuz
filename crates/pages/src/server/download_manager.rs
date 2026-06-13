@@ -290,7 +290,11 @@ async fn download_worker(
                 remove_stem_files(&dest_no_ext);
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(600),
-                    ::server::ytmusic::ytdlp_resolve::download(&id, &dest_no_ext),
+                    ::server::ytmusic::ytdlp_resolve::download(
+                        &id,
+                        &dest_no_ext,
+                        yt_cookies.as_deref(),
+                    ),
                 )
                 .await
                 {
