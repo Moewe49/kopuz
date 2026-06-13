@@ -2058,6 +2058,20 @@ fn App() -> Element {
                 library.set(current_lib.clone());
                 let _ = current_lib.save(&lib_path());
 
+                // Surface downloaded server-playlist folders
+                // (<download dir>/<Playlist Name>/) as Local playlists, so a
+                // playlist you downloaded shows up under Local → Playlists. The
+                // entries are regenerated each scan (ids "dl:<folder>"), so they
+                // track the folders on disk.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let dl_dir = config.peek().resolved_download_dir();
+                    let dl_playlists = reader::scanner::playlists_from_download_dir(&dl_dir);
+                    let mut store = playlist_store.write();
+                    store.playlists.retain(|p| !p.id.starts_with("dl:"));
+                    store.playlists.extend(dl_playlists);
+                }
+
                 if fetch_covers {
                     // Fetch missing covers in the background so the UI stays responsive.
                     // Passing `progress_cb` into the task keeps the scan-progress bar

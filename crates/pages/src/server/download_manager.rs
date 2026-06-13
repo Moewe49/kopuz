@@ -288,13 +288,15 @@ async fn download_worker(
                 // A partial file from a prior attempt must not fool yt-dlp into
                 // thinking the track is already downloaded.
                 remove_stem_files(&dest_no_ext);
+                // ANONYMOUS download (no cookies): hammering googlevideo with
+                // many parallel signed-in downloads bot-flags the ACCOUNT,
+                // which then breaks PLAYBACK (LOGIN_REQUIRED) while a batch is
+                // running. Anonymous keeps the session clean — the cost is
+                // 128k AAC instead of Premium 256k, a fair trade for "music
+                // keeps playing while downloading".
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(600),
-                    ::server::ytmusic::ytdlp_resolve::download(
-                        &id,
-                        &dest_no_ext,
-                        yt_cookies.as_deref(),
-                    ),
+                    ::server::ytmusic::ytdlp_resolve::download(&id, &dest_no_ext, None),
                 )
                 .await
                 {
@@ -389,17 +391,12 @@ async fn download_worker(
                     }
                     clear_progress(&id);
                     done = true;
-                    // Batch pacing: a scheduled 20s breather every 50 completed
-                    // tracks keeps a 300-track run under YT's limiter instead of
-                    // slamming into it at ~100 and grinding through cooldowns.
-                    let completed = SESSION_COMPLETED.fetch_add(1, Ordering::Relaxed) + 1;
-                    if completed % 50 == 0 {
-                        eprintln!("[downloads] {completed} done — 20s batch breather");
-                        set_cooldown(20);
-                    }
-                    // Tiny pacing pause between tracks — bursts of back-to-back
-                    // resolves are what trip YT's limiter on big playlists.
-                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    SESSION_COMPLETED.fetch_add(1, Ordering::Relaxed);
+                    // No scheduled breather and no inter-track delay: anonymous
+                    // yt-dlp end-to-end with -N 8 manages its own throttling, so
+                    // the heavy custom pauses (which felt like "random pauses"
+                    // and stalls) aren't needed. We only cool down REACTIVELY if
+                    // a track actually hits a rate limit (below).
                     break;
                 }
                 Err(e) => {
@@ -436,10 +433,10 @@ async fn download_worker(
             let cancelled = last_err == "cancelled" || cancel_flag.load(Ordering::Relaxed);
             if rate_limited && !cancelled && requeues < 2 {
                 eprintln!(
-                    "[downloads] {id} hit rate limit ({last_err}) — requeueing (attempt {}), 60s session cooldown",
+                    "[downloads] {id} hit rate limit ({last_err}) — requeueing (attempt {}), 15s session cooldown",
                     requeues + 1
                 );
-                set_cooldown(60);
+                set_cooldown(15);
                 if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                     item.status = DownloadStatus::Queued;
                     item.requeues += 1;

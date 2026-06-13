@@ -29,7 +29,7 @@ pub struct Presence {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-const RECONNECT_THROTTLE: Duration = Duration::from_secs(15);
+const RECONNECT_THROTTLE: Duration = Duration::from_secs(5);
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 impl Presence {
@@ -66,10 +66,14 @@ impl Presence {
         let mut client = DiscordIpcClient::new(&self.client_id);
         match client.connect() {
             Ok(()) => {
+                eprintln!("[discord] connected (app id {})", self.client_id);
                 *guard = Some(client);
                 true
             }
-            Err(_) => false,
+            Err(e) => {
+                eprintln!("[discord] connect failed (is Discord running?): {e}");
+                false
+            }
         }
     }
 
@@ -90,6 +94,7 @@ impl Presence {
         match f(client) {
             Ok(()) => Ok(()),
             Err(e) => {
+                eprintln!("[discord] set_activity failed (pipe likely closed): {e}");
                 let _ = client.close();
                 *guard = None;
                 Err(e)

@@ -128,6 +128,49 @@ async fn collect_audio_files(
     (audio_files, artist_image_dirs)
 }
 
+/// Build a local [`Playlist`](crate::models::Playlist) for each immediate
+/// sub-folder of `downloads_dir` (`<Kopuz>/<Playlist Name>/`), so playlists
+/// downloaded from a server show up under Local → Playlists. The folder name
+/// is the playlist name; tracks are the audio files directly inside it. The
+/// id is stable (`dl:<folder>`) so repeated scans update in place rather than
+/// duplicating.
+pub fn playlists_from_download_dir(downloads_dir: &Path) -> Vec<crate::models::Playlist> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(downloads_dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let mut tracks: Vec<PathBuf> = Vec::new();
+        if let Ok(files) = std::fs::read_dir(&dir) {
+            for f in files.flatten() {
+                let fp = f.path();
+                if is_audio_file(&fp) {
+                    tracks.push(fp);
+                }
+            }
+        }
+        if tracks.is_empty() {
+            continue;
+        }
+        tracks.sort();
+        out.push(crate::models::Playlist {
+            id: format!("dl:{name}"),
+            name: name.to_string(),
+            tracks,
+            cover_path: None,
+        });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
 pub fn is_audio_file(path: &Path) -> bool {
     // `webm` matters: yt-dlp / native YT downloads land as opus-in-webm, and
     // omitting it meant every downloaded track was invisible to the library.
