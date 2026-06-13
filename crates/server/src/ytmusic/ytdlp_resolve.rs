@@ -332,9 +332,14 @@ fn ffmpeg_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Locate the yt-dlp binary on PATH (adding `.exe` on Windows). Returns the
-/// resolved absolute path, or `None` if not found.
+/// Locate the yt-dlp binary. Prefers Kopuz's self-managed copy (kept current
+/// automatically — see [`crate::deps`]) so the version is always fresh, then
+/// falls back to any system/PATH install. Returns the resolved path, or `None`.
 pub fn find_ytdlp() -> Option<String> {
+    let managed = crate::deps::managed_ytdlp_path();
+    if managed.is_file() {
+        return Some(managed.to_string_lossy().into_owned());
+    }
     let exe = if cfg!(target_os = "windows") {
         "yt-dlp.exe"
     } else {

@@ -1,3 +1,4 @@
+pub mod deps;
 pub mod download_queue;
 pub mod jellyfin;
 pub mod provider;

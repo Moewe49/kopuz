@@ -1134,6 +1134,20 @@ fn App() -> Element {
     let download_queue = use_signal(DownloadQueue::default);
     let download_progress = use_signal(::server::DownloadProgress::default);
     pages::server::download_manager::register_progress_signal(download_progress);
+
+    // Self-manage yt-dlp: download/refresh Kopuz's own copy in the background
+    // on every launch (no-op when already fresh). An outdated yt-dlp is the #1
+    // cause of YouTube bot-checks, so this is what makes downloads + playback
+    // keep working long-term with zero user maintenance — no winget, no PATH.
+    use_effect(move || {
+        #[cfg(not(target_arch = "wasm32"))]
+        spawn(async move {
+            match ::server::deps::ensure_ytdlp_fresh().await {
+                Ok(p) => tracing::info!("Managed yt-dlp ready: {}", p.display()),
+                Err(e) => tracing::warn!("yt-dlp auto-update skipped (using system if present): {e}"),
+            }
+        });
+    });
     let mut trigger_rescan = use_signal(|| 0);
     let mut last_scan_key = use_signal(|| None::<String>);
     let mut scan_current_file = use_signal(|| Option::<String>::None);
