@@ -92,7 +92,25 @@ pub fn queue_downloads_into(
             added = true;
         }
 
-        if !added || q.is_running {
+        // A session counts as LIVE only if its workers are demonstrably alive
+        // (something is in Downloading state). `is_running` alone is not
+        // trustworthy: a session whose task got cancelled (see spawn_forever
+        // note below) leaves it stuck `true`, and gating on it permanently
+        // bricked the download button — items queued forever, 0 downloading.
+        let live = q.is_running
+            && q.items
+                .iter()
+                .any(|i| matches!(i.status, DownloadStatus::Downloading));
+        if live {
+            // Running workers claim any Queued item, including ones just added.
+            let _ = added;
+            return;
+        }
+        let has_queued = q
+            .items
+            .iter()
+            .any(|i| matches!(i.status, DownloadStatus::Queued));
+        if !has_queued {
             return;
         }
         // Reset cancel flags only once we're sure we're actually starting
@@ -109,7 +127,11 @@ pub fn queue_downloads_into(
     reset_progress_session();
 
     let session_start = Instant::now();
-    spawn(async move {
+    // spawn_forever, NOT spawn: a scoped task dies when the page that queued
+    // the downloads unmounts — navigating into the playlist (or anywhere)
+    // killed the workers mid-run and left the queue frozen at "N queued".
+    // The session must belong to the app, not to whichever page started it.
+    dioxus::core::spawn_forever(async move {
         // 3 parallel workers, not 4 — googlevideo rate-limits per IP, and on
         // big batches the 4th worker bought little speed but pushed the
         // 403-on-range rate up noticeably.

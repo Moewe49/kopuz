@@ -579,9 +579,10 @@ pub fn JellyfinPlaylists(
                                             // Tracks aren't loaded yet (e.g. a freshly
                                             // imported playlist the bulk sync hasn't
                                             // filled in) — fetch entries on demand so the
-                                            // download button still works.
+                                            // download button still works. spawn_forever:
+                                            // navigating away must not cancel the fetch.
                                             let pid = playlist_id_dl2.clone();
-                                            spawn(async move {
+                                            dioxus::core::spawn_forever(async move {
                                                 let cookies = config.peek().server.as_ref().and_then(|s| s.access_token.clone());
                                                 let Some(cookies) = cookies else { return; };
                                                 let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
