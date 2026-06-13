@@ -168,6 +168,44 @@ impl Presence {
         self.with_client(|c| Ok(c.set_activity(activity)?))
     }
 
+    /// Diagnostic: connect (if needed) and push a clearly-labelled test
+    /// activity. Returns a human-readable status the Settings UI shows, so the
+    /// user can tell apart "Discord isn't running", "connected but the activity
+    /// was rejected", and "connected — check your Discord profile". The most
+    /// common silent cause is Discord's *User Settings → Activity Privacy →
+    /// Display current activity* being off, which this can't detect from here.
+    pub fn test(&self) -> Result<String, String> {
+        // Force a real (non-throttled) reconnect attempt for the test.
+        *self.last_attempt.lock().unwrap() = None;
+        if !self.ensure_connected() {
+            return Err(
+                "Couldn't reach Discord. Make sure the Discord desktop app is running \
+                 (the browser version can't show Rich Presence)."
+                    .to_string(),
+            );
+        }
+        match self.set_now_playing(
+            "Kopuz — presence test",
+            "If you can see this on your Discord profile, it works",
+            "",
+            0,
+            180,
+            None,
+        ) {
+            Ok(()) => Ok(
+                "Connected. Check your Discord profile — you should see \"Kopuz — presence test\". \
+                 If not, enable Discord → Settings → Activity Privacy → \"Display current activity\"."
+                    .to_string(),
+            ),
+            Err(e) => Err(format!("Connected, but Discord rejected the activity: {e}")),
+        }
+    }
+
+    /// True if we currently hold a live connection (does not attempt to connect).
+    pub fn is_connected(&self) -> bool {
+        self.client.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
     pub fn clear_activity(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Nothing to clear if we're not even connected — and we must NOT
         // trigger a reconnect attempt just to clear.
@@ -238,5 +276,13 @@ impl Presence {
 
     pub fn clear_activity(&self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
+    }
+
+    pub fn test(&self) -> Result<String, String> {
+        Err("Discord presence is not available on this platform".to_string())
+    }
+
+    pub fn is_connected(&self) -> bool {
+        false
     }
 }

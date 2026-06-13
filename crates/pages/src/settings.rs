@@ -135,6 +135,10 @@ async fn ensure_signed_in(
 #[component]
 pub fn Settings(config: Signal<AppConfig>) -> Element {
     let mut ctrl = use_context::<PlayerController>();
+    // Discord presence handle (for the diagnostic "Test" button).
+    let discord_presence =
+        use_context::<Option<std::sync::Arc<discord_presence::Presence>>>();
+    let mut discord_test_result = use_signal(|| None::<Result<String, String>>);
     let crossfade_label = if config.read().crossfade_seconds == 0 {
         i18n::t("crossfade_off")
     } else {
@@ -839,6 +843,44 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                                                 DiscordPresencePausedSettings {
                                                     enabled: config.read().discord_presence_paused.unwrap_or(true),
                                                     on_change: move |val| config.write().discord_presence_paused = Some(val),
+                                                }
+                                            }
+                                        }
+                                        // Diagnostic test — tells the user exactly why presence
+                                        // does or doesn't show (Discord not running vs. a privacy
+                                        // setting), instead of failing silently.
+                                        SettingItem {
+                                            title: i18n::t("discord_test").to_string(),
+                                            control: rsx! {
+                                                button {
+                                                    class: "text-xs text-white px-3 py-1 rounded bg-white/10 hover:bg-white/20 transition-colors",
+                                                    onclick: {
+                                                        let presence = discord_presence.clone();
+                                                        move |_| {
+                                                            let result = match &presence {
+                                                                Some(p) => p.test(),
+                                                                None => Err("Discord presence is unavailable.".to_string()),
+                                                            };
+                                                            discord_test_result.set(Some(result));
+                                                        }
+                                                    },
+                                                    "{i18n::t(\"discord_test_button\")}"
+                                                }
+                                            }
+                                        }
+                                        if let Some(result) = discord_test_result.read().clone() {
+                                            {
+                                                let ok = result.is_ok();
+                                                let msg = match result { Ok(m) | Err(m) => m };
+                                                rsx! {
+                                                    div {
+                                                        class: if ok {
+                                                            "rounded-lg bg-emerald-500/10 border border-emerald-400/30 text-emerald-200 text-xs p-2 break-words"
+                                                        } else {
+                                                            "rounded-lg bg-rose-500/10 border border-rose-400/30 text-rose-200 text-xs p-2 break-words"
+                                                        },
+                                                        "{msg}"
+                                                    }
                                                 }
                                             }
                                         }

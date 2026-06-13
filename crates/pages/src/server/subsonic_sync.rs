@@ -375,13 +375,26 @@ pub async fn sync_server_library(
                 };
                 t.album_id = key.clone();
                 if album_keys.insert(key.clone()) {
+                    // The track path is `ytmusic:VIDEOID:urlhex_<hex>` — its 3rd
+                    // segment is the thumbnail tag. Reuse it as the album cover
+                    // (format `ytmusic:cover:urlhex_<hex>` so parse_jellyfin_path
+                    // reads the tag as parts[2]) instead of throwing the artwork
+                    // away. The album grid's jellyfin_image_url_from_path decodes
+                    // the urlhex_ tag to the real URL with no server needed.
+                    let cover_path = t
+                        .path
+                        .to_string_lossy()
+                        .split(':')
+                        .nth(2)
+                        .filter(|tag| tag.starts_with("urlhex_"))
+                        .map(|tag| PathBuf::from(format!("ytmusic:cover:{tag}")));
                     albums.push(Album {
                         id: key,
                         title: t.album.clone(),
                         artist: t.artist.clone(),
                         genre: String::new(),
                         year: 0,
-                        cover_path: None,
+                        cover_path,
                         manual_cover: false,
                     });
                 }

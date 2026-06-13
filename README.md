@@ -413,18 +413,17 @@ and hit rescan.
 Kopuz can use YouTube Music as a streaming backend. Add it from **Settings →
 Media servers → Add → YouTube Music**.
 
-### Prerequisite: rustypipe-botguard
+### Runtime tools (handled for you)
 
-Playback (in both signed-in and anonymous modes) needs the
-[`rustypipe-botguard`](https://crates.io/crates/rustypipe-botguard) helper to
-mint the PO token YouTube requires for stream URLs. Install it once:
+Kopuz mints the PO token YouTube needs for stream URLs **in-app** via a hidden
+WebView — no external helper to install. The only runtime tool is **yt-dlp**
+(used for SoundCloud, downloads, and as a playback fallback), and Kopuz
+**manages it itself**: it downloads the latest yt-dlp into its own data folder
+on first launch and keeps it up to date automatically. You don't need to
+install or update anything by hand.
 
-```bash
-cargo install rustypipe-botguard --version 0.1.2
-```
-
-The Add-server dialog has a **Check rustypipe-botguard** button to confirm it's
-on your `PATH`. Without it, tracks resolve but fail to play.
+> **ffmpeg** is optional — install it (e.g. `winget install Gyan.FFmpeg`) if you
+> want embedded cover art on downloaded files. Downloads work without it.
 
 ### Choosing a mode
 

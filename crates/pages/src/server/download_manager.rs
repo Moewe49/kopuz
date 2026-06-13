@@ -294,16 +294,16 @@ async fn download_worker(
                 // which then breaks PLAYBACK (LOGIN_REQUIRED) while a batch is
                 // running. Anonymous keeps the session clean — the cost is
                 // 128k AAC instead of Premium 256k, a fair trade for "music
-                // keeps playing while downloading".
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(600),
-                    ::server::ytmusic::ytdlp_resolve::download(&id, &dest_no_ext, None),
+                // keeps playing while downloading". (Premium 256k via cookies
+                // is a separate gated path.)
+                ytdlp_download_with_progress(
+                    &id,
+                    &dest_no_ext,
+                    None,
+                    &mut queue,
+                    &session_start,
                 )
                 .await
-                {
-                    Ok(r) => r,
-                    Err(_) => Err("yt-dlp download timed out after 600s".to_string()),
-                }
             } else {
                 let resolved: Option<(String, &'static str, Option<String>, Option<u64>)> =
                     if is_yt {
@@ -448,6 +448,65 @@ async fn download_worker(
                 item.error = Some(last_err);
             }
             clear_progress(&id);
+        }
+    }
+}
+
+/// Largest on-disk size of any file sharing `dest_no_ext`'s stem — the growing
+/// `<stem>.<ext>.part` (or final file) yt-dlp is writing. Used to drive a live
+/// progress bar for the yt-dlp download path, which otherwise sat at 0 bytes
+/// until completion (looked frozen).
+#[cfg(not(target_arch = "wasm32"))]
+fn largest_stem_file_size(dest_no_ext: &std::path::Path) -> u64 {
+    let (Some(dir), Some(stem)) = (
+        dest_no_ext.parent(),
+        dest_no_ext.file_name().and_then(|f| f.to_str()),
+    ) else {
+        return 0;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut max = 0u64;
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str()
+            && name.starts_with(stem)
+            && let Ok(meta) = entry.metadata()
+        {
+            max = max.max(meta.len());
+        }
+    }
+    max
+}
+
+/// Run the yt-dlp end-to-end download while polling the partial file so the UI
+/// shows live bytes (yt-dlp's own progress isn't wired to our publisher). Caps
+/// the whole thing at 600s.
+#[cfg(not(target_arch = "wasm32"))]
+async fn ytdlp_download_with_progress(
+    id: &str,
+    dest_no_ext: &std::path::Path,
+    cookies: Option<&str>,
+    queue: &mut Signal<DownloadQueue>,
+    session_start: &Instant,
+) -> Result<std::path::PathBuf, String> {
+    let dl = ::server::ytmusic::ytdlp_resolve::download(id, dest_no_ext, cookies);
+    tokio::pin!(dl);
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(600));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            r = &mut dl => return r,
+            _ = &mut deadline => return Err("yt-dlp download timed out after 600s".to_string()),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                let bytes = largest_stem_file_size(dest_no_ext);
+                if bytes > 0 {
+                    if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
+                        item.bytes_done = bytes;
+                    }
+                    publish_progress(id, bytes, 0, session_start.elapsed().as_secs_f64());
+                }
+            }
         }
     }
 }
