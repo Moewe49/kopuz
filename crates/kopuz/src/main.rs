@@ -1949,6 +1949,21 @@ fn App() -> Element {
         }
     });
 
+    // Auto-rescan the local library when a download session finishes. Downloads
+    // land under <music folder>/Kopuz/…, so a rescan surfaces them in the Local
+    // library / Albums / Artists without the user hitting refresh manually.
+    let mut last_dl_done_count = use_signal(|| 0usize);
+    use_effect(move || {
+        let (active, done) = {
+            let q = download_queue.read();
+            (q.is_active(), q.done_count())
+        };
+        if !active && done > 0 && done != *last_dl_done_count.peek() {
+            last_dl_done_count.set(done);
+            *trigger_rescan.write() += 1;
+        }
+    });
+
     use_effect(move || {
         if !*initial_load_done.read() {
             return;

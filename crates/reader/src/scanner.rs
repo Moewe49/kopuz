@@ -129,7 +129,9 @@ async fn collect_audio_files(
 }
 
 pub fn is_audio_file(path: &Path) -> bool {
-    let extensions = ["mp3", "flac", "m4a", "wav", "ogg", "opus", "mp4", "mka"];
+    // `webm` matters: yt-dlp / native YT downloads land as opus-in-webm, and
+    // omitting it meant every downloaded track was invisible to the library.
+    let extensions = ["mp3", "flac", "m4a", "wav", "ogg", "opus", "mp4", "mka", "webm"];
     path.extension()
         .and_then(|s| s.to_str())
         .is_some_and(|s| extensions.iter().any(|e| s.eq_ignore_ascii_case(e)))

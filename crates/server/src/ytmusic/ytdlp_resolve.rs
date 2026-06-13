@@ -191,7 +191,7 @@ fn download_blocking(binary: &str, url: &str, dest_no_ext: &std::path::Path) -> 
         .args(["--socket-timeout", "30"])
         // Concurrent fragment downloads sidestep googlevideo's per-connection
         // throttle — this is what makes the fallback fast, not just reliable.
-        .args(["-N", "4"])
+        .args(["-N", "8"])
         .args([
             "--user-agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
@@ -203,7 +203,14 @@ fn download_blocking(binary: &str, url: &str, dest_no_ext: &std::path::Path) -> 
             "bestaudio[protocol!*=m3u8][acodec=opus]/\
              bestaudio[protocol!*=m3u8]/bestaudio[protocol^=http]/bestaudio/best",
         )
-        .args(["-o", &template])
+        .args(["-o", &template]);
+    // Embed title/artist/album + cover art so the file is self-describing and
+    // the local library shows proper names and artwork. Needs ffmpeg — only
+    // add these when it's available, else yt-dlp would error out the download.
+    if ffmpeg_available() {
+        cmd.args(["--embed-metadata", "--embed-thumbnail"]);
+    }
+    cmd
         // Prints the final path (after any move) once the download finishes.
         .args(["--print", "after_move:filepath"])
         .arg(url);
@@ -276,6 +283,21 @@ fn parse_na(s: Option<&str>) -> Option<f64> {
 
 fn first_line(s: &str) -> Option<&str> {
     s.lines().map(str::trim).find(|l| !l.is_empty())
+}
+
+/// True if `ffmpeg` is on PATH. yt-dlp needs it to embed metadata/thumbnails;
+/// without it those postprocessors would abort the whole download.
+fn ffmpeg_available() -> bool {
+    let exe = if cfg!(target_os = "windows") {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path).any(|dir| dir.join(exe).is_file())
+        })
+        .unwrap_or(false)
 }
 
 /// Locate the yt-dlp binary on PATH (adding `.exe` on Windows). Returns the

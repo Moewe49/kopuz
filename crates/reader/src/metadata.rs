@@ -333,10 +333,30 @@ pub fn read_cover(track_path: &Path) -> Option<(Vec<u8>, String)> {
 }
 
 fn is_matroska_audio(track_path: &Path) -> bool {
+    // webm is a Matroska profile; lofty can't probe it, so route both to the
+    // symphonia reader (which decodes the container and reads its tags).
     track_path
         .extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("mka"))
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mka") || ext.eq_ignore_ascii_case("webm"))
+}
+
+/// Recover `(artist, title)` from a `Artist - Title` filename stem — the
+/// naming scheme downloads use. Lets the library show proper names for files
+/// whose container carries no tags (untagged webm/opus). Returns `(None, None)`
+/// when the stem doesn't match.
+fn parse_stem_artist_title(path: &Path) -> (Option<String>, Option<String>) {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return (None, None);
+    };
+    if let Some((artist, title)) = stem.split_once(" - ") {
+        let artist = artist.trim();
+        let title = title.trim();
+        if !artist.is_empty() && !title.is_empty() {
+            return (Some(artist.to_string()), Some(title.to_string()));
+        }
+    }
+    (None, None)
 }
 
 fn symphonia_tag_to_string(tag: &SymphoniaTag) -> Option<String> {
@@ -425,8 +445,12 @@ fn read_with_symphonia(
         }
     }
 
+    // Filename "Artist - Title" fallback for tagless containers (downloads).
+    let (stem_artist, stem_title) = parse_stem_artist_title(track_path);
+
     let artist = find_symphonia_tag(&tags, |t| matches!(t, StandardTag::Artist(_)), &["ARTIST"])
         .and_then(symphonia_tag_to_string)
+        .or_else(|| stem_artist.clone())
         .unwrap_or_else(|| "Unknown Artist".to_string());
 
     let album_title = find_symphonia_tag(&tags, |t| matches!(t, StandardTag::Album(_)), &["ALBUM"])
@@ -449,6 +473,7 @@ fn read_with_symphonia(
 
     let title = find_symphonia_tag(&tags, |t| matches!(t, StandardTag::TrackTitle(_)), &["TITLE"])
         .and_then(symphonia_tag_to_string)
+        .or_else(|| stem_title.clone())
         .or_else(|| {
             track_path
                 .file_stem()
