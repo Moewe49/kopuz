@@ -120,6 +120,13 @@ fn windows_install_paths(browser: Browser) -> Vec<PathBuf> {
     out
 }
 
+/// True if a usable binary for `browser` is found (PATH, known install dirs,
+/// or the `KOPUZ_<BROWSER>_BIN` override). Lets the login UI tell the user up
+/// front whether their chosen browser will actually launch.
+pub fn is_browser_installed(browser: Browser) -> bool {
+    find_browser_bin(browser).is_some()
+}
+
 pub(crate) fn find_browser_bin(browser: Browser) -> Option<String> {
     let env_key = format!("KOPUZ_{}_BIN", browser.id().to_uppercase().replace('-', "_"));
     if let Some(v) = std::env::var_os(&env_key)

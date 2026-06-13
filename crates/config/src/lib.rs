@@ -639,6 +639,9 @@ pub struct AppConfig {
     pub radio_registries: Vec<RegistryEntry>,
     #[serde(default)]
     pub prefer_local_lyrics: bool,
+    /// Set once the first-run welcome has been shown, so it never reappears.
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -943,6 +946,7 @@ impl Default for AppConfig {
             cover_fetch_strategy: FetchStrategy::default(),
             radio_registries: default_radio_registries(),
             prefer_local_lyrics: false,
+            onboarded: false,
         }
     }
 }

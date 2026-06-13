@@ -404,6 +404,25 @@ fn ServerServiceFields(
                                 }
                             }
                         }
+                        // Tell the user immediately whether the chosen browser
+                        // will actually launch, instead of a dead-end error
+                        // after they commit.
+                        {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let sel = yt_browser();
+                                let installed = ::server::ytmusic::isolated_profile::is_browser_installed(sel);
+                                if installed {
+                                    rsx! { p { class: "text-xs text-emerald-300 mt-1",
+                                        "✓ {sel.label()} found — auto-login will work." } }
+                                } else {
+                                    rsx! { p { class: "text-xs text-rose-300 mt-1",
+                                        "✗ {sel.label()} not found. Install Chrome, Edge, or Brave — or pick an installed one above. (You can also use the cookie-paste method.)" } }
+                                }
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            { rsx! {} }
+                        }
                     },
                 }
 

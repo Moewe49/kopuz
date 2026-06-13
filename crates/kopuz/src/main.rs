@@ -2918,6 +2918,16 @@ fn App() -> Element {
                 palette: palette,
             }
             DownloadOverlay { queue: download_queue }
+            // First-run welcome: shown once on a fresh config, then never again.
+            if *initial_load_done.read() && !config.read().onboarded {
+                components::onboarding::OnboardingModal {
+                    on_close: move |_| { config.write().onboarded = true; },
+                    on_open_settings: move |_| {
+                        config.write().onboarded = true;
+                        current_route.set(Route::Settings);
+                    },
+                }
+            }
             if config.read().player_bar_position == config::PlayerBarPosition::Bottom {
                 Bottombar {
                     library: library,

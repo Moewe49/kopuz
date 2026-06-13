@@ -15,6 +15,7 @@ pub mod fullscreen;
 pub mod header;
 pub mod lyrics_view;
 pub mod metadata_modal;
+pub mod onboarding;
 pub mod playlist_detail;
 pub mod playlist_modal;
 pub mod playlist_popups;
