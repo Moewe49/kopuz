@@ -26,6 +26,12 @@ use std::time::Duration;
 const CHUNK: usize = 512 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Re-resolves a fresh stream URL when the current one stops working (a
+/// googlevideo URL 403s once it expires mid-track). Returns the new URL, or
+/// `None` if it can't be refreshed. Called from the playback thread, so it may
+/// block briefly.
+pub type ReResolver = Box<dyn Fn() -> Option<String> + Send + Sync>;
+
 pub struct RangeStreamSource {
     url: String,
     client: reqwest::blocking::Client,
@@ -33,13 +39,19 @@ pub struct RangeStreamSource {
     pos: u64,
     chunk: Vec<u8>,
     chunk_start: u64,
+    reresolve: Option<ReResolver>,
 }
 
 impl RangeStreamSource {
     /// Probe the URL with a `Range: bytes=0-0` HEAD-equivalent to learn its
     /// total size and confirm Range support. Returns the source positioned
-    /// at byte 0 with an empty cache.
-    pub fn new(url: String, user_agent: Option<String>) -> IoResult<Self> {
+    /// at byte 0 with an empty cache. `reresolve`, when provided, is called to
+    /// fetch a fresh URL if a Range request later fails (URL expiry).
+    pub fn new(
+        url: String,
+        user_agent: Option<String>,
+        reresolve: Option<ReResolver>,
+    ) -> IoResult<Self> {
         let ua = user_agent
             .unwrap_or_else(|| concat!("Kopuz/", env!("CARGO_PKG_VERSION")).to_string());
         let client = reqwest::blocking::Client::builder()
@@ -73,6 +85,7 @@ impl RangeStreamSource {
             pos: 0,
             chunk: Vec::with_capacity(CHUNK),
             chunk_start: 0,
+            reresolve,
         })
     }
 
@@ -82,23 +95,43 @@ impl RangeStreamSource {
 
     fn fetch_chunk(&mut self, start: u64) -> IoResult<()> {
         let end = (start + CHUNK as u64 - 1).min(self.total_size - 1);
-        let resp = self
-            .client
-            .get(&self.url)
-            .header("Range", format!("bytes={start}-{end}"))
-            .send()
-            .map_err(IoError::other)?;
-        if !resp.status().is_success() {
-            return Err(IoError::other(format!(
-                "range fetch {start}-{end} HTTP {}",
-                resp.status()
-            )));
+        let mut reresolved = false;
+        loop {
+            let result = self
+                .client
+                .get(&self.url)
+                .header("Range", format!("bytes={start}-{end}"))
+                .send();
+            match result {
+                Ok(resp) if resp.status().is_success() => {
+                    let bytes = resp.bytes().map_err(IoError::other)?;
+                    self.chunk.clear();
+                    self.chunk.extend_from_slice(&bytes);
+                    self.chunk_start = start;
+                    return Ok(());
+                }
+                other => {
+                    // First failure (commonly a 403 from an expired googlevideo
+                    // URL): try to re-resolve a fresh URL once and retry, so a
+                    // mid-track URL expiry recovers instead of killing playback.
+                    let fresh = if !reresolved {
+                        self.reresolve.as_ref().and_then(|rr| rr())
+                    } else {
+                        None
+                    };
+                    if let Some(new_url) = fresh {
+                        self.url = new_url;
+                        reresolved = true;
+                        continue;
+                    }
+                    let desc = match other {
+                        Ok(resp) => format!("HTTP {}", resp.status()),
+                        Err(e) => e.to_string(),
+                    };
+                    return Err(IoError::other(format!("range fetch {start}-{end} {desc}")));
+                }
+            }
         }
-        let bytes = resp.bytes().map_err(IoError::other)?;
-        self.chunk.clear();
-        self.chunk.extend_from_slice(&bytes);
-        self.chunk_start = start;
-        Ok(())
     }
 
     fn pos_in_cache(&self, pos: u64) -> bool {

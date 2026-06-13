@@ -701,7 +701,9 @@ impl PlayerController {
 
                     #[cfg(not(target_arch = "wasm32"))]
                     spawn(async move {
-                        let (stream_url, yt_format, yt_user_agent) = if let Some(video_id) =
+                        let (stream_url, yt_format, yt_user_agent, yt_reresolve) = if let Some(
+                            video_id,
+                        ) =
                             stream_url.strip_prefix("__YT_PENDING:")
                         {
                             let cookies = cfg_signal
@@ -717,6 +719,11 @@ impl PlayerController {
                                 skip_in_progress.set(false);
                                 return;
                             };
+                            // Captured for the mid-playback URL-expiry recovery
+                            // closure below, before `cookies` moves into the client.
+                            let rr_vid = video_id.to_string();
+                            let rr_cookies = cookies.clone();
+                            let rr_handle = tokio::runtime::Handle::current();
                             let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
                             match yt.get_stream(video_id).await {
                                 Ok(info) => {
@@ -755,7 +762,25 @@ impl PlayerController {
                                             current_song_bitrate_for_yt.set(kbps);
                                         }
                                     }
-                                    (info.url, Some(info.format), Some(info.user_agent))
+                                    // Recovery closure for mid-track URL expiry:
+                                    // re-resolve a FRESH stream URL on a 403 from
+                                    // the range source. Runs on the playback
+                                    // thread, so it uses the captured runtime
+                                    // handle to block on the async resolve.
+                                    let reresolve: utils::range_source::ReResolver = {
+                                        let vid = rr_vid.clone();
+                                        let cookies = rr_cookies.clone();
+                                        let handle = rr_handle.clone();
+                                        Box::new(move || {
+                                            let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(
+                                                cookies.clone(),
+                                            );
+                                            handle.block_on(async {
+                                                yt.get_stream_fresh(&vid).await.ok().map(|i| i.url)
+                                            })
+                                        })
+                                    };
+                                    (info.url, Some(info.format), Some(info.user_agent), Some(reresolve))
                                 }
                                 Err(e) => {
                                     // Same guard: a stale error must NOT post a banner
@@ -790,7 +815,7 @@ impl PlayerController {
                                             current_song_duration_for_yt.set(secs);
                                         }
                                     }
-                                    (info.url, Some(info.format), Some(info.user_agent))
+                                    (info.url, Some(info.format), Some(info.user_agent), None)
                                 }
                                 Err(e) => {
                                     if *play_generation.read() != current_gen {
@@ -806,11 +831,12 @@ impl PlayerController {
                                 }
                             }
                         } else {
-                            (stream_url, None, None)
+                            (stream_url, None, None, None)
                         };
                         let yt_format_for_blocking = yt_format;
                         let stream_url_for_blocking = stream_url.clone();
                         let yt_ua_for_blocking = yt_user_agent.clone();
+                        let yt_reresolve_for_blocking = yt_reresolve;
                         let source_res = tokio::task::spawn_blocking(move || {
                             if is_radio {
                                 let stream = utils::stream_buffer::StreamBuffer::with_user_agent(
@@ -829,6 +855,7 @@ impl PlayerController {
                                 let range = utils::range_source::RangeStreamSource::new(
                                     stream_url_for_blocking,
                                     yt_ua_for_blocking,
+                                    yt_reresolve_for_blocking,
                                 )?;
                                 let len = Some(range.total_size());
                                 let (source, mut hint) =

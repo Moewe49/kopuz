@@ -19,6 +19,12 @@ static COOLDOWN_UNTIL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atom
 /// Completed downloads this session — drives the every-50-tracks breather.
 #[cfg(not(target_arch = "wasm32"))]
 static SESSION_COMPLETED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Consecutive rate-limit-shaped failures across the session. Drives an
+/// escalating cooldown (15s → 45s → 120s) so a large playlist that keeps
+/// hitting the limiter backs off harder instead of resuming into a hot IP.
+/// Reset on any successful download.
+#[cfg(not(target_arch = "wasm32"))]
+static CONSECUTIVE_RATELIMIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 #[cfg(not(target_arch = "wasm32"))]
 fn epoch_ms() -> u64 {
@@ -409,6 +415,9 @@ async fn download_worker(
                     clear_progress(&id);
                     done = true;
                     SESSION_COMPLETED.fetch_add(1, Ordering::Relaxed);
+                    // A success means the IP is healthy again — clear the
+                    // escalating-backoff counter.
+                    CONSECUTIVE_RATELIMIT.store(0, Ordering::Relaxed);
                     // No scheduled breather and no inter-track delay: anonymous
                     // yt-dlp end-to-end with -N 8 manages its own throttling, so
                     // the heavy custom pauses (which felt like "random pauses"
@@ -449,11 +458,19 @@ async fn download_worker(
                 || last_err.contains("Could not resolve");
             let cancelled = last_err == "cancelled" || cancel_flag.load(Ordering::Relaxed);
             if rate_limited && !cancelled && requeues < 2 {
+                // Escalate the cooldown the longer the limiter keeps biting:
+                // 15s → 45s → 120s (capped). Resets after any success.
+                let streak = CONSECUTIVE_RATELIMIT.fetch_add(1, Ordering::Relaxed);
+                let cooldown = match streak {
+                    0 => 15,
+                    1 => 45,
+                    _ => 120,
+                };
                 eprintln!(
-                    "[downloads] {id} hit rate limit ({last_err}) — requeueing (attempt {}), 15s session cooldown",
+                    "[downloads] {id} hit rate limit ({last_err}) — requeueing (attempt {}), {cooldown}s session cooldown",
                     requeues + 1
                 );
-                set_cooldown(15);
+                set_cooldown(cooldown);
                 if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                     item.status = DownloadStatus::Queued;
                     item.requeues += 1;
@@ -527,17 +544,31 @@ async fn ytdlp_download_with_progress(
     tokio::pin!(dl);
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(600));
     tokio::pin!(deadline);
+    // Stall watchdog: if the partial file hasn't grown in this long, the
+    // download is wedged (yt-dlp's own socket/fragment timeouts should catch
+    // most stalls, but this is the backstop) — abandon it so the worker can
+    // re-resolve and retry instead of freezing for the full 600s.
+    const STALL_SECS: u64 = 90;
+    let mut last_size = 0u64;
+    let mut last_growth = Instant::now();
     loop {
         tokio::select! {
             r = &mut dl => return r,
             _ = &mut deadline => return Err("yt-dlp download timed out after 600s".to_string()),
             _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                 let bytes = largest_stem_file_size(dest_no_ext);
+                if bytes > last_size {
+                    last_size = bytes;
+                    last_growth = Instant::now();
+                }
                 if bytes > 0 {
                     if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                         item.bytes_done = bytes;
                     }
                     publish_progress(id, bytes, 0, session_start.elapsed().as_secs_f64());
+                }
+                if last_growth.elapsed().as_secs() >= STALL_SECS {
+                    return Err(format!("yt-dlp download stalled (no progress for {STALL_SECS}s)"));
                 }
             }
         }
