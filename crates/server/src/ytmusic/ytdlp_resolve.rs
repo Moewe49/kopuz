@@ -250,6 +250,14 @@ fn download_blocking(
             "bestaudio[ext=m4a][protocol!*=m3u8]/bestaudio[protocol!*=m3u8]/bestaudio/best",
         ]);
     }
+    // Our managed ffmpeg lives in Kopuz's data dir, not on PATH — point yt-dlp
+    // at it so the -x extraction and thumbnail embed actually find it. (When
+    // ffmpeg is only on PATH, yt-dlp finds it itself; this is a no-op then.)
+    let managed_bin = crate::deps::managed_bin_dir();
+    if crate::deps::managed_ffmpeg_path().is_file() {
+        let loc = managed_bin.to_string_lossy();
+        cmd.args(["--ffmpeg-location", loc.as_ref()]);
+    }
     cmd.args(["-o", &template]);
     // Embed the cover art so the local library shows artwork. We deliberately
     // do NOT --embed-metadata: yt-dlp would write YouTube's raw video title
@@ -380,9 +388,14 @@ fn first_line(s: &str) -> Option<&str> {
     s.lines().map(str::trim).find(|l| !l.is_empty())
 }
 
-/// True if `ffmpeg` is on PATH. yt-dlp needs it to embed metadata/thumbnails;
-/// without it those postprocessors would abort the whole download.
-fn ffmpeg_available() -> bool {
+/// True if ffmpeg is available — either Kopuz's self-managed copy (fetched on
+/// first run, see [`crate::deps::ensure_ffmpeg`]) or a system install on PATH.
+/// yt-dlp needs it to extract audio and embed thumbnails; without it those
+/// postprocessors would abort the whole download, so we gate on this.
+pub fn ffmpeg_available() -> bool {
+    if crate::deps::managed_ffmpeg_path().is_file() {
+        return true;
+    }
     let exe = if cfg!(target_os = "windows") {
         "ffmpeg.exe"
     } else {

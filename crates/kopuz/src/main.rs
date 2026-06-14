@@ -1146,6 +1146,13 @@ fn App() -> Element {
                 Ok(p) => tracing::info!("Managed yt-dlp ready: {}", p.display()),
                 Err(e) => tracing::warn!("yt-dlp auto-update skipped (using system if present): {e}"),
             }
+            // ffmpeg gives downloads opus extraction + embedded cover art. Fetch
+            // a static build once on first run so the user never installs it by
+            // hand — this is what replaces the old install-windows.ps1 step.
+            match ::server::deps::ensure_ffmpeg().await {
+                Ok(p) => tracing::info!("Managed ffmpeg ready: {}", p.display()),
+                Err(e) => tracing::warn!("ffmpeg auto-setup skipped (using system if present): {e}"),
+            }
         });
     });
     let mut trigger_rescan = use_signal(|| 0);

@@ -20,8 +20,12 @@ percent-encoding = { workspace = true }
 httpdate = "1"
 hex = "0.4"
 web-time = { workspace = true }
-tokio = { workspace = true, features = ["fs", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "sync", "time"] }
 reader = { workspace = true }
+# Extract the ffmpeg(.exe) binary out of the downloaded release zip on first
+# run. default-features off keeps it to the standard Deflate codec ffmpeg zips
+# use — no aes/bzip2/zstd/lzma pulled in.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # rookie's Chromium cookie decryption (the `get_keys` path) doesn't compile
 # for android/ios, and browser-based sign-in is desktop-only anyway. Mobile

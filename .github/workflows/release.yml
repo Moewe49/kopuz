@@ -46,7 +46,6 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           $app = "target/dx/kopuz/release/windows/app"
           if (Test-Path $app) {
-            Copy-Item scripts/install-windows.ps1 "$app/" -ErrorAction SilentlyContinue
             Compress-Archive -Path "$app/*" -DestinationPath dist/Kopuz-windows-portable.zip -Force
           }
       # MSI/NSIS installer is best-effort: WiX packaging occasionally flakes on
@@ -59,7 +58,6 @@ jobs:
         run: |
           Get-ChildItem -Recurse target/dx -Include *.msi,*setup*.exe -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item $_.FullName dist/ }
-          Copy-Item scripts/install-windows.ps1 dist/ -ErrorAction SilentlyContinue
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:

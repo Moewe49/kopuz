@@ -23,15 +23,16 @@ Grab the latest build for your platform from the
 
 | Platform | File | Notes |
 |----------|------|-------|
-| **Windows** | `*.msi` / `*setup*.exe` | Run `install-windows.ps1` once to add yt-dlp + ffmpeg. |
-| **Linux** | `Kopuz-x86_64.AppImage` | `chmod +x` then run. `install-linux.sh` pulls yt-dlp/ffmpeg/WebKitGTK. |
+| **Windows** | `*.msi` / `*setup*.exe` | Just run it. Kopuz fetches yt-dlp + ffmpeg itself on first launch — no extra steps. |
+| **Linux** | `Kopuz-x86_64.AppImage` | `chmod +x` then run. `install-linux.sh` pulls ffmpeg/WebKitGTK (yt-dlp is self-managed). |
 | **Android / GrapheneOS** | `Kopuz-android.apk` | Sideload it. No Google Play Services needed — works on GrapheneOS. |
 | **iOS** | — | Not yet available: the codebase has no iOS port (its mobile paths are Android-specific). The `just ios-ipa-*` recipes exist for anyone who wants to take it on. |
 
 > **Dependencies:** Kopuz uses **yt-dlp** (playback bot-check fallback +
-> SoundCloud search/download) and **ffmpeg** (download remux). The desktop
-> installers ship an install script that adds both automatically; on mobile
-> they're not required for normal YouTube Music / local playback.
+> SoundCloud search/download) and **ffmpeg** (download remux). On Windows/macOS
+> the app downloads and manages both itself on first launch — nothing to
+> install. On Linux, yt-dlp is self-managed and `install-linux.sh` adds ffmpeg.
+> On mobile neither is required for normal YouTube Music / local playback.
 
 A release is produced automatically by the [`release`](.github/workflows/release.yml)
 workflow whenever a `v*` tag is pushed.
@@ -416,14 +417,17 @@ Media servers → Add → YouTube Music**.
 ### Runtime tools (handled for you)
 
 Kopuz mints the PO token YouTube needs for stream URLs **in-app** via a hidden
-WebView — no external helper to install. The only runtime tool is **yt-dlp**
-(used for SoundCloud, downloads, and as a playback fallback), and Kopuz
-**manages it itself**: it downloads the latest yt-dlp into its own data folder
-on first launch and keeps it up to date automatically. You don't need to
-install or update anything by hand.
+WebView — no external helper to install. The runtime tools are **yt-dlp** (used
+for SoundCloud, downloads, and as a playback fallback) and **ffmpeg** (audio
+extraction + embedded cover art), and Kopuz **manages both itself**: on first
+launch it downloads them into its own data folder — yt-dlp is kept up to date
+automatically, ffmpeg is fetched once. You don't need to install or update
+anything by hand.
 
-> **ffmpeg** is optional — install it (e.g. `winget install Gyan.FFmpeg`) if you
-> want embedded cover art on downloaded files. Downloads work without it.
+> On **Linux**, yt-dlp is self-managed but ffmpeg comes from your package
+> manager (`install-linux.sh`, or `apt/dnf/pacman install ffmpeg`). If the
+> first-run ffmpeg fetch is ever blocked, downloads still work (they fall back
+> to m4a) and any ffmpeg on PATH is picked up automatically.
 
 ### Choosing a mode
 
