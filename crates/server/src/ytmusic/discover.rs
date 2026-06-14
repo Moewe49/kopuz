@@ -139,7 +139,124 @@ pub async fn fetch_artist(channel_id: &str, cookies: &str) -> Result<YtArtist, S
         cookies,
     )
     .await?;
-    Ok(parse_artist(channel_id, &resp))
+    let mut artist = parse_artist(channel_id, &resp);
+    // The artist "Top Songs" shelf carries play counts, not durations, so its
+    // rows parse at duration 0 and the UI shows "0:00". One get_queue batch
+    // call fills in the real lengths. Best-effort — a failure just leaves 0:00.
+    backfill_song_durations(&mut artist, cookies).await;
+    Ok(artist)
+}
+
+/// Patch in real durations for artist song-shelf rows that came back at 0 (the
+/// "Top Songs" shelf has no duration column). Collects the missing videoIds,
+/// resolves them all in one `get_queue` call, and writes the seconds back.
+async fn backfill_song_durations(artist: &mut YtArtist, cookies: &str) {
+    let ids = collect_song_video_ids_missing_duration(artist);
+    if ids.is_empty() {
+        return;
+    }
+    let durations = fetch_durations(&ids, cookies).await;
+    if durations.is_empty() {
+        return;
+    }
+    for shelf in artist.sections.iter_mut().filter(|s| s.is_song_list) {
+        for item in &mut shelf.items {
+            if let DiscoverItem::Song(track) = item
+                && track.duration == 0
+                && let Some(vid) = ytmusic_video_id(track)
+                && let Some(&secs) = durations.get(&vid)
+            {
+                track.duration = secs;
+            }
+        }
+    }
+}
+
+/// Unique videoIds of song-shelf rows still missing a duration.
+fn collect_song_video_ids_missing_duration(artist: &YtArtist) -> Vec<String> {
+    let mut ids: Vec<String> = artist
+        .sections
+        .iter()
+        .filter(|s| s.is_song_list)
+        .flat_map(|s| s.items.iter())
+        .filter_map(|item| match item {
+            DiscoverItem::Song(t) if t.duration == 0 => ytmusic_video_id(t),
+            _ => None,
+        })
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Pull the videoId out of a `ytmusic:VIDEOID[:thumb]` track path — same
+/// extraction the player uses.
+fn ytmusic_video_id(track: &Track) -> Option<String> {
+    let path = track.path.to_string_lossy();
+    path.strip_prefix(&format!("{SOURCE_PREFIX}:"))
+        .and_then(|rest| rest.split(':').next())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Resolve track durations (seconds) for a batch of videoIds via the
+/// `music/get_queue` endpoint, which — unlike the artist browse response —
+/// carries each track's `lengthText`. Returns videoId → seconds; ids that
+/// don't resolve are simply absent. Best-effort: a network/parse failure
+/// yields an empty map (callers keep their 0 default) rather than erroring.
+async fn fetch_durations(
+    video_ids: &[String],
+    cookies: &str,
+) -> std::collections::HashMap<String, u64> {
+    let mut out = std::collections::HashMap::new();
+    if video_ids.is_empty() {
+        return out;
+    }
+    let client = WEB_REMIX;
+    let body = json!({
+        "context": {
+            "client": {
+                "clientName": client.client_name,
+                "clientVersion": client.client_version,
+                "hl": "en",
+                "gl": "US",
+                "userAgent": client.user_agent,
+            },
+            "user": { "lockedSafetyMode": false },
+        },
+        "videoIds": video_ids,
+    });
+    let url = format!("{ORIGIN_YOUTUBE_MUSIC}/youtubei/v1/music/get_queue?prettyPrint=false");
+    let Ok(resp) = post(&url, &body, cookies).await else {
+        return out;
+    };
+    collect_queue_durations(&resp, &mut out);
+    out
+}
+
+/// Walk a get_queue response, mapping each `playlistPanelVideoRenderer`'s
+/// videoId to its `lengthText` ("m:ss") in seconds.
+fn collect_queue_durations(node: &Value, out: &mut std::collections::HashMap<String, u64>) {
+    match node {
+        Value::Object(map) => {
+            if let Some(r) = map.get("playlistPanelVideoRenderer")
+                && let Some(vid) = r.get("videoId").and_then(|v| v.as_str())
+                && let Some(text) = runs_text(r, "/lengthText/runs")
+                && let Some(secs) = parse_mm_ss(text.trim())
+            {
+                out.insert(vid.to_string(), secs);
+            }
+            for v in map.values() {
+                collect_queue_durations(v, out);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr {
+                collect_queue_durations(v, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn parse_artist(channel_id: &str, resp: &Value) -> YtArtist {
@@ -1178,4 +1295,117 @@ fn normalize_yt_thumbnail(url: String) -> String {
         return format!("{}=w544-h544-l90-rj", &url[..idx]);
     }
     url
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn yt_track(path: &str, duration: u64) -> Track {
+        Track {
+            path: PathBuf::from(path),
+            album_id: String::new(),
+            title: "t".into(),
+            artist: "a".into(),
+            album: String::new(),
+            duration,
+            khz: 0,
+            bitrate: 0,
+            track_number: None,
+            disc_number: None,
+            musicbrainz_release_id: None,
+            musicbrainz_recording_id: None,
+            musicbrainz_track_id: None,
+            playlist_item_id: None,
+            artists: vec!["a".into()],
+        }
+    }
+
+    #[test]
+    fn ytmusic_video_id_extracts_id_with_and_without_thumbnail() {
+        assert_eq!(
+            ytmusic_video_id(&yt_track("ytmusic:8_J_PMrK-bM", 0)).as_deref(),
+            Some("8_J_PMrK-bM")
+        );
+        assert_eq!(
+            ytmusic_video_id(&yt_track("ytmusic:8_J_PMrK-bM:urlhex_deadbeef", 0)).as_deref(),
+            Some("8_J_PMrK-bM")
+        );
+        // Non-ytmusic / malformed paths yield nothing rather than garbage.
+        assert_eq!(ytmusic_video_id(&yt_track("/local/song.opus", 0)), None);
+        assert_eq!(ytmusic_video_id(&yt_track("ytmusic:", 0)), None);
+    }
+
+    #[test]
+    fn collect_queue_durations_maps_video_ids_to_seconds() {
+        // Shape mirrors a real music/get_queue response: nested
+        // playlistPanelVideoRenderer entries each carrying a lengthText.
+        let resp = json!({
+            "queueDatas": [
+                { "content": { "playlistPanelVideoRenderer": {
+                    "videoId": "8_J_PMrK-bM",
+                    "lengthText": { "runs": [{ "text": "2:28" }] }
+                }}},
+                { "content": { "playlistPanelVideoRenderer": {
+                    "videoId": "BXn35QN7ywQ",
+                    "lengthText": { "runs": [{ "text": "2:41" }] }
+                }}},
+                // No lengthText → skipped, not mapped to 0.
+                { "content": { "playlistPanelVideoRenderer": { "videoId": "noLen" }}}
+            ]
+        });
+        let mut out = std::collections::HashMap::new();
+        collect_queue_durations(&resp, &mut out);
+        assert_eq!(out.get("8_J_PMrK-bM"), Some(&148));
+        assert_eq!(out.get("BXn35QN7ywQ"), Some(&161));
+        assert_eq!(out.get("noLen"), None);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn backfill_only_fills_zero_durations_and_never_overwrites() {
+        let mut artist = YtArtist {
+            channel_id: "UC1".into(),
+            name: "x".into(),
+            subscribers: None,
+            description: None,
+            banner_thumbnail: None,
+            shuffle_playlist_id: None,
+            sections: vec![DiscoverShelf {
+                title: "Top songs".into(),
+                strapline: None,
+                more_browse_id: None,
+                is_song_list: true,
+                items: vec![
+                    DiscoverItem::Song(yt_track("ytmusic:aaa", 0)),
+                    DiscoverItem::Song(yt_track("ytmusic:bbb", 200)), // already known
+                ],
+            }],
+        };
+        let mut durations = std::collections::HashMap::new();
+        durations.insert("aaa".to_string(), 148u64);
+        durations.insert("bbb".to_string(), 999u64); // must be ignored
+
+        // Inline the patch logic the async path runs (no network in a unit test).
+        for shelf in artist.sections.iter_mut().filter(|s| s.is_song_list) {
+            for item in &mut shelf.items {
+                if let DiscoverItem::Song(track) = item
+                    && track.duration == 0
+                    && let Some(vid) = ytmusic_video_id(track)
+                    && let Some(&secs) = durations.get(&vid)
+                {
+                    track.duration = secs;
+                }
+            }
+        }
+        let got: Vec<u64> = artist.sections[0]
+            .items
+            .iter()
+            .map(|i| match i {
+                DiscoverItem::Song(t) => t.duration,
+                _ => 0,
+            })
+            .collect();
+        assert_eq!(got, vec![148, 200]);
+    }
 }
