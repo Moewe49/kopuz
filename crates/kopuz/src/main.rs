@@ -1839,26 +1839,31 @@ fn App() -> Element {
                 }
                 if let Ok(loaded) = cfg_res {
                     config.set(loaded.clone());
-                    // One-time cleanup: older builds downloaded opus-in-webm,
-                    // which won't play/seek locally. Drop those offline entries
-                    // and delete the dead files so they re-download as m4a on
-                    // the next playlist download — without this the "already
-                    // downloaded" skip hid them (the 82-of-287 confusion) AND
-                    // they'd never play.
+                    // Reconcile offline_tracks with what's actually on disk:
+                    //  - drop legacy opus-webm entries (delete the dead file) so
+                    //    they re-download as playable m4a;
+                    //  - drop entries whose file is gone, so the app stops
+                    //    claiming a playlist is "downloaded" when the folder is
+                    //    empty and the download button re-fetches it.
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let webm: Vec<String> = config
+                        let stale: Vec<(String, bool)> = config
                             .peek()
                             .offline_tracks
                             .iter()
-                            .filter(|(_, p)| p.to_lowercase().ends_with(".webm"))
-                            .map(|(id, _)| id.clone())
+                            .filter_map(|(id, p)| {
+                                let is_webm = p.to_lowercase().ends_with(".webm");
+                                let missing = !std::path::Path::new(p).exists();
+                                (is_webm || missing).then(|| (id.clone(), is_webm))
+                            })
                             .collect();
-                        if !webm.is_empty() {
-                            tracing::info!("Purging {} stale .webm downloads", webm.len());
+                        if !stale.is_empty() {
+                            tracing::info!("Reconciling {} stale offline entries", stale.len());
                             let mut c = config.write();
-                            for id in webm {
-                                if let Some(path) = c.offline_tracks.remove(&id) {
+                            for (id, is_webm) in stale {
+                                if let Some(path) = c.offline_tracks.remove(&id)
+                                    && is_webm
+                                {
                                     let _ = std::fs::remove_file(&path);
                                 }
                             }

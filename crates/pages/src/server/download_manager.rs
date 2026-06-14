@@ -11,20 +11,6 @@ thread_local! {
     static DOWNLOAD_PROGRESS: Cell<Option<Signal<DownloadProgress>>> = const { Cell::new(None) };
 }
 
-/// Epoch-millis until which ALL workers pause. Set on rate-limit-shaped
-/// failures and on scheduled batch breathers. Global, not per-worker — once
-/// YT throttles the session, every worker pushing on just digs deeper.
-#[cfg(not(target_arch = "wasm32"))]
-static COOLDOWN_UNTIL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// Completed downloads this session — drives the every-50-tracks breather.
-#[cfg(not(target_arch = "wasm32"))]
-static SESSION_COMPLETED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-/// Consecutive rate-limit-shaped failures across the session. Drives an
-/// escalating cooldown (15s → 45s → 120s) so a large playlist that keeps
-/// hitting the limiter backs off harder instead of resuming into a hot IP.
-/// Reset on any successful download.
-#[cfg(not(target_arch = "wasm32"))]
-static CONSECUTIVE_RATELIMIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// Heartbeat: epoch-ms a worker last did anything. Lets queue_downloads_into
 /// tell a genuinely-live session from a `is_running=true` left stuck by a dead
 /// worker (panic / aborted task) — without it, one bad session bricked the
@@ -42,13 +28,6 @@ fn epoch_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-/// Extend the global cooldown to at least `now + secs` (never shortens it).
-#[cfg(not(target_arch = "wasm32"))]
-fn set_cooldown(secs: u64) {
-    let until = epoch_ms() + secs * 1000;
-    COOLDOWN_UNTIL_MS.fetch_max(until, Ordering::Relaxed);
 }
 
 pub fn register_progress_signal(signal: Signal<DownloadProgress>) {
@@ -113,7 +92,15 @@ pub fn queue_downloads_into(
             q.items.iter().map(|i| i.id.clone()).collect();
 
         for (id, title, artist) in &requests {
-            if conf.offline_tracks.contains_key(id) {
+            // Skip only if it's downloaded AND the file is actually still there.
+            // A stale offline_tracks entry pointing at a missing file must NOT
+            // block a re-download (the "says downloaded but folder empty" bug).
+            let on_disk = conf
+                .offline_tracks
+                .get(id)
+                .map(|p| std::path::Path::new(p).exists())
+                .unwrap_or(false);
+            if on_disk {
                 continue;
             }
             if queued_ids.contains(id) {
@@ -184,12 +171,6 @@ pub fn queue_downloads_into(
     }
 
     reset_progress_session();
-    SESSION_COMPLETED.store(0, Ordering::Relaxed);
-    // A user-initiated download wants to start NOW — clear any leftover
-    // cooldown / backoff from a previous session so it doesn't sit idle
-    // waiting out a stale rate-limit timer.
-    COOLDOWN_UNTIL_MS.store(0, Ordering::Relaxed);
-    CONSECUTIVE_RATELIMIT.store(0, Ordering::Relaxed);
     worker_heartbeat();
 
     let session_start = Instant::now();
@@ -226,26 +207,15 @@ async fn download_worker(
             return;
         }
         worker_heartbeat();
-        // Honor the GLOBAL cooldown (rate-limit recovery / batch breather).
-        // All workers pause together — once YT throttles the session, any
-        // worker pushing on just extends the throttle.
-        let until = COOLDOWN_UNTIL_MS.load(Ordering::Relaxed);
-        let now = epoch_ms();
-        if until > now {
-            tokio::time::sleep(std::time::Duration::from_millis(until - now)).await;
-            continue;
-        }
 
-        // Atomic claim: find + status flip in one write lock prevents two workers
-        // grabbing the same id. Grab the metadata too so the file can be named
-        // `Artist - Title.ext` instead of an opaque video id.
+        // Atomic claim of the next queued track.
         let claimed = {
             let mut q = queue.write();
-            let claimed = q
+            match q
                 .items
                 .iter_mut()
-                .find(|i| matches!(i.status, DownloadStatus::Queued));
-            match claimed {
+                .find(|i| matches!(i.status, DownloadStatus::Queued))
+            {
                 Some(item) => {
                     item.status = DownloadStatus::Downloading;
                     Some((
@@ -253,29 +223,23 @@ async fn download_worker(
                         item.title.clone(),
                         item.artist.clone(),
                         item.subdir.clone(),
-                        item.requeues,
                     ))
                 }
                 None => None,
             }
         };
-        let Some((id, title, artist, subdir, requeues)) = claimed else {
-            // Nothing claimable — but another worker's in-flight track may
-            // yet get REQUEUED (rate-limit recovery). Only exit once nothing
-            // is downloading anymore; otherwise idle and re-check.
-            let anyone_active = queue
-                .read()
-                .items
-                .iter()
-                .any(|i| matches!(i.status, DownloadStatus::Downloading));
-            if anyone_active {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                continue;
-            }
+        let Some((id, title, artist, subdir)) = claimed else {
             return;
         };
 
-        if config.read().offline_tracks.contains_key(&id) {
+        // Already downloaded AND the file still exists → mark done, skip.
+        let on_disk = config
+            .read()
+            .offline_tracks
+            .get(&id)
+            .map(|p| std::path::Path::new(p).exists())
+            .unwrap_or(false);
+        if on_disk {
             if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                 item.status = DownloadStatus::Done;
             }
@@ -285,15 +249,11 @@ async fn download_worker(
         let (service, yt_cookies) = {
             let conf = config.read();
             let s = conf.server.as_ref();
-            (
-                s.map(|x| x.service),
-                s.and_then(|x| x.access_token.clone()),
-            )
+            (s.map(|x| x.service), s.and_then(|x| x.access_token.clone()))
         };
 
-        // Save into the browsable downloads folder as `Artist - Title.ext`.
-        // Playlist downloads carry a `subdir` so they group under a per-playlist
-        // folder inside the downloads dir.
+        // `Artist - Title.ext` in the browsable folder; playlist downloads
+        // group under a per-playlist sub-folder.
         let dest_no_ext = {
             let conf = config.read();
             let mut dir = super::downloads_dir(&conf);
@@ -304,142 +264,80 @@ async fn download_worker(
             super::download_dest_no_ext(&dir, &artist, &title, &id)
         };
 
-        // Per-track attempt ladder:
-        //   1-2: yt-dlp end-to-end m4a download (when yt-dlp is installed) —
-        //        clean, playable, seekable file with embedded cover; its own
-        //        bot-check + retries + parallel fragments. Primary path.
-        //   3:   native resolve + our chunked transfer, then search-by-title
-        //        fallback. Also the path for users without yt-dlp.
+        let is_yt = matches!(service, Some(MusicService::YtMusic));
         let ytdlp_available = ::server::ytmusic::ytdlp_resolve::find_ytdlp().is_some();
-        const MAX_ATTEMPTS: u32 = 3;
+
+        // Simple flow, two tries. For YouTube the primary path is yt-dlp
+        // end-to-end (anonymous m4a — it handles its own retries / bot-check
+        // and stays current via auto-update, which is the real fix). Without
+        // yt-dlp, or for other servers, resolve a URL and stream it directly.
         let mut last_err = String::new();
         let mut done = false;
-        for attempt in 1..=MAX_ATTEMPTS {
+        for attempt in 1..=2u32 {
             if cancel_flag.load(Ordering::Relaxed) {
                 break;
             }
-
-            let is_yt = matches!(service, Some(MusicService::YtMusic));
-            // yt-dlp end-to-end is the PRIMARY path for YT downloads when it's
-            // installed: it fetches a clean m4a (playable/seekable, with a real
-            // duration and embedded cover), handles its own bot-check + retries,
-            // and downloads fragments in parallel (-N 8). The native chunked
-            // path (attempt 3) stays as a fallback for users without yt-dlp.
-            let use_ytdlp = is_yt && ytdlp_available && attempt <= 2;
-            let outcome: Result<std::path::PathBuf, String> = if use_ytdlp {
-                // A partial file from a prior attempt must not fool yt-dlp into
-                // thinking the track is already downloaded.
+            let outcome: Result<std::path::PathBuf, String> = if is_yt && ytdlp_available {
                 remove_stem_files(&dest_no_ext);
-                // Default ANONYMOUS: hammering googlevideo with many parallel
-                // signed-in downloads can bot-flag the ACCOUNT, which then
-                // breaks PLAYBACK (LOGIN_REQUIRED) mid-batch. Anonymous keeps
-                // the session clean at the cost of 128k vs Premium 256k. The
-                // `premium_downloads` opt-in passes cookies to fetch itag 141
-                // (256k) for users who accept that trade.
-                let dl_cookies = if config.peek().premium_downloads {
-                    yt_cookies.clone()
-                } else {
-                    None
-                };
-                ytdlp_download_with_progress(
-                    &id,
-                    &dest_no_ext,
-                    dl_cookies.as_deref(),
-                    &mut queue,
-                    &session_start,
-                )
-                .await
-            } else {
-                let resolved: Option<(String, &'static str, Option<String>, Option<u64>)> =
-                    if is_yt {
-                        let cookies = yt_cookies.clone().unwrap_or_default();
-                        let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-                        // HARD timeout on every resolve. The resolve chain has no
-                        // internal deadline — when YT throttles a long batch, a
-                        // hung resolve froze a worker (the "stops at ~100" bug).
-                        const RESOLVE_TIMEOUT: std::time::Duration =
-                            std::time::Duration::from_secs(90);
-                        let info = if attempt == 1 {
-                            tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream(&id))
-                                .await
-                                .ok()
-                                .and_then(|r| r.ok())
-                        } else {
-                            // A URL that 403'd is dead — never retry it from cache.
-                            tokio::time::timeout(RESOLVE_TIMEOUT, yt.get_stream_fresh(&id))
-                                .await
-                                .ok()
-                                .and_then(|r| r.ok())
-                        };
-                        let info = match info {
-                            Some(i) => Some(i),
-                            // Stored id unavailable (region/age-locked/removed)?
-                            // Search title+artist and stream the top playable
-                            // alternative — the recovery the user does by hand.
-                            None if attempt == MAX_ATTEMPTS => {
-                                eprintln!(
-                                    "Download resolve failed for {id} (YT) — trying search fallback"
-                                );
-                                tokio::time::timeout(
-                                    std::time::Duration::from_secs(120),
-                                    resolve_via_search(&yt, &title, &artist, &id),
-                                )
-                                .await
-                                .ok()
-                                .flatten()
-                            }
-                            None => None,
-                        };
-                        info.map(|info| {
-                            (
-                                info.url,
-                                info.format.extension(),
-                                Some(info.user_agent),
-                                info.content_length,
-                            )
-                        })
-                    } else {
-                        let conf = config.read();
-                        super::build_download_url(&id, &conf).map(|(u, ext)| (u, ext, None, None))
-                    };
-
-                match resolved {
-                    None => Err(if is_yt {
-                        "Could not resolve a stream — the track may be unavailable in your region, age-restricted, or yt-dlp needs updating.".to_string()
-                    } else {
-                        "Could not build a download URL for this track.".to_string()
-                    }),
-                    Some((url, ext_hint, user_agent, content_length)) => {
+                ytdlp_download_with_progress(&id, &dest_no_ext, None, &mut queue, &session_start)
+                    .await
+            } else if is_yt {
+                let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(
+                    yt_cookies.clone().unwrap_or_default(),
+                );
+                match yt.get_stream(&id).await {
+                    Ok(info) => {
                         download_with_progress(
                             &id,
-                            &url,
-                            ext_hint,
+                            &info.url,
+                            info.format.extension(),
                             &dest_no_ext,
-                            user_agent.as_deref(),
-                            content_length,
+                            Some(&info.user_agent),
+                            info.content_length,
                             &mut queue,
                             &session_start,
                             &cancel_flag,
                         )
                         .await
                     }
+                    Err(e) => Err(e),
                 }
-            };
-
-            // Integrity gate: a transfer cut off before the trailing moov atom
-            // yields a file that "downloaded" but won't decode/seek at play
-            // time. Catch it now (cheap probe) so broken files don't silently
-            // pile up — treat a bad file as a failed attempt and retry.
-            let outcome = match outcome {
-                Ok(path) if !verify_audio_file(&path) => {
-                    let _ = std::fs::remove_file(&path);
-                    Err("downloaded file failed integrity check (truncated)".to_string())
+            } else {
+                let url = {
+                    let conf = config.read();
+                    super::build_download_url(&id, &conf)
+                };
+                match url {
+                    Some((url, ext)) => {
+                        download_with_progress(
+                            &id, &url, ext, &dest_no_ext, None, None, &mut queue, &session_start,
+                            &cancel_flag,
+                        )
+                        .await
+                    }
+                    None => Err("Could not build a download URL for this track.".to_string()),
                 }
-                other => other,
             };
 
             match outcome {
                 Ok(path) => {
+                    // Write title/artist/album tags (keeping yt-dlp's embedded
+                    // cover) so the LOCAL library groups + shows the file
+                    // correctly. Without tags every download landed in one
+                    // folder-album sharing a single cover — the "all artists /
+                    // tracks show the same image" bug. album = title gives each
+                    // download its own album, so its own cover sticks.
+                    let _ = reader::write_tags(
+                        &path,
+                        &reader::models::TrackEdits {
+                            title: title.clone(),
+                            artist: artist.clone(),
+                            album: title.clone(),
+                            track_number: None,
+                            disc_number: None,
+                            cover: reader::models::CoverChange::Keep,
+                        },
+                    );
                     config
                         .write()
                         .offline_tracks
@@ -449,15 +347,6 @@ async fn download_worker(
                     }
                     clear_progress(&id);
                     done = true;
-                    SESSION_COMPLETED.fetch_add(1, Ordering::Relaxed);
-                    // A success means the IP is healthy again — clear the
-                    // escalating-backoff counter.
-                    CONSECUTIVE_RATELIMIT.store(0, Ordering::Relaxed);
-                    // No scheduled breather and no inter-track delay: anonymous
-                    // yt-dlp end-to-end with -N 8 manages its own throttling, so
-                    // the heavy custom pauses (which felt like "random pauses"
-                    // and stalls) aren't needed. We only cool down REACTIVELY if
-                    // a track actually hits a rate limit (below).
                     break;
                 }
                 Err(e) => {
@@ -465,76 +354,26 @@ async fn download_worker(
                         last_err = e;
                         break;
                     }
-                    eprintln!("Download attempt {attempt}/{MAX_ATTEMPTS} failed for {id}: {e}");
+                    eprintln!("Download attempt {attempt}/2 failed for {id}: {e}");
                     last_err = e;
-                    // Back off before the next attempt — a 403 streak usually
-                    // means we're being rate-limited right now.
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        1000 * attempt as u64,
-                    ))
-                    .await;
                 }
             }
         }
         if !done {
-            // Don't leave a truncated file behind — anything with this stem is
-            // ours (download_dest_no_ext picked a collision-free name).
             remove_stem_files(&dest_no_ext);
-            // Rate-limit-shaped failures (403/429/timeouts/no-resolve) poison
-            // the SESSION, not the track — a track failed during a throttle
-            // window would very likely succeed later. Requeue it (capped) and
-            // give the whole session a cooldown, instead of permanently
-            // failing everything that had the bad luck of being processed
-            // during the throttle. That was the "one error and the rest of
-            // the download is ruined" behavior.
-            let rate_limited = last_err.contains("403")
-                || last_err.contains("429")
-                || last_err.contains("timed out")
-                || last_err.contains("Could not resolve");
-            let cancelled = last_err == "cancelled" || cancel_flag.load(Ordering::Relaxed);
-            if rate_limited && !cancelled && requeues < 2 {
-                // Escalate the cooldown the longer the limiter keeps biting:
-                // 15s → 45s → 120s (capped). Resets after any success.
-                let streak = CONSECUTIVE_RATELIMIT.fetch_add(1, Ordering::Relaxed);
-                let cooldown = match streak {
-                    0 => 15,
-                    1 => 45,
-                    _ => 120,
-                };
-                eprintln!(
-                    "[downloads] {id} hit rate limit ({last_err}) — requeueing (attempt {}), {cooldown}s session cooldown",
-                    requeues + 1
-                );
-                set_cooldown(cooldown);
-                if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
-                    item.status = DownloadStatus::Queued;
-                    item.requeues += 1;
-                    item.error = None;
-                }
-            } else if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
+            if last_err != "cancelled"
+                && let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id)
+            {
                 item.status = DownloadStatus::Failed;
-                item.error = Some(last_err);
+                item.error = Some(if last_err.is_empty() {
+                    "Download failed".to_string()
+                } else {
+                    last_err
+                });
             }
             clear_progress(&id);
         }
     }
-}
-
-/// Cheap validity probe for a freshly downloaded audio file: it must parse and
-/// report a non-zero duration. Catches truncated/interrupted transfers (missing
-/// trailing moov atom) that "complete" but won't play. Downloads are m4a, which
-/// lofty reads; a webm from the rare native fallback that lofty can't parse is
-/// rejected and re-downloaded (cheap, and yt-dlp's m4a path usually succeeds).
-#[cfg(not(target_arch = "wasm32"))]
-fn verify_audio_file(path: &std::path::Path) -> bool {
-    use lofty::file::AudioFile;
-    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) < 4096 {
-        return false;
-    }
-    lofty::probe::Probe::open(path)
-        .and_then(|p| p.read())
-        .map(|tagged| tagged.properties().duration().as_secs() > 0)
-        .unwrap_or(false)
 }
 
 /// Largest on-disk size of any file sharing `dest_no_ext`'s stem — the growing
@@ -633,40 +472,6 @@ fn remove_stem_files(dest_no_ext: &std::path::Path) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
-}
-
-/// When a stored YT video id won't resolve (unavailable / age- or
-/// region-locked / removed), search the catalog for `title artist` and return
-/// the first alternative that DOES resolve — the same recovery the user does
-/// by hand from the search tab. Skips the id that already failed.
-#[cfg(not(target_arch = "wasm32"))]
-async fn resolve_via_search(
-    yt: &::server::ytmusic::YouTubeMusicClient,
-    title: &str,
-    artist: &str,
-    failed_id: &str,
-) -> Option<::server::ytmusic::YtStreamInfo> {
-    let query = format!("{title} {artist}");
-    let query = query.trim();
-    if query.is_empty() {
-        return None;
-    }
-    let results = yt.search_tracks(query).await.ok()?;
-    for t in results.into_iter().take(5) {
-        let vid = t
-            .path
-            .to_string_lossy()
-            .strip_prefix("ytmusic:")
-            .and_then(|s| s.split(':').next())
-            .map(|s| s.to_string());
-        let Some(vid) = vid.filter(|v| !v.is_empty() && v != failed_id) else {
-            continue;
-        };
-        if let Ok(info) = yt.get_stream(&vid).await {
-            return Some(info);
-        }
-    }
-    None
 }
 
 #[cfg(not(target_arch = "wasm32"))]

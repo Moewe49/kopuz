@@ -949,18 +949,6 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                                     }
                                 }
                             }
-                            SettingItem {
-                                title: i18n::t("premium_downloads").to_string(),
-                                control: rsx! {
-                                    ToggleSetting {
-                                        enabled: config.read().premium_downloads,
-                                        on_change: move |val| config.write().premium_downloads = val,
-                                    }
-                                }
-                            }
-                            p { class: "text-xs text-white/40 -mt-2",
-                                "{i18n::t(\"premium_downloads_hint\")}"
-                            }
                             if !cfg!(target_arch = "wasm32") {
                                 div { class: "py-2",
                                     p { class: "text-white font-medium mb-2", "{i18n::t(\"download_folder\")}" }

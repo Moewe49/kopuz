@@ -603,13 +603,6 @@ pub struct AppConfig {
     pub offline_quality: OfflineQuality,
     #[serde(default)]
     pub offline_tracks: HashMap<String, String>,
-    /// When set, downloads sign in with the YouTube cookies to fetch the
-    /// 256 kbps AAC stream (itag 141, Premium only). Off by default: signed-in
-    /// downloads can occasionally bot-flag the account under load, so this is
-    /// opt-in for users who have Premium and want the higher bitrate. Free
-    /// accounts gain nothing (141 isn't offered) so leaving it off is correct.
-    #[serde(default)]
-    pub premium_downloads: bool,
     /// Folder downloads are saved to. `None` resolves to `<Music>/Kopuz` at
     /// download time (see `server::downloads_dir`). Stored as a real, browsable
     /// path with human-readable `Artist - Title.ext` filenames.
@@ -932,7 +925,6 @@ impl Default for AppConfig {
             titlebar_mode: TitlebarMode::Custom,
             offline_quality: OfflineQuality::default(),
             offline_tracks: HashMap::new(),
-            premium_downloads: false,
             download_directory: None,
             player_bar_position: PlayerBarPosition::Bottom,
             ui_style: UiStyle::Normal,
