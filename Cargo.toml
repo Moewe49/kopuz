@@ -18,7 +18,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.7.47"
+version = "0.7.48"
 
 [workspace.dependencies]
 dioxus = { version = "0.7.9", features = [] }

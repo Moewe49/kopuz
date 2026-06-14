@@ -205,34 +205,22 @@ fn download_blocking(
         .args(["--retries", "10"])
         .args(["--fragment-retries", "10"])
         .args(["--socket-timeout", "30"])
-        // 4 fragments saturate the link without the per-IP hammering that 8
-        // caused (which bot-flagged the IP and broke playback mid-batch).
-        .args(["-N", "4"])
-        // Space the extractor requests. The bot check keys on request RATE
-        // more than volume — a ~1s gap between the player/metadata calls cuts
-        // the LOGIN_REQUIRED rate a lot at almost no throughput cost (the media
-        // transfer itself is unaffected).
-        .args(["--sleep-requests", "1"])
-        .args([
-            "--user-agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-             (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        ])
-        .arg("-f")
-        // Prefer m4a/AAC for DOWNLOADS — unlike opus-in-webm it carries a clean
-        // duration header and decodes/seeks reliably in the local player
-        // (symphonia has no Opus seeker and webm has no duration, which is why
-        // downloaded opus files showed 0:00 and wouldn't play). These are
-        // YouTube's source AAC streams — no re-encode, no quality loss:
-        //   itag 141 = 256 kbps AAC (Premium, needs cookies)
-        //   itag 140 = 128 kbps AAC (everyone)
-        // Take the highest-bitrate m4a available, then any non-HLS audio.
-        .arg(
-            "141/140/bestaudio[ext=m4a][protocol!*=m3u8]/\
-             bestaudio[protocol!*=m3u8][acodec*=mp4a]/\
-             bestaudio[protocol!*=m3u8]/bestaudio/best",
-        )
-        .args(["-o", &template]);
+        .args(["-N", "4"]);
+    if ffmpeg_available() {
+        // Extract the best audio to its native codec (.opus, Ogg) — exactly
+        // what the single-file Download tab does, which works reliably for
+        // every song. Ogg Opus carries a clean duration and seeks fine in the
+        // local player (unlike opus-in-webm), and it's higher quality than the
+        // AAC fallback. ffmpeg does the extraction.
+        cmd.args(["-x", "--audio-quality", "0"]);
+    } else {
+        // No ffmpeg → can't extract; grab a directly-playable m4a stream.
+        cmd.args([
+            "-f",
+            "bestaudio[ext=m4a][protocol!*=m3u8]/bestaudio[protocol!*=m3u8]/bestaudio/best",
+        ]);
+    }
+    cmd.args(["-o", &template]);
     // Embed the cover art so the local library shows artwork. We deliberately
     // do NOT --embed-metadata: yt-dlp would write YouTube's raw video title
     // ("… (Official Video) (4K Remaster)") which is uglier than the clean
