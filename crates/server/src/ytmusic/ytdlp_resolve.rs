@@ -201,11 +201,28 @@ fn download_blocking(
         // A leftover partial from an earlier attempt must not be mistaken
         // for a finished download.
         .arg("--force-overwrites")
+        // CRITICAL (YouTube 2026): pin a multi-client set that still serves
+        // downloadable audio-only DASH. No single client covers every video
+        // anymore — each has its own block: web/web_safari = HLS-only (no DASH,
+        // the m3u8 fragment path that dies with "Did not get any data blocks"),
+        // android = SABR-only (formats carry no URL), ios/mweb = require a GVS
+        // PO token, `tv` = DRM-protected on some videos ("only images"). `tv`
+        // and `web_embedded` together cover the gaps — every track tested
+        // resolved to a clean `251 https opus`. Listing a few specific clients
+        // (instead of yt-dlp's wide default probe) also keeps the request count
+        // down, which is what keeps a big concurrent run under the 429 ceiling.
+        .args(["--extractor-args", "youtube:player_client=tv,web_embedded"])
         .args(["--extractor-retries", "5"])
+        // Exponential backoff on the player/metadata fetch so a transient 429
+        // (the main failure mode under load) cools off (2,4,8,…s up to 60)
+        // WITHIN the attempt instead of failing the track outright.
+        .args(["--retry-sleep", "extractor:exp=2:60"])
+        // Space this process's requests a touch — with several workers running,
+        // un-spaced request bursts are exactly what trips YouTube's 429.
+        .args(["--sleep-requests", "1"])
         .args(["--retries", "10"])
         .args(["--fragment-retries", "10"])
-        .args(["--socket-timeout", "30"])
-        .args(["-N", "4"]);
+        .args(["--socket-timeout", "30"]);
     if ffmpeg_available() {
         // CRITICAL: force a NON-HLS source. YouTube's web_safari client serves
         // some audio as m3u8/HLS, whose fragment downloader intermittently dies
