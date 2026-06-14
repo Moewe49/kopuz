@@ -271,13 +271,16 @@ async fn download_worker(
         let is_yt = matches!(service, Some(MusicService::YtMusic));
         let ytdlp_available = ::server::ytmusic::ytdlp_resolve::find_ytdlp().is_some();
 
-        // Simple flow, two tries. For YouTube the primary path is yt-dlp
-        // end-to-end (anonymous m4a — it handles its own retries / bot-check
-        // and stays current via auto-update, which is the real fix). Without
-        // yt-dlp, or for other servers, resolve a URL and stream it directly.
+        // Simple flow, three tries. For YouTube the primary path is yt-dlp
+        // end-to-end (anonymous, opus via `-x` — it handles its own retries /
+        // bot-check and stays current via auto-update, which is the real fix).
+        // Without yt-dlp, or for other servers, resolve a URL and stream it
+        // directly. The 3rd try + backoff mops up the rare transient YouTube
+        // hiccup ("Did not get any data blocks" / a one-off 403) that survives
+        // the m3u8-exclusion fix.
         let mut last_err = String::new();
         let mut done = false;
-        for attempt in 1..=2u32 {
+        for attempt in 1..=3u32 {
             if cancel_flag.load(Ordering::Relaxed) {
                 break;
             }
@@ -358,8 +361,17 @@ async fn download_worker(
                         last_err = e;
                         break;
                     }
-                    eprintln!("Download attempt {attempt}/2 failed for {id}: {e}");
+                    eprintln!("Download attempt {attempt}/3 failed for {id}: {e}");
                     last_err = e;
+                    // Brief backoff before the next try — gives YouTube a moment
+                    // to recover from a transient throttle/fragment hiccup
+                    // instead of hammering the same failing endpoint instantly.
+                    if attempt < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            800 * attempt as u64,
+                        ))
+                        .await;
+                    }
                 }
             }
         }

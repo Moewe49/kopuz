@@ -207,14 +207,27 @@ fn download_blocking(
         .args(["--socket-timeout", "30"])
         .args(["-N", "4"]);
     if ffmpeg_available() {
-        // Extract the best audio to its native codec (.opus, Ogg) — exactly
-        // what the single-file Download tab does, which works reliably for
-        // every song. Ogg Opus carries a clean duration and seeks fine in the
-        // local player (unlike opus-in-webm), and it's higher quality than the
-        // AAC fallback. ffmpeg does the extraction.
+        // CRITICAL: force a NON-HLS source. YouTube's web_safari client serves
+        // some audio as m3u8/HLS, whose fragment downloader intermittently dies
+        // with "ERROR: Did not get any data blocks" — rare for a single
+        // sequential download (the Download tab), but it hit 51/287 tracks on a
+        // big playlist run because the concurrency makes YouTube hand out the
+        // throttled HLS path far more often. Progressive/DASH formats (251 opus,
+        // 140 m4a) have no fragments and can't reach that code path at all. The
+        // resolve path has always excluded m3u8 this way; the download path lost
+        // it when it switched to `-x`. Prefer opus so `-x` copies it straight
+        // out to .opus (no re-encode) — same result as the Download tab.
+        cmd.args([
+            "-f",
+            "bestaudio[protocol!*=m3u8][acodec=opus]/bestaudio[protocol!*=m3u8]/bestaudio/best",
+        ]);
+        // Extract the chosen audio to its native codec (.opus, Ogg). Ogg Opus
+        // carries a clean duration and seeks fine in the local player (unlike
+        // opus-in-webm), and it's higher quality than the AAC fallback.
         cmd.args(["-x", "--audio-quality", "0"]);
     } else {
-        // No ffmpeg → can't extract; grab a directly-playable m4a stream.
+        // No ffmpeg → can't extract; grab a directly-playable m4a stream
+        // (seekable without remux), still excluding HLS.
         cmd.args([
             "-f",
             "bestaudio[ext=m4a][protocol!*=m3u8]/bestaudio[protocol!*=m3u8]/bestaudio/best",
@@ -251,15 +264,60 @@ fn download_blocking(
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let path = stdout
+    if let Some(path) = stdout
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .next_back()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
-        .ok_or("yt-dlp finished but reported no output file")?;
-    Ok(path)
+    {
+        return Ok(path);
+    }
+    // yt-dlp exited 0 but the `after_move:filepath` print came back empty — the
+    // extract/embed postprocessor chain doesn't always emit that line. The
+    // finished file is almost always sitting right there; find it by its
+    // collision-free stem before declaring failure (this was the other half of
+    // the big-playlist failures: real downloads reported as "no output file").
+    find_downloaded_file(dest_no_ext)
+        .ok_or_else(|| "yt-dlp finished but reported no output file".to_string())
+}
+
+/// Recover the finished audio file yt-dlp wrote for `dest_no_ext`'s stem when
+/// the `after_move:filepath` print was empty. The worker cleans the directory
+/// before each attempt, so the stem is collision-free — any non-empty audio
+/// file matching it (and NOT a `.part`/`.ytdl` temp) is the real output.
+fn find_downloaded_file(dest_no_ext: &std::path::Path) -> Option<PathBuf> {
+    const AUDIO_EXTS: &[&str] = &[
+        "opus", "m4a", "mp3", "ogg", "oga", "webm", "aac", "flac", "wav", "mka",
+    ];
+    let dir = dest_no_ext.parent()?;
+    let stem = dest_no_ext.file_name()?.to_str()?;
+    let mut best: Option<(u64, PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            continue;
+        };
+        if !AUDIO_EXTS.contains(&ext.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        let matches_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s == stem)
+            .unwrap_or(false);
+        if !matches_stem {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata()
+            && meta.len() > 0
+            && best.as_ref().map(|(l, _)| meta.len() > *l).unwrap_or(true)
+        {
+            best = Some((meta.len(), path));
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 struct CookieFile {
