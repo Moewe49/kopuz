@@ -154,7 +154,7 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: armv7-linux-androideabi
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@30b5ca8b54e1dcffd9548bc87ede1531310fdc67 # v1.20.0
