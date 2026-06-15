@@ -4,6 +4,36 @@ use serde_json::Value;
 pub mod botguard;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod cdp;
+/// Mobile stub for [`cdp`]. The real module drives a headless desktop browser
+/// over the Chrome DevTools Protocol to refresh YouTube cookies — it depends on
+/// desktop-only crates (tokio-tungstenite, rookie) and a real browser, neither
+/// of which exist on a phone. Mobile signs in via the manual cookie-paste flow
+/// instead, so these never run; they exist only so the shared Settings/login
+/// call sites compile on every target without per-site `#[cfg]` gating.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod cdp {
+    use config::Browser;
+    use std::path::Path;
+    use std::time::Duration;
+
+    const UNSUPPORTED: &str =
+        "Browser auto-login isn't available on mobile — paste your cookies instead.";
+
+    pub async fn spawn_login_window(_browser: Browser, _profile: &Path) -> Result<u32, String> {
+        Err(UNSUPPORTED.to_string())
+    }
+
+    pub async fn kill_pid(_pid: u32) {}
+
+    pub async fn fetch_cookies(
+        _browser: Browser,
+        _profile: &Path,
+        _headless: bool,
+        _overall_timeout: Duration,
+    ) -> Result<String, String> {
+        Err(UNSUPPORTED.to_string())
+    }
+}
 pub mod clients;
 pub mod cookies;
 pub mod decipher;
