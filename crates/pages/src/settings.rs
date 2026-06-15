@@ -248,9 +248,9 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
         #[cfg(target_os = "android")]
         {
             let _ = (&existing, &server_id, manual);
-            error.set(None);
             player::systemint::start_yt_login();
             spawn(async move {
+                error.set(None);
                 // Poll for the captured cookies (or a cancel). ~6 min cap so a
                 // dismissed dialog never leaves a task spinning.
                 for _ in 0..1200u32 {
