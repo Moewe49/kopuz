@@ -29,6 +29,36 @@ returns "minter not running".
 Android** (player::resolve calls it). We only need to **register an Android minter** that drives
 a headless WebView running the same BgUtils JS.
 
+## ⭐ SIMPLER ALTERNATIVE — TRY THIS FIRST (may make the whole minter port unnecessary)
+
+YouTube's **TV client bypasses the PO-token requirement** (confirmed general knowledge +
+matches our earlier download fix: the `tv` / `web_embedded` clients yield clean DASH opus
+without a pot, which is why `ytdlp_resolve` downloads pin `player_client=tv,web_embedded`).
+The app already ships a TV client: `TVHTML5_SIMPLY_EMBEDDED_PLAYER` (client_id 85) in
+`crates/server/src/ytmusic/clients.rs`.
+
+So before building the headless-WebView minter, try the cheap fix: **make the Android playback
+resolver get its stream from the TV (TVHTML5) client**, which needs no content pot → no deep-
+range 403 → songs play.
+
+Steps:
+1. In `crates/server/src/ytmusic/player.rs` `resolve` (the fallback chain that currently does
+   WEB_REMIX decipher → "needs a content pot, trying ANDROID_VR" → bare clients), add/prefer a
+   `TVHTML5_SIMPLY_EMBEDDED_PLAYER` `/player` attempt **on Android (or whenever the minter is
+   unavailable / `botguard::is_available()` is false)**. Use its returned audio stream
+   (itag 251/140) URL.
+2. Verify the TV-client stream is range-playable by the app's range source: it must be
+   `https` progressive DASH (not HLS/m3u8) and need no decipher-with-pot. (Earlier `-F` showed
+   the tv client returns `251 … https … opus` — range-friendly.) If the TV `/player` returns a
+   `signatureCipher` needing nsig decipher, reuse the existing decipher path.
+3. Test on the S24: expect `[yt-player] resolved <id> … via TVHTML5…` and **no**
+   `symphonia probe error … 403`. If TV streams play through, **skip the minter port entirely.**
+
+Caveats to check on-device: TV-client streams may have a slightly lower max bitrate or need the
+same nsig decipher; confirm they don't themselves 403 on deep ranges (they shouldn't — that's
+the whole point of the TV bypass). If for some reason TV is throttled/unavailable, fall back to
+the full minter port below.
+
 ## Key existing pieces (read these first)
 
 - `crates/server/src/ytmusic/botguard.rs` — the typed channel. `MintRequest { video_id,
