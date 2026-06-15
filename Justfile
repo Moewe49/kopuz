@@ -38,7 +38,11 @@ ios_ipa_dir := "target/ipa"
 # Build the Android app (debug runtime), patch in our Kotlin sources + manifest, assemble APK.
 android-patch:
     @echo "Building Android project (dx)..."
-    dx build --package kopuz --platform android --release
+    # Explicit arm64 target: without --target, dx defaults to x86_64-linux-android
+    # (the emulator ABI), producing an APK with only lib/x86_64/*.so that won't
+    # run on any real phone (those are all arm64-v8a). aarch64 is what physical
+    # devices need; the CI installs this rustup target + the NDK linker for it.
+    dx build --package kopuz --platform android --release --target aarch64-linux-android
     @echo "Patching Kotlin sources..."
     mkdir -p {{android_release_base}}/java/com/temidaradev/kopuz {{android_release_base}}/kotlin/dev/dioxus/main
     cp -rv {{android_src}}/java/com/temidaradev/kopuz/. {{android_release_base}}/java/com/temidaradev/kopuz/
