@@ -561,3 +561,49 @@ pub fn move_task_to_back() {
         clear_jni_exception(&mut env);
     }
 }
+
+/// Open the in-app YouTube sign-in WebView (YtLogin.start marshals to the UI
+/// thread). The captured cookies come back via `nativeOnYtCookies` below.
+pub fn launch_login() {
+    init();
+    let vm = match JVM.get() {
+        Some(v) => v,
+        None => return,
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let ctx = ndk_context::android_context();
+    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let result: Result<(), jni::errors::Error> = (|| {
+        let class = find_app_class(&mut env, "com/temidaradev/kopuz/YtLogin")?;
+        env.call_static_method(
+            &class,
+            "start",
+            "(Landroid/content/Context;)V",
+            &[JValue::Object(&activity)],
+        )?
+        .v()?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        eprintln!("[android] YtLogin.start failed: {}", e);
+        clear_jni_exception(&mut env);
+    }
+}
+
+// Called from Kotlin: YtLogin.nativeOnYtCookies(String) — the captured cookie
+// jar after sign-in, or "" if the user cancelled.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_temidaradev_kopuz_YtLogin_nativeOnYtCookies(
+    mut env: JNIEnv,
+    _class: JClass,
+    cookies: JString,
+) {
+    let s: String = match env.get_string(&cookies) {
+        Ok(v) => v.into(),
+        Err(_) => String::new(),
+    };
+    super::set_yt_login_result(s);
+}

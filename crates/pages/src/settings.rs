@@ -241,6 +241,34 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 srv.map(|s| s.yt_manual).unwrap_or(false),
             )
         };
+        // Android has no managed desktop browser to drive over CDP. Instead we
+        // open an in-app WebView sign-in (player::systemint::start_yt_login →
+        // YtLogin.kt), then adopt the cookies it captures — stored as a manual
+        // session that the HTTP keepalive keeps warm.
+        #[cfg(target_os = "android")]
+        {
+            let _ = (&existing, &server_id, manual);
+            error.set(None);
+            player::systemint::start_yt_login();
+            spawn(async move {
+                // Poll for the captured cookies (or a cancel). ~6 min cap so a
+                // dismissed dialog never leaves a task spinning.
+                for _ in 0..1200u32 {
+                    utils::sleep(std::time::Duration::from_millis(300)).await;
+                    match player::systemint::take_yt_login_result() {
+                        Some(c) if !c.trim().is_empty() => {
+                            persist_yt_session(config, error, c, browser, true);
+                            return;
+                        }
+                        Some(_) => return, // user backed out
+                        None => {}
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
         let mut report = move |msg: String| {
             error.set(Some(msg.clone()));
             ctrl.playback_error.set(Some(msg));
@@ -266,6 +294,7 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                 Err(e) => report(format!("YT Music sign-in failed ({browser}): {e}")),
             }
         });
+        }
     };
 
     // "Done — I've signed in" handler: close the login window, then read the

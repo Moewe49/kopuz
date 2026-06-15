@@ -385,44 +385,58 @@ fn ServerServiceFields(
                             }
                         }
                     },
-                    YtAuthMethod::BrowserSignin => rsx! {
-                        p { class: "text-xs text-white/60",
-                            "Sign in once: kopuz opens a small browser window (its own private profile — your normal browsing is untouched). After that, kopuz keeps you signed in automatically by refreshing the session invisibly in the background on each start — no window, no re-pasting, until you actually log out. Pick which installed browser to use."
-                        }
-                        select {
-                            onchange: move |e| {
-                                if let Some(b) = Browser::from_id(&e.value()) {
-                                    yt_browser.set(b);
-                                }
-                            },
-                            onkeydown: move |e| e.stop_propagation(),
-                            for browser in Browser::ALL.iter().copied() {
-                                option {
-                                    value: "{browser.id()}",
-                                    selected: yt_browser() == browser,
-                                    "{browser.label()}"
+                    YtAuthMethod::BrowserSignin => {
+                        // Android has no desktop browser to pick or detect — the
+                        // connect button opens an in-app WebView sign-in instead,
+                        // so we just explain that rather than showing a browser
+                        // picker + "browser not found".
+                        #[cfg(target_os = "android")]
+                        let el = rsx! {
+                            p { class: "text-xs text-white/60",
+                                "Sign in once, right here in the app: kopuz opens the Google / YouTube sign-in, captures your session, and keeps you signed in automatically in the background — no cookies to copy or paste."
+                            }
+                        };
+                        #[cfg(not(target_os = "android"))]
+                        let el = rsx! {
+                            p { class: "text-xs text-white/60",
+                                "Sign in once: kopuz opens a small browser window (its own private profile — your normal browsing is untouched). After that, kopuz keeps you signed in automatically by refreshing the session invisibly in the background on each start — no window, no re-pasting, until you actually log out. Pick which installed browser to use."
+                            }
+                            select {
+                                onchange: move |e| {
+                                    if let Some(b) = Browser::from_id(&e.value()) {
+                                        yt_browser.set(b);
+                                    }
+                                },
+                                onkeydown: move |e| e.stop_propagation(),
+                                for browser in Browser::ALL.iter().copied() {
+                                    option {
+                                        value: "{browser.id()}",
+                                        selected: yt_browser() == browser,
+                                        "{browser.label()}"
+                                    }
                                 }
                             }
-                        }
-                        // Tell the user immediately whether the chosen browser
-                        // will actually launch, instead of a dead-end error
-                        // after they commit.
-                        {
-                            #[cfg(not(target_arch = "wasm32"))]
+                            // Tell the user immediately whether the chosen browser
+                            // will actually launch, instead of a dead-end error
+                            // after they commit.
                             {
-                                let sel = yt_browser();
-                                let installed = ::server::ytmusic::isolated_profile::is_browser_installed(sel);
-                                if installed {
-                                    rsx! { p { class: "text-xs text-emerald-300 mt-1",
-                                        "✓ {sel.label()} found — auto-login will work." } }
-                                } else {
-                                    rsx! { p { class: "text-xs text-rose-300 mt-1",
-                                        "✗ {sel.label()} not found. Install Chrome, Edge, or Brave — or pick an installed one above. (You can also use the cookie-paste method.)" } }
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    let sel = yt_browser();
+                                    let installed = ::server::ytmusic::isolated_profile::is_browser_installed(sel);
+                                    if installed {
+                                        rsx! { p { class: "text-xs text-emerald-300 mt-1",
+                                            "✓ {sel.label()} found — auto-login will work." } }
+                                    } else {
+                                        rsx! { p { class: "text-xs text-rose-300 mt-1",
+                                            "✗ {sel.label()} not found. Install Chrome, Edge, or Brave — or pick an installed one above. (You can also use the cookie-paste method.)" } }
+                                    }
                                 }
+                                #[cfg(target_arch = "wasm32")]
+                                { rsx! {} }
                             }
-                            #[cfg(target_arch = "wasm32")]
-                            { rsx! {} }
-                        }
+                        };
+                        el
                     },
                 }
 

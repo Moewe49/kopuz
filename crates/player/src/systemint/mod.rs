@@ -37,6 +37,40 @@ pub fn get_android_music_dir() -> Option<String> {
     None
 }
 
+// --- In-app YouTube sign-in (Android WebView) -----------------------------------
+// A phone has no managed desktop browser to drive over CDP, so on Android we host
+// our own WebView (see android-src/.../YtLogin.kt) for the one-time Google/YT
+// sign-in and read the cookies out of Android's CookieManager. The captured jar
+// feeds the same `persist_yt_session` path the desktop browser-login uses.
+use std::sync::Mutex;
+
+static YT_LOGIN_RESULT: Mutex<Option<String>> = Mutex::new(None);
+
+/// Begin the in-app YouTube sign-in. On Android this opens the WebView sign-in
+/// dialog; poll [`take_yt_login_result`] for the captured cookies. No-op on
+/// desktop, which uses the managed-browser flow instead.
+pub fn start_yt_login() {
+    if let Ok(mut slot) = YT_LOGIN_RESULT.lock() {
+        *slot = None;
+    }
+    #[cfg(target_os = "android")]
+    android::launch_login();
+}
+
+/// Poll the in-app sign-in result: `None` while the user is still signing in,
+/// `Some(cookies)` once captured, or `Some("")` if they backed out.
+pub fn take_yt_login_result() -> Option<String> {
+    YT_LOGIN_RESULT.lock().ok().and_then(|mut s| s.take())
+}
+
+/// Delivered from the Android WebView via JNI when sign-in completes/cancels.
+#[cfg(target_os = "android")]
+pub(crate) fn set_yt_login_result(cookies: String) {
+    if let Ok(mut slot) = YT_LOGIN_RESULT.lock() {
+        *slot = Some(cookies);
+    }
+}
+
 // --- Event-driven wakes for the background loops ---------------------------------
 // Let the player/back loops sleep on a long interval while idle instead of busy-polling
 // at 10Hz, then wake them the instant something happens (media command, track finished,
