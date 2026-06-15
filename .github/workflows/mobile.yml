@@ -31,7 +31,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: armv7-linux-androideabi
+          targets: aarch64-linux-android
 
       - uses: Swatinem/rust-cache@v2
 
