@@ -1,0 +1,30 @@
+# Drop-in replacement for `rustls-platform-verifier`, applied via
+# `[patch.crates-io]` in the workspace root.
+#
+# Why: the upstream crate's Android certificate verifier calls into the JVM and
+# REQUIRES `rustls_platform_verifier::android::init_*` to be run (plus a Kotlin
+# component) before any TLS handshake. reqwest 0.13's `rustls` feature wires this
+# verifier in for every client, and our Dioxus app never initializes it — so the
+# first HTTPS request on Android panicked in `Verifier::verify_server_cert`
+# (`expect("Expect rustls-platform-verifier to be initialized")`) and aborted.
+#
+# This shim swaps that JVM-backed verifier for a pure-Rust WebPKI verifier using
+# the bundled Mozilla roots (`webpki-roots`) — no JNI, works on every target. On
+# desktop it ALSO loads the OS trust store so private/enterprise CAs (e.g. a
+# self-hosted Jellyfin/Subsonic server) keep validating exactly as before.
+[package]
+name = "rustls-platform-verifier"
+version = "0.7.0"
+edition = "2021"
+description = "WebPKI-roots shim replacing the JVM-backed Android verifier (see comment)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+webpki-roots = "1"
+
+# Desktop only: fold the OS trust store in alongside the bundled roots so custom
+# CAs still work. Android has no usable file-based store for apps, so there we
+# rely on the bundled Mozilla roots — which is the whole point of this shim.
+[target.'cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))'.dependencies]
+rustls-native-certs = "0.8"

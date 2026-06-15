@@ -15,7 +15,15 @@ members = [
    "crates/i18n",
    "crates/radio",
 ]
+# The TLS-verifier shim is a `[patch]` crate, not a workspace member.
+exclude = ["vendor/rustls-platform-verifier"]
 resolver = "3"
+
+# Replace rustls-platform-verifier with a WebPKI-roots shim so HTTPS works on
+# Android (the real crate's JVM verifier panics unless JNI-initialized — which
+# reqwest never does in our app). See vendor/rustls-platform-verifier/Cargo.toml.
+[patch.crates-io]
+rustls-platform-verifier = { path = "vendor/rustls-platform-verifier" }
 
 [workspace.package]
 version = "0.7.53"
