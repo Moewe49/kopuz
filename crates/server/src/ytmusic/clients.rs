@@ -65,6 +65,28 @@ pub const TVHTML5_SIMPLY_EMBEDDED_PLAYER: YouTubeClient = YouTubeClient {
     is_embedded: true,
 };
 
+/// Current `TVHTML5` (Cobalt) client — yt-dlp's `tv`. **PO-token-exempt:**
+/// YouTube doesn't gate the TV client behind BotGuard/DroidGuard, so its
+/// deciphered googlevideo URLs survive deep/seek ranges with no content pot.
+/// This is what makes anonymous + Android playback work without the (desktop-
+/// only) webview minter. NB: the old `TVHTML5_SIMPLY_EMBEDDED_PLAYER` 2.0 is
+/// deprecated — its `/player` now returns "no longer supported in this app".
+pub const TVHTML5: YouTubeClient = YouTubeClient {
+    client_name: "TVHTML5",
+    client_version: "7.20260114.12.00",
+    client_id: "7",
+    user_agent: "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold \
+                 (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)",
+    os_name: "",
+    os_version: "",
+    device_make: "",
+    device_model: "",
+    android_sdk_version: None,
+    login_supported: true,
+    use_signature_timestamp: true,
+    is_embedded: false,
+};
+
 pub const ANDROID_VR_1_43_32: YouTubeClient = YouTubeClient {
     client_name: "ANDROID_VR",
     client_version: "1.43.32",

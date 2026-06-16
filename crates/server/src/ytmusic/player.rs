@@ -19,7 +19,9 @@ use serde_json::Value;
 use tokio::sync::OnceCell;
 
 use super::botguard;
-use super::clients::{ANDROID_VR_1_61_48, STREAM_FALLBACK_CLIENTS, WEB_REMIX, YouTubeClient};
+use super::clients::{
+    ANDROID_VR_1_61_48, STREAM_FALLBACK_CLIENTS, TVHTML5, WEB_REMIX, YouTubeClient,
+};
 use super::decipher;
 use super::innertube::{self, PlayerExtras};
 
@@ -156,7 +158,23 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
             (_, Err(e)) => format!("visitor_data: {e}"),
         }
     };
-    eprintln!("[yt-player] ANDROID_VR+pot failed ({last_err}) — trying bare clients");
+    eprintln!("[yt-player] ANDROID_VR+pot failed ({last_err})");
+
+    // Pot-free path: the TV (TVHTML5 embedded) client is **exempt from the
+    // content PO token** — its deciphered stream survives deep/seek ranges with
+    // no minter, unlike the non-Premium WEB_REMIX 251 and the bare ANDROID_VR
+    // URLs. This is what makes anonymous + Android playback work without porting
+    // the webview minter. Tried before the bare clients (which still 403 deep).
+    match try_tv_decipher(video_id, cookies).await {
+        Ok(info) => {
+            eprintln!("[yt-player] {video_id} resolved via TVHTML5 (pot-free, deep-range safe)");
+            return Ok(info);
+        }
+        Err(e) => {
+            last_err = format!("TVHTML5: {e}");
+            eprintln!("[yt-player] TVHTML5 fallback failed ({e}) — trying bare clients");
+        }
+    }
 
     for client in STREAM_FALLBACK_CLIENTS {
         let cookies_for = if client.login_supported { cookies } else { None };
@@ -364,6 +382,24 @@ fn pick_best_audio(json: &Value) -> Option<&Value> {
         .max_by_key(|f| f.get("bitrate").and_then(|v| v.as_u64()).unwrap_or(0))
 }
 
+/// Like [`pick_best_audio`] but skips **SABR-only** formats — ones with neither
+/// `url` nor `signatureCipher`. The TV client (and others under YouTube's
+/// SABR-only experiment) can return such formats; the range-source player can't
+/// use them, so we pick the best one that actually carries a fetchable URL.
+fn pick_best_fetchable_audio(json: &Value) -> Option<&Value> {
+    json.pointer("/streamingData/adaptiveFormats")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .filter(|f| {
+            f.get("mimeType")
+                .and_then(|v| v.as_str())
+                .map(|m| m.starts_with("audio/"))
+                .unwrap_or(false)
+                && (f.get("url").is_some() || f.get("signatureCipher").is_some())
+        })
+        .max_by_key(|f| f.get("bitrate").and_then(|v| v.as_u64()).unwrap_or(0))
+}
+
 /// Build a `YtStreamInfo` from an already-resolved (deciphered) URL plus the
 /// format + player JSON it came from.
 fn stream_info_from(
@@ -437,6 +473,43 @@ async fn try_native_decipher(
     let url = decipher::deciphered_url(&player.0, fmt).await?;
     stream_info_from(&json, fmt, url, WEB_REMIX)
         .ok_or_else(|| "deciphered format missing fields".to_string())
+}
+
+/// TVHTML5 embedded + native decipher. The TV client is **exempt from the
+/// content PO token** (it bypasses BotGuard/DroidGuard), so unlike the
+/// non-Premium WEB_REMIX 251 its deciphered googlevideo URL does **not** 403 on
+/// deep/seek ranges. The decipher engine (`player_js`/`deciphered_url`) is
+/// per-video and client-agnostic, so this is just `try_native_decipher` pointed
+/// at the TV client — the pot-free fallback for anonymous + Android playback.
+async fn try_tv_decipher(video_id: &str, cookies: Option<&str>) -> Result<YtStreamInfo, String> {
+    let player = decipher::player_js(video_id).await?;
+    // visitorData is needed alongside the TV context — without it YouTube
+    // bot-checks the request ("sign in to confirm you're not a bot"), exactly
+    // like yt-dlp's tv client, which always carries a visitor token.
+    let visitor = visitor_data(None).await.ok();
+    let extras = PlayerExtras {
+        signature_timestamp: Some(player.1),
+        visitor_data: visitor,
+        ..Default::default()
+    };
+    // Pass the signed-in cookies (the TV client supports them): an anonymous TV
+    // request gets bot-checked ("sign in to confirm you're not a bot"), whereas
+    // the authenticated one sails through — and TV stays PO-token-exempt either
+    // way, so the stream still survives deep ranges.
+    let json = innertube::player(TVHTML5, video_id, cookies, extras).await?;
+    let status = PlayabilityStatus::from_response(&json);
+    if status != PlayabilityStatus::Ok {
+        return Err(format!(
+            "TVHTML5 playability {}: {}",
+            status.as_str(),
+            playability_reason(&json)
+        ));
+    }
+    let fmt = pick_best_fetchable_audio(&json)
+        .ok_or("TVHTML5 returned only SABR-only audio formats")?;
+    let url = decipher::deciphered_url(&player.0, fmt).await?;
+    stream_info_from(&json, fmt, url, TVHTML5)
+        .ok_or_else(|| "deciphered TV format missing fields".to_string())
 }
 
 #[cfg(test)]

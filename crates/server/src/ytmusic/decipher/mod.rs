@@ -105,11 +105,18 @@ async fn solve(base_js: &str, requests: &[Value]) -> Result<Value, String> {
     let data = json!({ "type": "player", "player": base_js, "requests": requests });
     let data_json = serde_json::to_string(&data).map_err(|e| format!("encode solver data: {e}"))?;
     // yt_dlp_ejs sets `globalThis.location = new URL(".../watch?v=yt-dlp-wins")`
-    // as environment setup. Harmless in node/deno, but in a real WebView
-    // globalThis === window, so it NAVIGATES (out to the browser). Rename the
-    // write to a dummy property — the extraction passes the URL explicitly and
-    // doesn't read window.location (verified: decipher works without it).
-    let core = CORE.replace("globalThis.location =", "globalThis.__kopuz_loc =");
+    // as environment setup — some player-JS nsig functions read
+    // `location.hostname` (e.g. the TV client's), and without it the solver
+    // throws "Cannot read properties of undefined (reading 'hostname')". But in
+    // a real WebView globalThis === window, so writing location NAVIGATES the
+    // page out. Guard the write so it only fires when there's no location yet:
+    // the subprocess (deno/node, location undefined) gets the stub URL, while
+    // the WebView keeps its real `window.location` (which already has a
+    // hostname) untouched — fixing the deciphers for both engines.
+    let core = CORE.replace(
+        "globalThis.location =",
+        "if(!globalThis.location)globalThis.location =",
+    );
     // `print` (JSC/qjs) or `console.log` (node/deno/bun) — whichever exists.
     let program = format!(
         "{LIB}\nObject.assign(globalThis, lib);\n{core}\n\
