@@ -71,6 +71,33 @@ pub(crate) fn set_yt_login_result(cookies: String) {
     }
 }
 
+// --- Android PoToken minter (headless System WebView) ---------------------------
+// On a phone there's no managed desktop browser and no wry minter, so we host an
+// offscreen System WebView (PotMinter.kt) that runs the same BgUtils BotGuard JS
+// and mints a content PO token per video. The kopuz crate's Android driver wires
+// these into `server::ytmusic::botguard`.
+
+/// Stand up the Android BgUtils minter WebView with the shared document-start
+/// init `script`. No-op off Android (desktop uses the wry minter).
+pub fn pot_minter_init(script: &str) {
+    #[cfg(target_os = "android")]
+    android::pot_minter_init(script);
+    #[cfg(not(target_os = "android"))]
+    let _ = script;
+}
+
+/// Mint a content PO token for `video_id` via the Android WebView minter. Errors
+/// off Android.
+pub async fn mint_pot(video_id: &str) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    return android::mint_pot(video_id).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = video_id;
+        Err("PoToken minter is Android-only".to_string())
+    }
+}
+
 // --- Event-driven wakes for the background loops ---------------------------------
 // Let the player/back loops sleep on a long interval while idle instead of busy-polling
 // at 10Hz, then wake them the instant something happens (media command, track finished,

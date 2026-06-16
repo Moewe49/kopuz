@@ -38,6 +38,12 @@ use windows::Win32::Foundation::HWND;
 
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 mod pot_minter;
+// Shared BgUtils minter JS (desktop wry + Android System WebView).
+#[cfg(not(target_arch = "wasm32"))]
+mod pot_minter_script;
+// Android PoToken minter driver (headless System WebView via JNI).
+#[cfg(target_os = "android")]
+mod pot_minter_android;
 mod queue_state;
 mod web_storage;
 #[cfg(target_os = "windows")]
@@ -1117,6 +1123,19 @@ fn App() -> Element {
             .is_some_and(|s| s.service == config::MusicService::YtMusic);
         if yt_active {
             crate::pot_minter::request();
+        }
+    });
+    // Android: same trigger, but start the headless-WebView PoToken minter driver
+    // (the desktop wry minter is unavailable). Idempotent — safe to fire repeatedly.
+    #[cfg(target_os = "android")]
+    use_effect(move || {
+        let yt_active = config
+            .read()
+            .server
+            .as_ref()
+            .is_some_and(|s| s.service == config::MusicService::YtMusic);
+        if yt_active {
+            crate::pot_minter_android::start();
         }
     });
     #[allow(unused_variables)]

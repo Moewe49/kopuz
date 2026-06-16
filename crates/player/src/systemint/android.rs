@@ -1,7 +1,10 @@
 use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+use tokio::sync::oneshot;
 
 // Set from the JNI thread when the hardware/gesture back is pressed; drained on the
 // runtime by take_back_pressed(). Decoupled because dioxus signals can only be touched
@@ -606,4 +609,147 @@ pub extern "system" fn Java_com_temidaradev_kopuz_YtLogin_nativeOnYtCookies(
         Err(_) => String::new(),
     };
     super::set_yt_login_result(s);
+}
+
+// --- Headless PoToken minter (BgUtils in an Android System WebView) --------------
+// The desktop wry minter is unavailable on a phone; instead PotMinter.kt hosts an
+// offscreen System WebView at the music.youtube.com origin that runs the SAME
+// BgUtils BotGuard JS and mints a content PO token per video. These functions are
+// the JNI bridge: `pot_minter_init` stands the WebView up, `mint_pot` dispatches a
+// per-track mint and awaits the reply, and `nativeOnPot` delivers it back.
+
+static POT_INIT_DONE: AtomicBool = AtomicBool::new(false);
+static POT_REQ_ID: AtomicU64 = AtomicU64::new(1);
+static POT_PENDING: OnceLock<Mutex<HashMap<u64, oneshot::Sender<Result<String, String>>>>> =
+    OnceLock::new();
+
+fn pot_pending() -> &'static Mutex<HashMap<u64, oneshot::Sender<Result<String, String>>>> {
+    POT_PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Stand up the headless minter WebView once, injecting `script` (the shared
+/// BgUtils init script) at document-start. Idempotent.
+pub fn pot_minter_init(script: &str) {
+    if POT_INIT_DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    init();
+    let vm = match JVM.get() {
+        Some(v) => v,
+        None => {
+            POT_INIT_DONE.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(e) => e,
+        Err(_) => {
+            POT_INIT_DONE.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+    let ctx = ndk_context::android_context();
+    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let result: Result<(), jni::errors::Error> = (|| {
+        let jscript = env.new_string(script)?;
+        let class = find_app_class(&mut env, "com/temidaradev/kopuz/PotMinter")?;
+        env.call_static_method(
+            &class,
+            "init",
+            "(Landroid/content/Context;Ljava/lang/String;)V",
+            &[JValue::Object(&activity), JValue::Object(&jscript)],
+        )?
+        .v()?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        eprintln!("[android] PotMinter.init failed: {}", e);
+        clear_jni_exception(&mut env);
+        POT_INIT_DONE.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Mint a content PO token for `video_id` via the WebView; awaits the reply.
+pub async fn mint_pot(video_id: &str) -> Result<String, String> {
+    let id = POT_REQ_ID.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = oneshot::channel();
+    if let Ok(mut m) = pot_pending().lock() {
+        m.insert(id, tx);
+    }
+    // Sanitize to the videoId charset before crossing into the JS template.
+    let vid: String = video_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect();
+    pot_minter_mint_jni(&vid, id);
+    match tokio::time::timeout(Duration::from_secs(15), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => {
+            if let Ok(mut m) = pot_pending().lock() {
+                m.remove(&id);
+            }
+            Err("PotMinter dropped the reply".to_string())
+        }
+        Err(_) => {
+            if let Ok(mut m) = pot_pending().lock() {
+                m.remove(&id);
+            }
+            Err("PotMinter mint timed out (webview not ready)".to_string())
+        }
+    }
+}
+
+fn pot_minter_mint_jni(video_id: &str, req_id: u64) {
+    let vm = match JVM.get() {
+        Some(v) => v,
+        None => return,
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let result: Result<(), jni::errors::Error> = (|| {
+        let jvid = env.new_string(video_id)?;
+        let class = find_app_class(&mut env, "com/temidaradev/kopuz/PotMinter")?;
+        env.call_static_method(
+            &class,
+            "mint",
+            "(Ljava/lang/String;J)V",
+            &[JValue::Object(&jvid), JValue::Long(req_id as i64)],
+        )?
+        .v()?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        eprintln!("[android] PotMinter.mint failed: {}", e);
+        clear_jni_exception(&mut env);
+    }
+}
+
+// Called from Kotlin: PotMinter.nativeOnPot(reqId, pot, err) — a non-empty pot is
+// success; otherwise `err` carries the JS error/stack.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_temidaradev_kopuz_PotMinter_nativeOnPot(
+    mut env: JNIEnv,
+    _class: JClass,
+    req_id: jni::sys::jlong,
+    pot: JString,
+    err: JString,
+) {
+    let pot_s: String = env.get_string(&pot).map(|s| s.into()).unwrap_or_default();
+    let err_s: String = env.get_string(&err).map(|s| s.into()).unwrap_or_default();
+    let result = if !pot_s.is_empty() {
+        Ok(pot_s)
+    } else if !err_s.is_empty() {
+        Err(err_s)
+    } else {
+        Err("mint failed".to_string())
+    };
+    if let Some(tx) = pot_pending()
+        .lock()
+        .ok()
+        .and_then(|mut m| m.remove(&(req_id as u64)))
+    {
+        let _ = tx.send(result);
+    }
 }
