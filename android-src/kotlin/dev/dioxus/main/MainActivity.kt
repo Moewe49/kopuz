@@ -33,7 +33,11 @@ class MainActivity : WryActivity() {
     private fun enableEdgeToEdge() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
+        // Tint the nav bar to the player-bar colour (#121212) instead of transparent.
+        // The WebView is inset above the nav bar (no viewport-fit=cover → env()=0), so
+        // a transparent nav bar showed the black window background as a strip below the
+        // player bar. Matching it to the bar makes them merge — no black gap.
+        window.navigationBarColor = Color.parseColor("#121212")
         // Stop the system painting a translucent gray contrast scrim behind the bars,
         // so the dark UI runs truly edge-to-edge and merges with the in-app header.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
