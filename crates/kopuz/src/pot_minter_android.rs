@@ -18,9 +18,10 @@ use crate::pot_minter_script::init_script;
 static STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Start the minter driver once: register the botguard channel, bring up the
-/// WebView, and drain mint requests to it. Idempotent — safe to call from the
-/// reactive trigger on every config change.
-pub fn start() {
+/// WebView (signed in with `cookies` to skip the consent wall), and drain mint
+/// requests to it. Idempotent — safe to call from the reactive trigger on every
+/// config change.
+pub fn start(cookies: String) {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -31,7 +32,7 @@ pub fn start() {
     }
     // Bring the WebView up now so the BotGuard integrity token pre-warms before
     // the first track resolves (mirrors the desktop minter's warm-up).
-    player::systemint::pot_minter_init(&init_script());
+    player::systemint::pot_minter_init(&init_script(), &cookies);
     // Drain mint requests on the Dioxus runtime (tokio-backed, so the bridge's
     // mint timeout works). Serialized — a music queue resolves tracks roughly in
     // order and a warm minter mints sub-second, so one-at-a-time is plenty.

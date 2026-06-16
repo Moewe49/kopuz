@@ -1126,16 +1126,21 @@ fn App() -> Element {
         }
     });
     // Android: same trigger, but start the headless-WebView PoToken minter driver
-    // (the desktop wry minter is unavailable). Idempotent — safe to fire repeatedly.
+    // (the desktop wry minter is unavailable). Pass the YT cookies so the minter
+    // WebView is signed in and skips the consent wall. Idempotent.
     #[cfg(target_os = "android")]
     use_effect(move || {
-        let yt_active = config
-            .read()
-            .server
-            .as_ref()
-            .is_some_and(|s| s.service == config::MusicService::YtMusic);
-        if yt_active {
-            crate::pot_minter_android::start();
+        let cookies = {
+            let cfg = config.read();
+            match cfg.server.as_ref() {
+                Some(s) if s.service == config::MusicService::YtMusic => {
+                    Some(s.access_token.clone().unwrap_or_default())
+                }
+                _ => None,
+            }
+        };
+        if let Some(cookies) = cookies {
+            crate::pot_minter_android::start(cookies);
         }
     });
     #[allow(unused_variables)]

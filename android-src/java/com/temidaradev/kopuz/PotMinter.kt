@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.webkit.ConsoleMessage
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -47,13 +48,13 @@ object PotMinter {
     @Volatile private var webView: WebView? = null
 
     @JvmStatic
-    fun init(context: Context, script: String) {
+    fun init(context: Context, script: String, cookies: String) {
         if (webView != null) return
-        Handler(Looper.getMainLooper()).post { setup(context, script) }
+        Handler(Looper.getMainLooper()).post { setup(context, script, cookies) }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun setup(context: Context, script: String) {
+    private fun setup(context: Context, script: String, cookies: String) {
         if (webView != null) return
         val web = WebView(context)
         web.settings.apply {
@@ -61,6 +62,25 @@ object PotMinter {
             domStorageEnabled = true
             userAgentString = DESKTOP_UA
         }
+
+        // Sign the WebView in with the user's YouTube cookies BEFORE loading.
+        // Anonymous, it lands on YouTube's EU consent wall (consent.youtube.com)
+        // instead of music.youtube.com, so our document-start script (scoped to
+        // the music.youtube.com origin) never injects and BgUtils never sets up.
+        // A signed-in session skips the wall and loads music.youtube.com directly.
+        val cm = CookieManager.getInstance()
+        cm.setAcceptCookie(true)
+        cm.setAcceptThirdPartyCookies(web, true)
+        if (cookies.isNotBlank()) {
+            for (pair in cookies.split(";")) {
+                val p = pair.trim()
+                if (p.isNotEmpty()) {
+                    cm.setCookie("https://music.youtube.com", "$p; Domain=.youtube.com; Path=/; Secure")
+                }
+            }
+            cm.flush()
+        }
+
         web.addJavascriptInterface(Bridge(), "kopuzIpc")
 
         // Surface page console + load lifecycle to logcat so on-device debugging

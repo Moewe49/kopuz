@@ -628,8 +628,9 @@ fn pot_pending() -> &'static Mutex<HashMap<u64, oneshot::Sender<Result<String, S
 }
 
 /// Stand up the headless minter WebView once, injecting `script` (the shared
-/// BgUtils init script) at document-start. Idempotent.
-pub fn pot_minter_init(script: &str) {
+/// BgUtils init script) at document-start and signing it in with `cookies` (so
+/// it skips YouTube's EU consent wall and loads music.youtube.com). Idempotent.
+pub fn pot_minter_init(script: &str, cookies: &str) {
     if POT_INIT_DONE.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -652,12 +653,17 @@ pub fn pot_minter_init(script: &str) {
     let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
     let result: Result<(), jni::errors::Error> = (|| {
         let jscript = env.new_string(script)?;
+        let jcookies = env.new_string(cookies)?;
         let class = find_app_class(&mut env, "com/temidaradev/kopuz/PotMinter")?;
         env.call_static_method(
             &class,
             "init",
-            "(Landroid/content/Context;Ljava/lang/String;)V",
-            &[JValue::Object(&activity), JValue::Object(&jscript)],
+            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+            &[
+                JValue::Object(&activity),
+                JValue::Object(&jscript),
+                JValue::Object(&jcookies),
+            ],
         )?
         .v()?;
         Ok(())

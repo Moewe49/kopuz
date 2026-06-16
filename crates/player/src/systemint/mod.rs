@@ -78,12 +78,15 @@ pub(crate) fn set_yt_login_result(cookies: String) {
 // these into `server::ytmusic::botguard`.
 
 /// Stand up the Android BgUtils minter WebView with the shared document-start
-/// init `script`. No-op off Android (desktop uses the wry minter).
-pub fn pot_minter_init(script: &str) {
+/// init `script`, signed in with `cookies` (to skip the consent wall). No-op off
+/// Android (desktop uses the wry minter).
+pub fn pot_minter_init(script: &str, cookies: &str) {
     #[cfg(target_os = "android")]
-    android::pot_minter_init(script);
+    android::pot_minter_init(script, cookies);
     #[cfg(not(target_os = "android"))]
-    let _ = script;
+    {
+        let _ = (script, cookies);
+    }
 }
 
 /// Mint a content PO token for `video_id` via the Android WebView minter. Errors
