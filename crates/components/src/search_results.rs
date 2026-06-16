@@ -133,6 +133,7 @@ pub fn SearchResults(
                                 let track_menu = track.clone();
                                 let track_add = track.clone();
                                 let track_queue = track.clone();
+                                let track_play = track.clone();
                                 let track_delete = track.clone();
                                 let queue_source = search_queue.clone();
                                 let matches_current_path = currently_playing_path.as_ref() == Some(&track.path);
@@ -198,8 +199,30 @@ pub fn SearchResults(
                                             }
                                         },
                                         on_play: move |_| {
-                                            queue.set(queue_source.clone());
-                                            ctrl.play_track(idx);
+                                            // YT Music: play the chosen song and seed its
+                                            // "song radio" instead of queuing every (often
+                                            // near-duplicate) search result.
+                                            let yt_video_id = {
+                                                let p = track_play.path.to_string_lossy();
+                                                p.strip_prefix("ytmusic:")
+                                                    .and_then(|rest| rest.split(':').next())
+                                                    .filter(|s| !s.is_empty())
+                                                    .map(|s| s.to_string())
+                                            };
+                                            match yt_video_id {
+                                                Some(vid) if config.peek().autoradio => {
+                                                    play_yt_song_radio(
+                                                        ctrl,
+                                                        config,
+                                                        track_play.clone(),
+                                                        vid,
+                                                    );
+                                                }
+                                                _ => {
+                                                    queue.set(queue_source.clone());
+                                                    ctrl.play_track(idx);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -250,4 +273,54 @@ pub fn SearchResults(
             }
         }
     }
+}
+
+/// Play one YT Music song and seed its "song radio" (the RDAMVM mix) as the
+/// continuation. Playing a single search result used to queue every — often
+/// near-duplicate — result; instead we play the chosen song and follow it with
+/// a varied radio in the same vein. The seed starts instantly; the mix is
+/// fetched in the background and appended when ready, so playback isn't blocked
+/// on the network. YT Music tracks only (the mix endpoint is YT-specific).
+fn play_yt_song_radio(
+    mut ctrl: PlayerController,
+    config: Signal<AppConfig>,
+    seed: Track,
+    video_id: String,
+) {
+    ctrl.play_queue_linear(vec![seed]);
+    let cookies = config
+        .peek()
+        .server
+        .as_ref()
+        .and_then(|s| s.access_token.clone())
+        .unwrap_or_default();
+    spawn(async move {
+        let yt = server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+        let Ok(mut tracks) = yt.start_mix(&video_id).await else {
+            return;
+        };
+        // Race guard: if the user started something else while the mix loaded,
+        // don't graft the radio onto an unrelated queue.
+        let still_seed = {
+            let idx = *ctrl.current_queue_index.peek();
+            ctrl.get_track_at(idx)
+                .map(|t| t.path.to_string_lossy().contains(&video_id))
+                .unwrap_or(false)
+        };
+        if !still_seed {
+            return;
+        }
+        // RDAMVM mixes begin WITH the seed (now playing) — drop it so the
+        // continuation is fresh tracks, not the song already on.
+        if tracks
+            .first()
+            .map(|t| t.path.to_string_lossy().contains(&video_id))
+            .unwrap_or(false)
+        {
+            tracks.remove(0);
+        }
+        if !tracks.is_empty() {
+            ctrl.add_to_queue(tracks);
+        }
+    });
 }
