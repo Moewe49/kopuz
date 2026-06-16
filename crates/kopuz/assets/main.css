@@ -132,6 +132,9 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
+    /* Keep the popup off the screen edges (and clear of the player bar / system
+       nav on mobile) so a tall popup's top + bottom stay reachable. */
+    padding: 1rem;
     z-index: 1000;
 }
 
@@ -153,8 +156,15 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: var(--radius-xl, 0.75rem);
     padding: 24px;
-    min-width: 400px;
+    /* Responsive width: full (minus the overlay padding) on a phone, capped on
+       desktop. `min-width: 400px` overflowed narrow screens. */
+    min-width: min(400px, 100%);
     max-width: 500px;
+    /* A tall popup (e.g. the cookie-paste form) must not run past the viewport.
+       Cap it and scroll internally so the Save/Connect button is always
+       reachable instead of hiding behind the player bar. */
+    max-height: 100%;
+    overflow-y: auto;
 
     display: flex;
     flex-direction: column;
