@@ -1,12 +1,17 @@
 package com.temidaradev.kopuz
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
@@ -18,15 +23,18 @@ import org.json.JSONObject
  * no such thing, so we host an offscreen System WebView at the music.youtube.com
  * origin (same-origin so BgUtils' WAA fetch isn't CORS-blocked), inject the SAME
  * BgUtils BotGuard JS at document-start, and mint a token per video. Results go
- * back to Rust via [nativeOnPot]. The WebView is created once and held in a
- * static so it survives Activity backgrounding.
+ * back to Rust via [nativeOnPot].
  *
- * Document-start injection (so our script runs before YouTube's page clobbers
- * window.module) uses androidx.webkit's WebViewCompat.addDocumentStartJavaScript,
- * the Android analog of wry's init script; window.ipc is rebound to an
+ * The WebView is attached to the Activity content view at 1x1 px (NOT shown):
+ * an unattached/offscreen Android WebView throttles JS timers and may never
+ * complete a page load, so BgUtils' setup never runs. Attaching it (invisibly)
+ * keeps the renderer live. Document-start injection uses androidx.webkit's
+ * WebViewCompat.addDocumentStartJavaScript; window.ipc is rebound to an
  * @JavascriptInterface so the shared BgUtils JS posts results back unchanged.
  */
 object PotMinter {
+    private const val TAG = "PotMinter"
+
     // Implemented in Rust (player::systemint::android). reqId echoes the request;
     // a non-empty pot is success, otherwise err carries the JS error/stack.
     @JvmStatic external fun nativeOnPot(reqId: Long, pot: String, err: String)
@@ -41,8 +49,7 @@ object PotMinter {
     @JvmStatic
     fun init(context: Context, script: String) {
         if (webView != null) return
-        val app = context.applicationContext
-        Handler(Looper.getMainLooper()).post { setup(app, script) }
+        Handler(Looper.getMainLooper()).post { setup(context, script) }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -56,14 +63,36 @@ object PotMinter {
         }
         web.addJavascriptInterface(Bridge(), "kopuzIpc")
 
+        // Surface page console + load lifecycle to logcat so on-device debugging
+        // can see BgUtils / Trusted-Types failures.
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(m: ConsoleMessage): Boolean {
+                Log.i(TAG, "console: ${m.message()} @${m.sourceId()}:${m.lineNumber()}")
+                return true
+            }
+        }
+
         // Rebind window.ipc to our bridge so the shared BgUtils JS (which posts via
         // window.ipc.postMessage) works unchanged, then run the BotGuard script.
         val full = "window.ipc={postMessage:function(s){window.kopuzIpc.post(s);}};\n$script"
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(web, full, setOf(ORIGIN))
+            web.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String) {
+                    Log.i(TAG, "page loaded: $url")
+                }
+                override fun onReceivedError(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest,
+                    error: android.webkit.WebResourceError,
+                ) {
+                    if (request.isForMainFrame) Log.w(TAG, "load error: ${error.description}")
+                }
+            }
         } else {
             // Fallback: inject as early as possible (races the page clobbering
             // window.module — best-effort on WebViews without DOCUMENT_START_SCRIPT).
+            Log.w(TAG, "DOCUMENT_START_SCRIPT unsupported — onPageStarted fallback")
             web.webViewClient = object : WebViewClient() {
                 override fun onPageStarted(
                     view: WebView,
@@ -72,10 +101,24 @@ object PotMinter {
                 ) {
                     view.evaluateJavascript(full, null)
                 }
+                override fun onPageFinished(view: WebView, url: String) {
+                    Log.i(TAG, "page loaded (fallback): $url")
+                }
             }
         }
+
+        // Attach invisibly so the renderer stays live (an unattached WebView
+        // stalls JS). 1x1 px in the Activity content; never visible.
+        val activity = context as? Activity
+        if (activity != null) {
+            activity.addContentView(web, FrameLayout.LayoutParams(1, 1))
+        } else {
+            Log.w(TAG, "context is not an Activity — WebView left detached (may stall)")
+        }
+
         webView = web
         web.loadUrl("$ORIGIN/")
+        Log.i(TAG, "minter webview created, loading $ORIGIN")
     }
 
     @JvmStatic
@@ -86,10 +129,17 @@ object PotMinter {
                 nativeOnPot(reqId, "", "minter webview not initialized")
                 return@post
             }
+            // If __kopuzMint isn't defined yet (page still loading / BgUtils not
+            // ready), report back immediately so the resolver falls back fast
+            // instead of stalling on the 15s mint timeout. When it IS ready the
+            // real pot/err arrives later via the bridge.
             web.evaluateJavascript(
-                "window.__kopuzMint && window.__kopuzMint('$videoId', $reqId)",
-                null,
-            )
+                "(window.__kopuzMint ? (window.__kopuzMint('$videoId', $reqId), 'ok') : 'notready')",
+            ) { result ->
+                if (result != null && result.contains("notready")) {
+                    nativeOnPot(reqId, "", "minter not ready")
+                }
+            }
         }
     }
 
