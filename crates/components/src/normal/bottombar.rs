@@ -64,7 +64,7 @@ pub fn BottombarNormal(
         let cover = current_song_cover_url.read().clone();
         return rsx! {
             div {
-                class: "shrink-0 mx-2 mb-[env(safe-area-inset-bottom)] h-[68px] bg-[#121212]/95 backdrop-blur-3xl border border-white/10 rounded-[24px] flex items-center px-3 gap-3 relative overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.8)]",
+                class: "shrink-0 h-[68px] box-content pb-[env(safe-area-inset-bottom)] bg-[#121212]/95 backdrop-blur-3xl border-t border-white/10 rounded-t-[20px] flex items-center px-3 gap-3 relative overflow-hidden shadow-[0_-8px_30px_rgba(0,0,0,0.6)]",
                 onclick: move |_| is_fullscreen.set(true),
                 div { class: "absolute top-0 left-0 h-[2px] bg-white/10 w-full",
                     div { class: "h-full bg-white transition-all duration-300", style: "width: {progress_percent}%" }

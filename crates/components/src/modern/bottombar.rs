@@ -65,7 +65,7 @@ pub fn BottombarModern(
         let fav = get_favorite(snapshot.as_ref(), &favorites_store);
         return rsx! {
             div {
-                class: "shrink-0 h-[68px] bg-black/85 backdrop-blur-2xl border-t border-white/10 flex items-center px-3 gap-3 relative overflow-hidden mb-[env(safe-area-inset-bottom)]",
+                class: "shrink-0 h-[68px] box-content pb-[env(safe-area-inset-bottom)] bg-black/85 backdrop-blur-2xl border-t border-white/10 flex items-center px-3 gap-3 relative overflow-hidden",
                 onclick: move |_| is_fullscreen.set(true),
                 div { class: "absolute top-0 left-0 h-[2px] bg-white/10 w-full",
                     div { class: "h-full bg-white/80 transition-all duration-300", style: "width: {pct}%" }
