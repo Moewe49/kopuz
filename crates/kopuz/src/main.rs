@@ -125,6 +125,16 @@ fn build_window_icon() -> Option<Icon> {
 struct AvailableUpdate {
     version: String,
     release_url: String,
+    /// Direct download URL of the release's `.apk` asset, when present — used
+    /// by the in-app Android updater. `None` on releases without an APK.
+    apk_url: Option<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(serde::Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: String,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -132,6 +142,8 @@ struct AvailableUpdate {
 struct GithubRelease {
     tag_name: String,
     html_url: String,
+    #[serde(default)]
+    assets: Vec<GithubReleaseAsset>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -179,8 +191,11 @@ async fn fetch_available_update() -> Option<AvailableUpdate> {
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .ok()?;
+    // This fork's own releases (Moewe49/kopuz), not the upstream Kopuz-org repo —
+    // otherwise the in-app updater would offer upstream builds that don't carry
+    // this fork's Android work.
     let release = client
-        .get("https://api.github.com/repos/Kopuz-org/kopuz/releases/latest")
+        .get("https://api.github.com/repos/Moewe49/kopuz/releases/latest")
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
         .await
@@ -192,12 +207,98 @@ async fn fetch_available_update() -> Option<AvailableUpdate> {
         .ok()?;
 
     if is_newer_version(env!("CARGO_PKG_VERSION"), &release.tag_name) {
+        let apk_url = release
+            .assets
+            .iter()
+            .find(|a| a.name.to_ascii_lowercase().ends_with(".apk"))
+            .map(|a| a.browser_download_url.clone());
         Some(AvailableUpdate {
             version: release.tag_name.trim_start_matches(['v', 'V']).to_string(),
             release_url: release.html_url,
+            apk_url,
         })
     } else {
         None
+    }
+}
+
+/// Download the update APK to the app's files dir and hand it to the Android
+/// package installer (via `Updater.install` → FileProvider). Android-only; the
+/// system still shows its install confirmation (sideloaded apps can't update
+/// silently). Returns nothing — progress/errors are surfaced via `on_status`.
+#[cfg(target_os = "android")]
+fn start_android_update(apk_url: String, mut on_status: Signal<Option<String>>) {
+    on_status.set(Some("downloading".to_string()));
+    spawn(async move {
+        let dest = {
+            let mut dir = player::systemint::get_files_dir()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            dir.push("kopuz-update.apk");
+            dir
+        };
+        let ok = async {
+            let client = reqwest::Client::builder()
+                .user_agent(format!("kopuz/{}", env!("CARGO_PKG_VERSION")))
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .ok()?;
+            let bytes = client
+                .get(&apk_url)
+                .send()
+                .await
+                .ok()?
+                .error_for_status()
+                .ok()?
+                .bytes()
+                .await
+                .ok()?;
+            tokio::task::spawn_blocking({
+                let dest = dest.clone();
+                move || std::fs::write(&dest, &bytes)
+            })
+            .await
+            .ok()?
+            .ok()?;
+            Some(())
+        }
+        .await
+        .is_some();
+        if ok {
+            on_status.set(Some("installing".to_string()));
+            player::systemint::install_apk(&dest.to_string_lossy());
+            on_status.set(None);
+        } else {
+            on_status.set(Some("failed".to_string()));
+        }
+    });
+}
+
+/// The in-app "Update" control for the Android update banner: downloads the
+/// release APK and hands it to the system installer. Shows a transient
+/// "Update…" label while the download runs, and a retry label if it failed.
+#[cfg(target_os = "android")]
+fn android_update_button(apk_url: Option<String>, update_status: Signal<Option<String>>) -> Element {
+    let status_now = update_status.read().clone();
+    if matches!(status_now.as_deref(), Some("downloading") | Some("installing")) {
+        return rsx! {
+            span { class: "ml-2 text-xs opacity-80", "Update…" }
+        };
+    }
+    let label = if status_now.as_deref() == Some("failed") {
+        "Erneut versuchen"
+    } else {
+        "Update"
+    };
+    match apk_url {
+        Some(apk) => rsx! {
+            button {
+                class: "ml-2 px-2 py-0.5 text-xs rounded bg-sky-500/30 hover:bg-sky-500/50 transition-colors",
+                onclick: move |_| start_android_update(apk.clone(), update_status),
+                "{label}"
+            }
+        },
+        None => rsx! {},
     }
 }
 
@@ -1343,6 +1444,9 @@ fn App() -> Element {
     let mut network_banner: Signal<Option<bool>> = use_signal(|| None);
     #[cfg(not(target_arch = "wasm32"))]
     let mut update_banner: Signal<Option<AvailableUpdate>> = use_signal(|| None);
+    // In-app Android update progress: None = idle, Some("downloading"|"installing"|"failed").
+    #[cfg(target_os = "android")]
+    let update_status: Signal<Option<String>> = use_signal(|| None);
     #[cfg(not(target_arch = "wasm32"))]
     let mut did_check_updates = use_signal(|| false);
     let mut auto_switched_to_offline = use_signal(|| false);
@@ -2512,6 +2616,12 @@ fn App() -> Element {
                                     },
                                     "{i18n::t(\"view_release\")}"
                                 }
+                            }
+                            {
+                                #[cfg(target_os = "android")]
+                                { android_update_button(update.apk_url.clone(), update_status) }
+                                #[cfg(not(target_os = "android"))]
+                                { rsx! {} }
                             }
                         }
                         button {

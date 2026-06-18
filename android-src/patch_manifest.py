@@ -12,6 +12,7 @@ PERMISSIONS = [
     'android.permission.WRITE_EXTERNAL_STORAGE',
     'android.permission.READ_MEDIA_AUDIO',
     'android.permission.READ_MEDIA_IMAGES',
+    'android.permission.REQUEST_INSTALL_PACKAGES',
 ]
 
 INSIDE_APPLICATION = """\
@@ -26,7 +27,16 @@ INSIDE_APPLICATION = """\
             <intent-filter>
                 <action android:name="com.temidaradev.kopuz.ACTION_MEDIA" />
             </intent-filter>
-        </receiver>"""
+        </receiver>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.temidaradev.kopuz.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/kopuz_file_paths" />
+        </provider>"""
 
 def patch_manifest(path):
     if not os.path.exists(path):

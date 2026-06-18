@@ -476,6 +476,40 @@ pub fn stop_session() {
     }
 }
 
+/// Hand a downloaded APK at `path` to the Android package installer (via the
+/// Kotlin `Updater` → FileProvider). The system always shows its own install
+/// confirmation — a sideloaded app can't update itself silently. If the user
+/// hasn't granted "install unknown apps" yet, `Updater.install` deep-links them
+/// to that settings page instead of launching the installer.
+pub fn install_apk(path: &str) {
+    let vm = match JVM.get() {
+        Some(v) => v,
+        None => return,
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let ctx = ndk_context::android_context();
+    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let result: Result<(), jni::errors::Error> = (|| {
+        let class = find_app_class(&mut env, "com/temidaradev/kopuz/Updater")?;
+        let j_path = env.new_string(path)?;
+        env.call_static_method(
+            &class,
+            "install",
+            "(Landroid/content/Context;Ljava/lang/String;)V",
+            &[JValue::Object(&activity), JValue::Object(&j_path)],
+        )?
+        .v()?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        eprintln!("[android] Updater.install failed: {}", e);
+        clear_jni_exception(&mut env);
+    }
+}
+
 pub fn request_permissions() {
     init();
     let vm = match JVM.get() {

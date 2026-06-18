@@ -29,6 +29,8 @@ const PERMISSIONS: &[&str] = &[
     "android.permission.WRITE_EXTERNAL_STORAGE",
     "android.permission.READ_MEDIA_AUDIO",
     "android.permission.READ_MEDIA_IMAGES",
+    // In-app updater: download the new APK and launch the system installer.
+    "android.permission.REQUEST_INSTALL_PACKAGES",
 ];
 
 /// R8 keep rules. In release (`dx bundle`) minification is on and only keeps
@@ -56,6 +58,28 @@ const INSIDE_APPLICATION: &str = r#"        <service
                 <action android:name="com.temidaradev.kopuz.ACTION_MEDIA" />
             </intent-filter>
         </receiver>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.temidaradev.kopuz.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/kopuz_file_paths" />
+        </provider>
+"#;
+
+/// FileProvider path config (res/xml/kopuz_file_paths.xml) — written into the
+/// scaffolded project so the updater can hand a `content://` URI for the
+/// downloaded APK (which lives in the app's internal files dir) to the system
+/// installer. `Uri.fromFile` is banned on Android 7+, hence FileProvider.
+const FILE_PROVIDER_PATHS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="files" path="." />
+    <cache-path name="cache" path="." />
+    <external-files-path name="ext_files" path="." />
+    <external-cache-path name="ext_cache" path="." />
+</paths>
 "#;
 
 fn warn(msg: &str) {
@@ -141,6 +165,13 @@ fn main() {
     // 4. Drop R8 keep rules so release (`dx bundle`) minification doesn't strip the
     //    JNI-reached Kotlin. The release build.gradle globs **/*.pro under the module.
     copy_str(&main_dir.join("kopuz-keep.pro"), KEEP_RULES);
+
+    // 4b. FileProvider path config for the in-app updater's install Intent.
+    //     copy_str creates res/xml/ as needed.
+    copy_str(
+        &main_dir.join("res").join("xml").join("kopuz_file_paths.xml"),
+        FILE_PROVIDER_PATHS,
+    );
 
     // 5. Generate launcher icons from our logo. dx only ships its default icon, so
     //    build them here.
