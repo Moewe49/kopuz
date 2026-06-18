@@ -10,8 +10,45 @@ use super::search::{encode_url_tag, synthesize_album_id};
 const ORIGIN: &str = "https://music.youtube.com";
 
 pub async fn start_mix(seed_video_id: &str, cookies: &str) -> Result<Vec<Track>, String> {
+    // Genre-consistent radio. A *signed-in* `RDAMVM` mix blends the account's
+    // overall YouTube taste into the queue, so after a genre-coherent playlist
+    // the autoplay drifts toward "your YouTube taste" instead of the playlist's
+    // genre. Request the mix **anonymously** first — that returns the seed
+    // song's own radio, which stays on its genre/vibe. Anonymous `/next` is
+    // bot-gated without a `visitorData`, so mint a fresh one. If the anonymous
+    // mix is gated/empty, fall back to the personalized (cookied) mix so the
+    // result is never worse than before.
+    let visitor = super::innertube::visitor_id(None).await.ok();
+    if let Ok(tracks) = request_radio(seed_video_id, "", visitor.as_deref()).await
+        && !tracks.is_empty()
+    {
+        return Ok(tracks);
+    }
+    request_radio(seed_video_id, cookies, visitor.as_deref()).await
+}
+
+/// One `/next` radio request for `RDAMVM<seed>`. `cookies` empty → anonymous
+/// (seed/genre-based); non-empty → personalized to the account. `visitor_data`,
+/// when present, is sent as `context.client.visitorData` — anonymous `/next`
+/// needs it to clear YouTube's bot gate.
+async fn request_radio(
+    seed_video_id: &str,
+    cookies: &str,
+    visitor_data: Option<&str>,
+) -> Result<Vec<Track>, String> {
     let playlist_id = format!("RDAMVM{seed_video_id}");
     let client = WEB_REMIX;
+    let mut client_ctx = json!({
+        "clientName": client.client_name,
+        "clientVersion": client.client_version,
+        "hl": "en",
+        "gl": "US",
+    });
+    if let Some(vd) = visitor_data
+        && !vd.is_empty()
+    {
+        client_ctx["visitorData"] = Value::String(vd.to_string());
+    }
     let body = json!({
         "enablePersistentPlaylistPanel": true,
         "tunerSettingValue": "AUTOMIX_SETTING_NORMAL",
@@ -20,19 +57,14 @@ pub async fn start_mix(seed_video_id: &str, cookies: &str) -> Result<Vec<Track>,
         "params": "wAEB",
         "isAudioOnly": true,
         "context": {
-            "client": {
-                "clientName": client.client_name,
-                "clientVersion": client.client_version,
-                "hl": "en",
-                "gl": "US",
-            },
+            "client": client_ctx,
             "user": { "lockedSafetyMode": false },
         },
     });
 
     // Mix endpoint works without auth (anonymous radio for any public
     // video). Skip Cookie + SAPISID when cookies is empty so anon
-    // YT mode can still hit Start-Radio.
+    // YT mode (and the anonymous genre request above) can still hit Start-Radio.
     let cookies_opt = if cookies.is_empty() { None } else { Some(cookies) };
     let mut req = super::innertube::http_client().clone()
         .post(format!("{ORIGIN}/youtubei/v1/next?prettyPrint=false"))
