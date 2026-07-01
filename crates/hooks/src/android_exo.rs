@@ -92,15 +92,30 @@ fn cover_url(track: &Track) -> String {
     .unwrap_or_default()
 }
 
+/// Stable per-track id used as ExoPlayer's `mediaId` and for UI reconciliation.
+/// The full source path is unique for both YT (`ytmusic:VID:…`) and local tracks.
+fn track_id(track: &Track) -> String {
+    track.path.to_string_lossy().to_string()
+}
+
 /// Resolve one track into an ExoPlayer MediaItem JSON object, or `None` if it
-/// can't be resolved (non-YT track / expired session / network).
+/// can't be resolved (expired session / network / missing local file).
 async fn resolve_item(track: &Track, cookies: &Option<String>) -> Option<serde_json::Value> {
-    let vid = video_id(track)?;
-    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.clone().unwrap_or_default());
-    let info = yt.get_stream(&vid).await.ok()?;
+    let id = track_id(track);
+    let url = if let Some(vid) = video_id(track) {
+        // YT Music: resolve the googlevideo stream URL (ExoPlayer plays it directly).
+        let yt =
+            ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.clone().unwrap_or_default());
+        yt.get_stream(&vid).await.ok()?.url
+    } else if std::path::Path::new(&id).exists() {
+        // Local library / offline-downloaded file.
+        format!("file://{id}")
+    } else {
+        return None;
+    };
     Some(serde_json::json!({
-        "url": info.url,
-        "mediaId": vid,
+        "url": url,
+        "mediaId": id,
         "title": track.title,
         "artist": track.artist,
         "album": track.album,
@@ -140,11 +155,7 @@ async fn handle(cmd: Cmd) {
         Cmd::RefillAfter { media_id } => {
             let (next, cookies) = {
                 let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(pos) = m
-                    .tracks
-                    .iter()
-                    .position(|t| video_id(t).as_deref() == Some(media_id.as_str()))
-                {
+                if let Some(pos) = m.tracks.iter().position(|t| track_id(t) == media_id) {
                     m.index = pos;
                 }
                 (m.tracks.get(m.index + 1).cloned(), m.cookies.clone())
@@ -196,9 +207,7 @@ pub fn reresolve(position_ms: i64) {
 /// The queue index currently playing `media_id`, for UI reconciliation.
 pub fn queue_index_of(media_id: &str) -> Option<usize> {
     let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-    m.tracks
-        .iter()
-        .position(|t| video_id(t).as_deref() == Some(media_id))
+    m.tracks.iter().position(|t| track_id(t) == media_id)
 }
 
 pub fn pause() {
