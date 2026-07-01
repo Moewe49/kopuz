@@ -125,9 +125,11 @@ fn build_window_icon() -> Option<Icon> {
 struct AvailableUpdate {
     version: String,
     release_url: String,
-    /// Direct download URL of the release's `.apk` asset, when present — used
-    /// by the in-app Android updater. `None` on releases without an APK.
-    apk_url: Option<String>,
+    /// Download URL of the release asset that installs THIS platform's build
+    /// (`.apk` on Android, `setup.exe`/`.msi` on Windows, `.AppImage` on Linux).
+    /// `None` when the release has no matching asset — the banner then only
+    /// offers the "View release" page link.
+    installer_url: Option<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -207,44 +209,74 @@ async fn fetch_available_update() -> Option<AvailableUpdate> {
         .ok()?;
 
     if is_newer_version(env!("CARGO_PKG_VERSION"), &release.tag_name) {
-        let apk_url = release
-            .assets
-            .iter()
-            .find(|a| a.name.to_ascii_lowercase().ends_with(".apk"))
-            .map(|a| a.browser_download_url.clone());
         Some(AvailableUpdate {
             version: release.tag_name.trim_start_matches(['v', 'V']).to_string(),
             release_url: release.html_url,
-            apk_url,
+            installer_url: pick_installer_asset(&release.assets),
         })
     } else {
         None
     }
 }
 
-/// Download the update APK to the app's files dir and hand it to the Android
-/// package installer (via `Updater.install` → FileProvider). Android-only; the
-/// system still shows its install confirmation (sideloaded apps can't update
-/// silently). Returns nothing — progress/errors are surfaced via `on_status`.
-#[cfg(target_os = "android")]
-fn start_android_update(apk_url: String, mut on_status: Signal<Option<String>>) {
+/// Pick the release asset that installs the current platform's build, matched by
+/// filename suffix. `None` if the release carries no asset for this OS (the
+/// banner then falls back to the release-page link).
+#[cfg(not(target_arch = "wasm32"))]
+fn pick_installer_asset(assets: &[GithubReleaseAsset]) -> Option<String> {
+    let pick = |pred: &dyn Fn(&str) -> bool| {
+        assets
+            .iter()
+            .find(|a| pred(&a.name.to_ascii_lowercase()))
+            .map(|a| a.browser_download_url.clone())
+    };
+    #[cfg(target_os = "android")]
+    {
+        pick(&|n| n.ends_with(".apk"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Prefer the NSIS setup.exe; fall back to the MSI.
+        pick(&|n| n.ends_with("setup.exe")).or_else(|| pick(&|n| n.ends_with(".msi")))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        pick(&|n| n.ends_with(".appimage"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        pick(&|n| n.ends_with(".dmg"))
+    }
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "macos"
+    )))]
+    {
+        let _ = pick;
+        None
+    }
+}
+
+/// Kick off an in-app update: download the platform installer, then apply it.
+/// Android hands the APK to the package installer (FileProvider); desktop runs
+/// the downloaded installer and exits so it can replace the running files. Both
+/// still show the OS's own confirmation — a sideloaded / self-updating app can't
+/// swap itself silently. Progress/errors surface via `on_status`.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_update(installer_url: String, mut on_status: Signal<Option<String>>) {
     on_status.set(Some("downloading".to_string()));
     spawn(async move {
-        let dest = {
-            let mut dir = player::systemint::get_files_dir()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(std::env::temp_dir);
-            dir.push("kopuz-update.apk");
-            dir
-        };
+        let dest = update_dest_path(&installer_url);
         let ok = async {
             let client = reqwest::Client::builder()
                 .user_agent(format!("kopuz/{}", env!("CARGO_PKG_VERSION")))
-                .timeout(std::time::Duration::from_secs(120))
+                .timeout(std::time::Duration::from_secs(300))
                 .build()
                 .ok()?;
             let bytes = client
-                .get(&apk_url)
+                .get(&installer_url)
                 .send()
                 .await
                 .ok()?
@@ -253,20 +285,18 @@ fn start_android_update(apk_url: String, mut on_status: Signal<Option<String>>) 
                 .bytes()
                 .await
                 .ok()?;
-            tokio::task::spawn_blocking({
-                let dest = dest.clone();
-                move || std::fs::write(&dest, &bytes)
-            })
-            .await
-            .ok()?
-            .ok()?;
+            let dest = dest.clone();
+            tokio::task::spawn_blocking(move || std::fs::write(&dest, &bytes))
+                .await
+                .ok()?
+                .ok()?;
             Some(())
         }
         .await
         .is_some();
         if ok {
             on_status.set(Some("installing".to_string()));
-            player::systemint::install_apk(&dest.to_string_lossy());
+            launch_update(&dest);
             on_status.set(None);
         } else {
             on_status.set(Some("failed".to_string()));
@@ -274,31 +304,111 @@ fn start_android_update(apk_url: String, mut on_status: Signal<Option<String>>) 
     });
 }
 
-/// The in-app "Update" control for the Android update banner: downloads the
-/// release APK and hands it to the system installer. Shows a transient
-/// "Update…" label while the download runs, and a retry label if it failed.
-#[cfg(target_os = "android")]
-fn android_update_button(apk_url: Option<String>, update_status: Signal<Option<String>>) -> Element {
+/// Where to stage the downloaded installer. Android needs it in the app's files
+/// dir so the FileProvider can serve it to the package installer; desktop uses
+/// the temp dir. The extension is preserved so the OS opens it correctly.
+#[cfg(not(target_arch = "wasm32"))]
+fn update_dest_path(url: &str) -> std::path::PathBuf {
+    let lower = url.to_ascii_lowercase();
+    let name = if lower.ends_with(".apk") {
+        "kopuz-update.apk"
+    } else if lower.ends_with(".msi") {
+        "kopuz-update.msi"
+    } else if lower.ends_with(".appimage") {
+        "kopuz-update.AppImage"
+    } else if lower.ends_with(".dmg") {
+        "kopuz-update.dmg"
+    } else {
+        "kopuz-update-setup.exe"
+    };
+    #[cfg(target_os = "android")]
+    let dir = player::systemint::get_files_dir()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    #[cfg(not(target_os = "android"))]
+    let dir = std::env::temp_dir();
+    dir.join(name)
+}
+
+/// Apply a downloaded update. Platform-specific: Android → package installer;
+/// Windows → run the installer and exit; Linux → replace the AppImage in place
+/// and relaunch (or open it); macOS → open the disk image.
+#[cfg(not(target_arch = "wasm32"))]
+fn launch_update(path: &std::path::Path) {
+    #[cfg(target_os = "android")]
+    {
+        player::systemint::install_apk(&path.to_string_lossy());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Launch the installer, then exit so it can overwrite the running exe.
+        // `.msi` goes through msiexec; the NSIS `setup.exe` runs directly.
+        let is_msi = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("msi"))
+            .unwrap_or(false);
+        let spawned = if is_msi {
+            std::process::Command::new("msiexec")
+                .arg("/i")
+                .arg(path)
+                .spawn()
+                .is_ok()
+        } else {
+            std::process::Command::new(path).spawn().is_ok()
+        };
+        if spawned {
+            std::process::exit(0);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(path).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Running as an AppImage? Overwrite ourselves in place and relaunch.
+        // The kernel keeps the open inode, so overwriting the file is safe.
+        if let Ok(current) = std::env::var("APPIMAGE") {
+            use std::os::unix::fs::PermissionsExt;
+            if std::fs::copy(path, &current).is_ok() {
+                let _ = std::fs::set_permissions(
+                    &current,
+                    std::fs::Permissions::from_mode(0o755),
+                );
+                let _ = std::process::Command::new(&current).spawn();
+                std::process::exit(0);
+            }
+        }
+        let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    }
+}
+
+/// The in-app "Update" button for the banner: downloads the platform installer
+/// and applies it. Shows a transient "Update…" label while it runs, and a
+/// retry label after a failure. Hidden when the release has no matching asset.
+#[cfg(not(target_arch = "wasm32"))]
+fn update_button(installer_url: Option<String>, update_status: Signal<Option<String>>) -> Element {
     let status_now = update_status.read().clone();
     if matches!(status_now.as_deref(), Some("downloading") | Some("installing")) {
         return rsx! {
             span { class: "ml-2 text-xs opacity-80", "Update…" }
         };
     }
+    let Some(url) = installer_url else {
+        return rsx! {};
+    };
     let label = if status_now.as_deref() == Some("failed") {
         "Erneut versuchen"
     } else {
         "Update"
     };
-    match apk_url {
-        Some(apk) => rsx! {
-            button {
-                class: "ml-2 px-2 py-0.5 text-xs rounded bg-sky-500/30 hover:bg-sky-500/50 transition-colors",
-                onclick: move |_| start_android_update(apk.clone(), update_status),
-                "{label}"
-            }
-        },
-        None => rsx! {},
+    rsx! {
+        button {
+            class: "ml-2 px-2 py-0.5 text-xs rounded bg-sky-500/30 hover:bg-sky-500/50 transition-colors",
+            onclick: move |_| start_update(url.clone(), update_status),
+            "{label}"
+        }
     }
 }
 
@@ -1444,8 +1554,8 @@ fn App() -> Element {
     let mut network_banner: Signal<Option<bool>> = use_signal(|| None);
     #[cfg(not(target_arch = "wasm32"))]
     let mut update_banner: Signal<Option<AvailableUpdate>> = use_signal(|| None);
-    // In-app Android update progress: None = idle, Some("downloading"|"installing"|"failed").
-    #[cfg(target_os = "android")]
+    // In-app update progress: None = idle, Some("downloading"|"installing"|"failed").
+    #[cfg(not(target_arch = "wasm32"))]
     let update_status: Signal<Option<String>> = use_signal(|| None);
     #[cfg(not(target_arch = "wasm32"))]
     let mut did_check_updates = use_signal(|| false);
@@ -2618,9 +2728,9 @@ fn App() -> Element {
                                 }
                             }
                             {
-                                #[cfg(target_os = "android")]
-                                { android_update_button(update.apk_url.clone(), update_status) }
-                                #[cfg(not(target_os = "android"))]
+                                #[cfg(not(target_arch = "wasm32"))]
+                                { update_button(update.installer_url.clone(), update_status) }
+                                #[cfg(target_arch = "wasm32")]
                                 { rsx! {} }
                             }
                         }
