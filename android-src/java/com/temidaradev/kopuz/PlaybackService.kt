@@ -163,7 +163,12 @@ class PlaybackService : MediaSessionService() {
             if (INSTANCE != null) return
             val intent = Intent(context, PlaybackService::class.java)
             try {
-                context.startForegroundService(intent)
+                // NOT startForegroundService: that imposes a 5s "call startForeground()"
+                // deadline, but ExoPlayer may still be buffering the (network) URL at that
+                // point → ForegroundServiceDidNotStartInTime crash. Media3 promotes the
+                // service to foreground itself once playback actually starts. First play is
+                // always from the foregrounded app, so a plain startService is allowed.
+                context.startService(intent)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
