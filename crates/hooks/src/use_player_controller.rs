@@ -405,6 +405,17 @@ impl PlayerController {
         self.playback_error.set(None);
         self.cancel_radio_task();
 
+        // Android: playback runs in the native ExoPlayer service (survives
+        // backgrounding); route there and skip the cpal path entirely.
+        #[cfg(target_os = "android")]
+        {
+            let _ = allow_crossfade;
+            if let Some(track) = self.get_track_at(idx) {
+                self.route_play_to_exoplayer(idx, &track);
+            }
+            return;
+        }
+
         if let Some(track) = self.get_track_at(idx) {
             let path_str = track.path.to_string_lossy().to_string();
             let (restore_seek_secs, clear_pending_resume_on_success) =
@@ -1735,6 +1746,13 @@ impl PlayerController {
     }
 
     fn play_next_with_transition(&mut self, allow_crossfade: bool) {
+        #[cfg(target_os = "android")]
+        {
+            let _ = allow_crossfade;
+            // ExoPlayer skips natively; the UI reconciles from the transition event.
+            crate::android_exo::next();
+            return;
+        }
         if *self.is_loading.peek() {
             self.skip_in_progress.set(false);
         }
@@ -1838,6 +1856,11 @@ impl PlayerController {
     }
 
     pub fn play_prev(&mut self) {
+        #[cfg(target_os = "android")]
+        {
+            crate::android_exo::prev();
+            return;
+        }
         let progress = *self.current_song_progress.peek();
         let back_behavior = self.config.peek().back_behavior;
 
@@ -2065,6 +2088,12 @@ impl PlayerController {
     }
 
     pub fn pause(&mut self) {
+        #[cfg(target_os = "android")]
+        {
+            crate::android_exo::pause();
+            self.is_playing.set(false);
+            return;
+        }
         let idx = *self.current_queue_index.peek();
         let is_radio = self
             .get_track_at(idx)
@@ -2079,6 +2108,12 @@ impl PlayerController {
     }
 
     pub fn resume(&mut self) {
+        #[cfg(target_os = "android")]
+        {
+            crate::android_exo::resume();
+            self.is_playing.set(true);
+            return;
+        }
         let idx = *self.current_queue_index.peek();
         let is_radio = self
             .get_track_at(idx)
@@ -2297,5 +2332,69 @@ pub fn use_player_controller(
         radio_task,
         station_registry,
         playback_error,
+    }
+}
+
+// ============================================================================
+// Android native-playback routing (ExoPlayer MediaSessionService).
+// Playback here runs in the native service so it survives backgrounding; the
+// controller just resolves URLs + reflects state. See crate::android_exo and
+// docs/android-exoplayer-background-playback-plan.md.
+// ============================================================================
+#[cfg(target_os = "android")]
+impl PlayerController {
+    /// Tracks in play order (shuffle-aware); position `i` == `get_track_at(i)`.
+    fn play_order_tracks(&self) -> Vec<Track> {
+        if *self.shuffle.peek() {
+            let order = self.shuffle_order.peek();
+            let q = self.queue.peek();
+            order.iter().filter_map(|&i| q.get(i).cloned()).collect()
+        } else {
+            self.queue.peek().clone()
+        }
+    }
+
+    /// Start (or restart) native ExoPlayer playback at play-order index `idx`.
+    fn route_play_to_exoplayer(&mut self, idx: usize, track: &Track) {
+        let tracks = self.play_order_tracks();
+        let cookies = self
+            .config
+            .peek()
+            .server
+            .as_ref()
+            .and_then(|s| s.access_token.clone());
+        self.current_queue_index.set(idx);
+        self.hydrate_current_track_metadata(idx, 0);
+        let cover = self.cover_url_for_track(track);
+        self.current_song_cover_url.set(cover);
+        self.current_song_progress.set(0);
+        self.is_playing.set(true);
+        self.is_loading.set(true);
+        self.skip_in_progress.set(false);
+        crate::android_exo::play(tracks, idx, cookies, 0);
+    }
+
+    /// ExoPlayer auto-advanced to play-order index `idx` — sync the UI without
+    /// restarting playback (the audio already moved on natively).
+    pub fn reconcile_exo_current(&mut self, idx: usize) {
+        let prev = *self.current_queue_index.peek();
+        if prev == idx {
+            self.is_loading.set(false);
+            return;
+        }
+        self.history.with_mut(|h| {
+            if h.last() != Some(&prev) {
+                h.push(prev);
+            }
+        });
+        self.play_generation.with_mut(|g| *g += 1);
+        self.current_queue_index.set(idx);
+        self.hydrate_current_track_metadata(idx, 0);
+        if let Some(track) = self.get_track_at(idx) {
+            let cover = self.cover_url_for_track(&track);
+            self.current_song_cover_url.set(cover);
+        }
+        self.current_song_progress.set(0);
+        self.is_loading.set(false);
     }
 }

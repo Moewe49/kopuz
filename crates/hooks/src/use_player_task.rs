@@ -273,6 +273,43 @@ pub fn use_player_task(ctrl: PlayerController) {
                     }
                 }
 
+                // Android: playback runs in the native ExoPlayer service (survives
+                // backgrounding). Drain its events and reconcile the UI Signals here
+                // on the Dioxus thread — ExoPlayer already did the audio correctly.
+                #[cfg(target_os = "android")]
+                {
+                    use player::systemint::ExoEvent;
+                    for ev in player::systemint::take_exo_events() {
+                        match ev {
+                            ExoEvent::Transition { media_id, .. } => {
+                                if let Some(qidx) = crate::android_exo::queue_index_of(&media_id) {
+                                    ctrl.reconcile_exo_current(qidx);
+                                }
+                                crate::android_exo::on_transition(&media_id);
+                            }
+                            ExoEvent::State {
+                                playing,
+                                position_ms,
+                            } => {
+                                ctrl.is_playing.set(playing);
+                                if position_ms >= 0 {
+                                    ctrl.current_song_progress.set((position_ms / 1000) as u64);
+                                }
+                            }
+                            ExoEvent::Ended => {}
+                            ExoEvent::Error { .. } => {
+                                let pos = player::systemint::exo_position().max(0);
+                                crate::android_exo::reresolve(pos);
+                            }
+                        }
+                    }
+                    // ExoPlayer owns the position; keep the progress bar live in fg.
+                    let pos = player::systemint::exo_position();
+                    if pos >= 0 {
+                        ctrl.current_song_progress.set((pos / 1000) as u64);
+                    }
+                }
+
                 let is_playing = *ctrl.is_playing.read();
 
                 {
@@ -515,6 +552,9 @@ pub fn use_player_task(ctrl: PlayerController) {
                     let duration = *ctrl.current_song_duration.read();
                     let pos_secs = pos.as_secs().min(duration);
                     let current_gen = *ctrl.play_generation.read();
+                    // On Android the position comes from ExoPlayer (set above), not the
+                    // idle cpal stream — don't overwrite it with the stale cpal position.
+                    #[cfg(not(target_os = "android"))]
                     if !defer_player_progress && pos_secs != last_progress_secs {
                         last_progress_secs = pos_secs;
                         ctrl.current_song_progress.set(pos_secs);
@@ -603,6 +643,11 @@ pub fn use_player_task(ctrl: PlayerController) {
                         }
                     }
 
+                    // Android advances natively via ExoPlayer — skip the cpal-based
+                    // crossfade + end-of-track auto-skip (the idle cpal stream would
+                    // otherwise report "complete" and spam play_next).
+                    #[cfg(not(target_os = "android"))]
+                    {
                     let remaining_secs = duration.saturating_sub(pos_secs);
                     let should_crossfade = duration > 0
                         && pos_secs < duration
@@ -661,6 +706,7 @@ pub fn use_player_task(ctrl: PlayerController) {
                         }
                         ctrl.play_next();
                         nudge_event_loop();
+                    }
                     }
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]

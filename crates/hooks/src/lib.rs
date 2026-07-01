@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+pub mod android_exo;
 pub mod use_library_items;
 pub mod use_player_controller;
 pub mod use_player_task;
