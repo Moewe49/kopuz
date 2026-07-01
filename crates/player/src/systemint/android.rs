@@ -839,3 +839,205 @@ pub extern "system" fn Java_com_temidaradev_kopuz_PotMinter_nativeOnPot(
         let _ = tx.send(result);
     }
 }
+
+// ============================================================================
+// Media3 ExoPlayer bridge (PlaybackService.kt)
+//
+// On Android the real playback runs in a native MediaSessionService (ExoPlayer)
+// so it survives backgrounding, instead of cpal + the suspended Dioxus loop.
+// Rust owns the queue model + URL resolution and drives ExoPlayer via these
+// command wrappers; ExoPlayer reports back through the `native*` callbacks,
+// which push events onto a queue the hooks crate drains to reconcile the UI.
+// See docs/android-exoplayer-background-playback-plan.md.
+// ============================================================================
+
+/// Playback events reported by ExoPlayer (drained by the hooks driver loop).
+#[derive(Debug, Clone)]
+pub enum ExoEvent {
+    /// ExoPlayer auto-advanced / skipped to a new item.
+    Transition { media_id: String, index: i32 },
+    /// Play/pause state changed (position in ms at the time).
+    State { playing: bool, position_ms: i64 },
+    /// The whole playlist ended (ExoPlayer ran out of items).
+    Ended,
+    /// A playback error (usually an expired googlevideo URL → re-resolve).
+    Error { media_id: String, code: i32 },
+}
+
+static EXO_EVENTS: Mutex<Vec<ExoEvent>> = Mutex::new(Vec::new());
+
+fn push_exo_event(e: ExoEvent) {
+    if let Ok(mut v) = EXO_EVENTS.lock() {
+        v.push(e);
+    }
+    // Nudge the UI driver so it reconciles as soon as it next runs (foreground).
+    wake_run_loop();
+}
+
+/// Drain the pending ExoPlayer events. Called by the hooks driver loop.
+pub fn take_exo_events() -> Vec<ExoEvent> {
+    EXO_EVENTS
+        .lock()
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default()
+}
+
+const PLAYBACK_SERVICE: &str = "com/temidaradev/kopuz/PlaybackService";
+
+/// Attach + find PlaybackService + run `f` (a static-method call). Errors are
+/// swallowed after clearing any pending JNI exception, like the other bridges.
+fn call_playback_service<F>(f: F)
+where
+    F: FnOnce(&mut JNIEnv, &JClass) -> Result<(), jni::errors::Error>,
+{
+    let Some(vm) = JVM.get() else { return };
+    let Ok(mut env) = vm.attach_current_thread() else {
+        return;
+    };
+    let Ok(class) = find_app_class(&mut env, PLAYBACK_SERVICE) else {
+        clear_jni_exception(&mut env);
+        return;
+    };
+    if f(&mut env, &class).is_err() {
+        clear_jni_exception(&mut env);
+    }
+}
+
+fn activity_obj() -> JObject<'static> {
+    let ctx = ndk_context::android_context();
+    unsafe { JObject::from_raw(ctx.context().cast()) }
+}
+
+/// Start playback of `items_json` (a JSON array of {url,mediaId,title,artist,
+/// album,artworkUrl,durationMs}) from `start_index` at `position_ms`.
+pub fn exo_play(items_json: &str, start_index: i32, position_ms: i64) {
+    call_playback_service(|env, class| {
+        let activity = activity_obj();
+        let j_items = env.new_string(items_json)?;
+        env.call_static_method(
+            class,
+            "cmdPlay",
+            "(Landroid/content/Context;Ljava/lang/String;IJ)V",
+            &[
+                JValue::Object(&activity),
+                JValue::Object(&j_items),
+                JValue::Int(start_index),
+                JValue::Long(position_ms),
+            ],
+        )?
+        .v()
+    });
+}
+
+/// Replace the look-ahead window after the current item (rolling preload).
+pub fn exo_set_upcoming(items_json: &str) {
+    call_playback_service(|env, class| {
+        let j_items = env.new_string(items_json)?;
+        env.call_static_method(
+            class,
+            "cmdSetUpcoming",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&j_items)],
+        )?
+        .v()
+    });
+}
+
+fn exo_void(method: &str) {
+    call_playback_service(|env, class| env.call_static_method(class, method, "()V", &[])?.v());
+}
+
+pub fn exo_pause() {
+    exo_void("cmdPause");
+}
+pub fn exo_resume() {
+    exo_void("cmdResume");
+}
+pub fn exo_next() {
+    exo_void("cmdNext");
+}
+pub fn exo_prev() {
+    exo_void("cmdPrev");
+}
+
+pub fn exo_seek(position_ms: i64) {
+    call_playback_service(|env, class| {
+        env.call_static_method(class, "cmdSeek", "(J)V", &[JValue::Long(position_ms)])?
+            .v()
+    });
+}
+
+pub fn exo_set_volume(volume: f32) {
+    call_playback_service(|env, class| {
+        env.call_static_method(class, "cmdSetVolume", "(F)V", &[JValue::Float(volume)])?
+            .v()
+    });
+}
+
+pub fn exo_stop() {
+    call_playback_service(|env, class| {
+        let activity = activity_obj();
+        env.call_static_method(
+            class,
+            "cmdStop",
+            "(Landroid/content/Context;)V",
+            &[JValue::Object(&activity)],
+        )?
+        .v()
+    });
+}
+
+/// Current playback position in ms, or -1 if unavailable / not on the UI thread.
+pub fn exo_position() -> i64 {
+    let mut out = -1i64;
+    call_playback_service(|env, class| {
+        out = env.call_static_method(class, "cmdPosition", "()J", &[])?.j()?;
+        Ok(())
+    });
+    out
+}
+
+// --- Callbacks from PlaybackService (Kotlin) -------------------------------
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_temidaradev_kopuz_PlaybackService_nativeOnTransition(
+    mut env: JNIEnv,
+    _class: JClass,
+    media_id: JString,
+    index: jni::sys::jint,
+) {
+    let media_id: String = env.get_string(&media_id).map(|s| s.into()).unwrap_or_default();
+    push_exo_event(ExoEvent::Transition { media_id, index });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_temidaradev_kopuz_PlaybackService_nativeOnState(
+    _env: JNIEnv,
+    _class: JClass,
+    is_playing: jni::sys::jboolean,
+    position_ms: jni::sys::jlong,
+) {
+    push_exo_event(ExoEvent::State {
+        playing: is_playing != 0,
+        position_ms,
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_temidaradev_kopuz_PlaybackService_nativeOnEnded(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    push_exo_event(ExoEvent::Ended);
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_temidaradev_kopuz_PlaybackService_nativeOnError(
+    mut env: JNIEnv,
+    _class: JClass,
+    media_id: JString,
+    code: jni::sys::jint,
+) {
+    let media_id: String = env.get_string(&media_id).map(|s| s.into()).unwrap_or_default();
+    push_exo_event(ExoEvent::Error { media_id, code });
+}

@@ -36,7 +36,15 @@ INSIDE_APPLICATION = """\
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/kopuz_file_paths" />
-        </provider>"""
+        </provider>
+        <service
+            android:name="com.temidaradev.kopuz.PlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>"""
 
 def patch_manifest(path):
     if not os.path.exists(path):
