@@ -273,41 +273,19 @@ pub fn use_player_task(ctrl: PlayerController) {
                     }
                 }
 
-                // Android: playback runs in the native ExoPlayer service (survives
-                // backgrounding). Drain its events and reconcile the UI Signals here
-                // on the Dioxus thread — ExoPlayer already did the audio correctly.
+                // Android: playback + auto-advance + refill all run in the native
+                // ExoPlayer engine thread (survives backgrounding). Here we only READ
+                // its cached state and reconcile the UI Signals on the Dioxus thread.
                 #[cfg(target_os = "android")]
                 {
-                    use player::systemint::ExoEvent;
-                    for ev in player::systemint::take_exo_events() {
-                        match ev {
-                            ExoEvent::Transition { media_id, .. } => {
-                                if let Some(qidx) = crate::android_exo::queue_index_of(&media_id) {
-                                    ctrl.reconcile_exo_current(qidx);
-                                }
-                                crate::android_exo::on_transition(&media_id);
-                            }
-                            ExoEvent::State {
-                                playing,
-                                position_ms,
-                            } => {
-                                ctrl.is_playing.set(playing);
-                                if position_ms >= 0 {
-                                    ctrl.current_song_progress.set((position_ms / 1000) as u64);
-                                }
-                            }
-                            ExoEvent::Ended => {}
-                            ExoEvent::Error { .. } => {
-                                let pos = player::systemint::exo_position().max(0);
-                                crate::android_exo::reresolve(pos);
-                            }
-                        }
+                    let update = crate::android_exo::take_ui_update();
+                    if let Some(idx) = update.current_index {
+                        eprintln!("[exo-driver] reconcile -> idx {idx}");
+                        ctrl.reconcile_exo_current(idx);
                     }
-                    // ExoPlayer owns the position; keep the progress bar live in fg.
-                    let pos = player::systemint::exo_position();
-                    if pos >= 0 {
-                        ctrl.current_song_progress.set((pos / 1000) as u64);
-                    }
+                    ctrl.is_playing.set(update.playing);
+                    ctrl.current_song_progress
+                        .set((update.position_ms / 1000).max(0) as u64);
                 }
 
                 let is_playing = *ctrl.is_playing.read();

@@ -22,7 +22,10 @@ class MainActivity : WryActivity() {
         super.onCreate(savedInstanceState)
         instance = this
         enableEdgeToEdge()
-        MediaSessionHelper.init(this)
+        // Playback + its notification now run through the Media3 PlaybackService;
+        // the legacy MediaSessionHelper session is intentionally not created (a
+        // second active MediaSession competes for the media notification).
+        // MediaSessionHelper.init(this)
         requestNotificationPermission()
         requestBatteryOptimizationExemption()
     }

@@ -64,7 +64,10 @@ pub fn init() {
             Ok(vm) => {
                 let _ = JVM.set(vm);
                 cache_classloader();
-                init_media_session();
+                // Legacy MediaSessionHelper is unused now that playback runs through
+                // the Media3 PlaybackService — a second active MediaSession fights it
+                // for the notification/lock-screen, so don't create it.
+                // init_media_session();
             }
             Err(e) => eprintln!("[android] Failed to capture JVM: {}", e),
         }
@@ -126,6 +129,7 @@ fn find_app_class<'a>(env: &mut JNIEnv<'a>, name: &str) -> Result<JClass<'a>, jn
     }
 }
 
+#[allow(dead_code)] // superseded by the Media3 PlaybackService; kept for reference.
 fn init_media_session() {
     let vm = match JVM.get() {
         Some(v) => v,

@@ -1006,6 +1006,12 @@ impl Player {
     }
 
     pub fn seek(&mut self, time: Duration) {
+        // Android: seek the native ExoPlayer, not the idle cpal stream.
+        #[cfg(target_os = "android")]
+        {
+            systemint::exo_seek(time.as_millis() as i64);
+            return;
+        }
         const END_GUARD: Duration = Duration::from_millis(2000);
         let time = if let Some(meta) = &self.now_playing {
             if meta.duration > END_GUARD {

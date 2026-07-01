@@ -75,6 +75,18 @@ class PlaybackService : MediaSessionService() {
         // Apply anything queued before the service finished starting.
         pending?.let { it(player) }
         pending = null
+
+        // Report the live position ~2×/s from the main thread (ExoPlayer.position
+        // is main-thread-only) so Rust can cache it for the progress bar.
+        positionTicker.post(positionTick)
+    }
+
+    private val positionTicker = Handler(Looper.getMainLooper())
+    private val positionTick = object : Runnable {
+        override fun run() {
+            mediaSession?.player?.let { nativeOnState(it.isPlaying, it.currentPosition) }
+            positionTicker.postDelayed(this, 500)
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
@@ -86,6 +98,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        positionTicker.removeCallbacks(positionTick)
         mediaSession?.run {
             player.release()
             release()
@@ -115,17 +128,14 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
-        /** Replace the items AFTER the current one (the rolling look-ahead window). */
+        /** Append freshly-resolved look-ahead items to the end of the playlist. The
+         *  engine only ever sends NEW tracks (it tracks how far it has resolved), so
+         *  a plain append keeps the rolling window without disturbing played items. */
         @JvmStatic
         fun cmdSetUpcoming(itemsJson: String) {
             val items = parseItems(itemsJson)
-            onPlayer { p ->
-                val keep = p.currentMediaItemIndex
-                if (p.mediaItemCount > keep + 1) {
-                    p.removeMediaItems(keep + 1, p.mediaItemCount)
-                }
-                if (items.isNotEmpty()) p.addMediaItems(items)
-            }
+            if (items.isEmpty()) return
+            onPlayer { p -> p.addMediaItems(items) }
         }
 
         @JvmStatic fun cmdPause() = onPlayer { it.playWhenReady = false }
