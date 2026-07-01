@@ -365,6 +365,48 @@ fn hex_val(b: u8) -> u8 {
     }
 }
 
+// --- Background playback heartbeat ------------------------------------------
+// Android suspends the wry/winit event loop while the activity is Stopped, so
+// the Dioxus `use_player_task` driver loop (progress + auto-advance) stops
+// ticking in the background — the current song plays out on the native cpal
+// thread, but the next one never starts until you reopen the app. A low-rate
+// native heartbeat pokes the loop (Looper wake + bg-notify) ~5×/s WHILE PLAYING
+// so the driver keeps running and advances the queue in the background. This
+// mirrors the macOS CFRunLoopTimer heartbeat; it runs on its own OS thread, so
+// it's independent of the suspended event loop (the foreground MusicService
+// keeps the process — and this thread — alive). Costs nothing when paused.
+static HEARTBEAT_PLAYING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static HEARTBEAT_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn ensure_heartbeat() {
+    use std::sync::atomic::Ordering;
+    if HEARTBEAT_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("kopuz-bg-heartbeat".into())
+        .spawn(|| {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                if HEARTBEAT_PLAYING.load(Ordering::Relaxed) {
+                    super::bg_wake();
+                    wake_run_loop();
+                }
+            }
+        });
+}
+
+/// Set the play/pause state that gates the background heartbeat. Called from
+/// `update_now_playing`, which already fires on every play/pause/track change.
+pub fn set_playing_heartbeat(playing: bool) {
+    HEARTBEAT_PLAYING.store(playing, std::sync::atomic::Ordering::Relaxed);
+    if playing {
+        ensure_heartbeat();
+    }
+}
+
 pub fn update_now_playing(
     title: &str,
     artist: &str,
@@ -375,6 +417,8 @@ pub fn update_now_playing(
     artwork_path: Option<&str>,
 ) {
     init();
+    // Keep the background driver loop alive while playing (see heartbeat above).
+    set_playing_heartbeat(playing);
     let vm = match JVM.get() {
         Some(v) => v,
         None => return,
@@ -449,6 +493,8 @@ pub fn wake_run_loop() {
 }
 
 pub fn stop_session() {
+    // Playback is fully torn down — stop poking the background loop.
+    set_playing_heartbeat(false);
     let vm = match JVM.get() {
         Some(v) => v,
         None => return,
