@@ -167,6 +167,16 @@ async fn resolve_item(track: &Track, cookies: &Option<String>) -> Option<serde_j
                 return None;
             }
         }
+    } else if id.starts_with("soundcloud:") {
+        // Native SoundCloud resolve (no yt-dlp on Android) → a progressive mp3
+        // or HLS URL ExoPlayer can play directly.
+        match ::server::soundcloud::resolve_path(&id).await {
+            Ok(info) => info.url,
+            Err(e) => {
+                eprintln!("[exo] soundcloud resolve failed: {e}");
+                return None;
+            }
+        }
     } else if std::path::Path::new(&id).exists() {
         format!("file://{id}")
     } else {

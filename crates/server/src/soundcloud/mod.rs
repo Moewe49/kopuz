@@ -17,30 +17,39 @@ use reader::models::Track;
 use crate::ytmusic::player::YtStreamInfo;
 use crate::ytmusic::ytdlp_resolve;
 
+mod native;
+
 pub const SOURCE_PREFIX: &str = "soundcloud";
 
-/// True once a usable yt-dlp binary is on PATH — the UI gates the SoundCloud
-/// toggle on this so it doesn't offer search that can't resolve.
+/// SoundCloud now resolves natively over HTTP (no yt-dlp needed), so it is
+/// available everywhere — including Android, where yt-dlp can't run. Kept as a
+/// function so the UI gate has a single source of truth.
 pub fn is_available() -> bool {
-    ytdlp_resolve::find_ytdlp().is_some()
+    true
 }
 
 /// Search SoundCloud for up to `limit` tracks. Uses yt-dlp's `scsearch`
 /// extractor with `--flat-playlist` so it returns quickly (metadata only, no
 /// per-track resolve). Returns `Err` if yt-dlp isn't installed.
 pub async fn search(query: &str, limit: usize) -> Result<Vec<Track>, String> {
-    let Some(binary) = ytdlp_resolve::find_ytdlp() else {
-        return Err("yt-dlp not installed".to_string());
-    };
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let query = query.to_string();
-    let limit = limit.clamp(1, 50);
-
-    tokio::task::spawn_blocking(move || search_blocking(&binary, &query, limit))
-        .await
-        .map_err(|e| format!("yt-dlp search task: {e}"))?
+    // Native api-v2 search — fast, works on Android. Fall back to yt-dlp's
+    // scsearch only if the native path fails AND a yt-dlp binary is present.
+    match native::native_search(query, limit).await {
+        Ok(tracks) => Ok(tracks),
+        Err(native_err) => {
+            let Some(binary) = ytdlp_resolve::find_ytdlp() else {
+                return Err(native_err);
+            };
+            let query = query.to_string();
+            let limit = limit.clamp(1, 50);
+            tokio::task::spawn_blocking(move || search_blocking(&binary, &query, limit))
+                .await
+                .map_err(|e| format!("yt-dlp search task: {e}"))?
+        }
+    }
 }
 
 fn search_blocking(binary: &str, query: &str, limit: usize) -> Result<Vec<Track>, String> {
@@ -99,7 +108,25 @@ fn search_blocking(binary: &str, query: &str, limit: usize) -> Result<Vec<Track>
 pub async fn resolve_path(track_path: &str) -> Result<YtStreamInfo, String> {
     let url = decode_url_from_path(track_path)
         .ok_or_else(|| "not a soundcloud path".to_string())?;
-    ytdlp_resolve::resolve_url(&url, None).await
+    resolve_url(&url).await
+}
+
+/// Resolve a SoundCloud permalink URL to a playable stream. Native (HTTP) path
+/// first — the only option on Android; on desktop, HLS-only tracks (no
+/// progressive mp3, which the cpal decoder can't demux) fall back to yt-dlp.
+pub async fn resolve_url(url: &str) -> Result<YtStreamInfo, String> {
+    // Android: accept HLS too (ExoPlayer plays it) and never try yt-dlp.
+    let allow_hls = cfg!(any(target_os = "android", target_os = "ios"));
+    match native::native_resolve(url, allow_hls).await {
+        Ok(info) => Ok(info),
+        Err(native_err) => {
+            if ytdlp_resolve::find_ytdlp().is_some() {
+                ytdlp_resolve::resolve_url(url, None).await
+            } else {
+                Err(native_err)
+            }
+        }
+    }
 }
 
 /// Permalink URL behind a SoundCloud track path, for the yt-dlp downloader.
