@@ -27,6 +27,72 @@ pub async fn start_mix(seed_video_id: &str, cookies: &str) -> Result<Vec<Track>,
     request_radio(seed_video_id, cookies, visitor.as_deref()).await
 }
 
+/// Blend radios from several seed videos into ONE continuation. Used by
+/// autoradio at end-of-queue: sampling seeds ACROSS the finished playlist and
+/// interleaving their radios keeps the continuation on the playlist's overall
+/// genre mix instead of drifting to whatever the single last song was. Each
+/// seed's radio is fetched (anonymous first, cookied fallback), then the lists
+/// are round-robin interleaved and deduped by videoId (dropping the seeds
+/// themselves and cross-seed repeats). At most `MAX_MIX_SEEDS` seeds are used.
+pub async fn start_mix_multi(seed_video_ids: &[String], cookies: &str) -> Result<Vec<Track>, String> {
+    const MAX_MIX_SEEDS: usize = 4;
+    let seeds: Vec<&String> = seed_video_ids.iter().take(MAX_MIX_SEEDS).collect();
+    if seeds.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Single seed → the plain (anon-first) path, no interleave needed.
+    if seeds.len() == 1 {
+        return start_mix(seeds[0], cookies).await;
+    }
+
+    let visitor = super::innertube::visitor_id(None).await.ok();
+    let mut radios: Vec<Vec<Track>> = Vec::with_capacity(seeds.len());
+    for seed in &seeds {
+        let anon = request_radio(seed, "", visitor.as_deref()).await;
+        let tracks = match anon {
+            Ok(t) if !t.is_empty() => t,
+            _ => request_radio(seed, cookies, visitor.as_deref())
+                .await
+                .unwrap_or_default(),
+        };
+        radios.push(tracks);
+    }
+
+    let seed_set: std::collections::HashSet<&str> = seeds.iter().map(|s| s.as_str()).collect();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let max_len = radios.iter().map(|r| r.len()).max().unwrap_or(0);
+    for i in 0..max_len {
+        for radio in &radios {
+            let Some(track) = radio.get(i) else {
+                continue;
+            };
+            let vid = video_id_of_path(&track.path);
+            if vid.is_empty() || seed_set.contains(vid.as_str()) {
+                continue;
+            }
+            if seen.insert(vid) {
+                out.push(track.clone());
+            }
+        }
+    }
+    if out.is_empty() {
+        // Every seed's radio was empty/gated — fall back to the last seed's
+        // plain mix so autoradio is never worse than the single-seed path.
+        return start_mix(seeds[seeds.len() - 1], cookies).await;
+    }
+    Ok(out)
+}
+
+/// videoId out of a `ytmusic:<videoId>[:tag]` track path (empty if not one).
+fn video_id_of_path(path: &std::path::Path) -> String {
+    path.to_string_lossy()
+        .strip_prefix(&format!("{SOURCE_PREFIX}:"))
+        .and_then(|rest| rest.split(':').next())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// One `/next` radio request for `RDAMVM<seed>`. `cookies` empty → anonymous
 /// (seed/genre-based); non-empty → personalized to the account. `visitor_data`,
 /// when present, is sent as `context.client.visitorData` — anonymous `/next`

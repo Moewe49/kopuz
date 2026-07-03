@@ -158,12 +158,14 @@ impl PlayerController {
                     )
                 })
                 .unwrap_or_default(),
-            "ytmusic" => {
+            "ytmusic" | "soundcloud" => {
                 // YT tracks carry their thumbnail in album_id as
-                // `ytmusic:_:urlhex_HEX`. Pass empty server_url so
-                // `track_cover_url_with_album_fallback` skips its
-                // jellyfin-URL fallback path and only returns the
-                // embedded URL via decode_embedded_cover_url.
+                // `ytmusic:_:urlhex_HEX`; SoundCloud tracks carry it in the
+                // path itself (`soundcloud:<hexUrl>:urlhex_<hexThumb>:…`).
+                // Pass empty server_url so `track_cover_url_with_album_fallback`
+                // skips its jellyfin-URL fallback and only returns the embedded
+                // URL via decode_embedded_cover_url. Without a soundcloud arm SC
+                // fell into the library-album lookup below (no match) → no cover.
                 utils::jellyfin_image::track_cover_url_with_album_fallback(
                     &path_str,
                     &track.album_id,
@@ -378,6 +380,30 @@ impl PlayerController {
             }
         });
 
+        // Android: playback is a pre-fed native ExoPlayer queue. The desktop
+        // "shuffle off → play → shuffle on → rebuild" dance would feed ExoPlayer
+        // the PHYSICAL order and only reshuffle AFTER, so the engine advanced in
+        // physical order while the UI showed the shuffled order (the "different
+        // song plays than shown" bug). Build the shuffle order FIRST, then feed
+        // the engine the final play order exactly once.
+        #[cfg(target_os = "android")]
+        {
+            let play_idx = if *self.shuffle.peek() {
+                // Anchor the shuffle on the picked track, then it sits at
+                // play-order position 0 (rebuild resets current_queue_index).
+                self.current_queue_index.set(idx);
+                self.rebuild_shuffle_order();
+                0
+            } else {
+                idx
+            };
+            if let Some(track) = self.get_track_at(play_idx) {
+                self.route_play_to_exoplayer(play_idx, &track);
+            }
+            return;
+        }
+
+        #[cfg(not(target_os = "android"))]
         if *self.shuffle.peek() {
             // workaround: shuffle enable/disable needed to play the selected track when shuffle is enabled
             self.shuffle.set(false);
@@ -1794,22 +1820,54 @@ impl PlayerController {
     /// At the end of the queue, kick off a YT Music radio mix seeded from the
     /// track at `idx` (a "Staub → similar songs" continuation). Returns true if
     /// a radio was started (so the caller shouldn't pause). YT tracks only.
-    fn try_start_autoradio(&mut self, idx: usize) -> bool {
+    fn try_start_autoradio(&mut self, _idx: usize) -> bool {
         if !self.config.peek().autoradio {
             return false;
         }
-        let Some(track) = self.get_track_at(idx) else {
-            return false;
-        };
-        let path = track.path.to_string_lossy();
-        let Some(video_id) = path
-            .strip_prefix("ytmusic:")
-            .and_then(|rest| rest.split(':').next())
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty())
-        else {
-            return false;
-        };
+        /// videoId out of a `ytmusic:<vid>[:tag]` path (empty if not one).
+        fn yt_vid(track: &Track) -> String {
+            track
+                .path
+                .to_string_lossy()
+                .strip_prefix("ytmusic:")
+                .and_then(|rest| rest.split(':').next())
+                .unwrap_or("")
+                .to_string()
+        }
+        /// Up to `n` items spread evenly across `items` (incl. first + last),
+        /// order-preserving and de-duplicated.
+        fn sample_evenly(items: &[String], n: usize) -> Vec<String> {
+            if items.len() <= n {
+                return items.to_vec();
+            }
+            let mut out = Vec::with_capacity(n);
+            let mut seen = std::collections::HashSet::new();
+            for k in 0..n {
+                let pos = k * (items.len() - 1) / (n.saturating_sub(1).max(1));
+                if let Some(v) = items.get(pos)
+                    && seen.insert(v.clone())
+                {
+                    out.push(v.clone());
+                }
+            }
+            out
+        }
+
+        // Seed from the WHOLE finished playlist, not just the last song, so the
+        // continuation matches the playlist's overall genre mix instead of
+        // drifting to whatever single track happened to be last.
+        let played_ids: Vec<String> = self
+            .queue
+            .peek()
+            .iter()
+            .map(yt_vid)
+            .filter(|v| !v.is_empty())
+            .collect();
+        if played_ids.is_empty() {
+            return false; // no YT tracks to seed a radio from
+        }
+        let seeds = sample_evenly(&played_ids, 4);
+        let exclude: std::collections::HashSet<String> = played_ids.into_iter().collect();
         let cookies = self
             .config
             .peek()
@@ -1821,17 +1879,16 @@ impl PlayerController {
         ctrl.is_loading.set(true);
         spawn(async move {
             let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-            match yt.start_mix(&video_id).await {
+            match yt.start_mix_multi(&seeds).await {
                 Ok(mut tracks) if !tracks.is_empty() => {
-                    // RDAMVM radios begin WITH the seed song (which just
-                    // finished) — drop it so we continue with fresh tracks.
-                    if tracks
-                        .first()
-                        .map(|t| t.path.to_string_lossy().contains(&video_id))
-                        .unwrap_or(false)
-                        && tracks.len() > 1
-                    {
-                        tracks.remove(0);
+                    // Drop anything already in the just-played playlist so the
+                    // radio genuinely continues rather than replaying songs.
+                    tracks.retain(|t| !exclude.contains(&yt_vid(t)));
+                    if tracks.is_empty() {
+                        ctrl.is_loading.set(false);
+                        ctrl.player.write().pause();
+                        ctrl.is_playing.set(false);
+                        return;
                     }
                     ctrl.play_queue_linear(tracks);
                 }
@@ -2018,6 +2075,25 @@ impl PlayerController {
                     .get(current_idx)
                     .unwrap_or(&current_idx),
             );
+        }
+
+        // Android: ExoPlayer holds a pre-resolved queue in the OLD order, so
+        // toggling shuffle mid-playback would leave the engine advancing through
+        // the old order while the UI shows the new one. Re-feed it the new play
+        // order, resuming the CURRENT track at its current position so the song
+        // continues without a visible restart.
+        #[cfg(target_os = "android")]
+        if !self.queue.peek().is_empty() {
+            let idx = *self.current_queue_index.peek();
+            let tracks = self.play_order_tracks();
+            let cookies = self
+                .config
+                .peek()
+                .server
+                .as_ref()
+                .and_then(|s| s.access_token.clone());
+            let pos_ms = (*self.current_song_progress.peek() as i64) * 1000;
+            crate::android_exo::play(tracks, idx, cookies, pos_ms);
         }
     }
 

@@ -118,11 +118,14 @@ pub fn ShowcaseNormal(props: ShowcaseProps) -> Element {
                          }
                      }
                  }
-                 div { class: "flex-1",
+                 div { class: "flex-1 min-w-0",
                      if !props.description.is_empty() {
                          h5 { class: "text-sm font-bold tracking-widest text-white/60 uppercase mb-2", "{props.description}" }
                      }
-                     h1 { class: if cfg!(target_os = "android") { "text-3xl font-bold text-white mb-3" } else { "text-5xl md:text-7xl font-bold text-white mb-6" }, "{props.name}" }
+                     // break-words: a long single-word title (e.g. "statesides")
+                     // at text-7xl would otherwise refuse to shrink and push the
+                     // action buttons off the overflow-x-hidden edge (they vanish).
+                     h1 { class: if cfg!(target_os = "android") { "text-3xl font-bold text-white mb-3 break-words" } else { "text-5xl md:text-7xl font-bold text-white mb-6 break-words" }, "{props.name}" }
                      div { class: if cfg!(target_os = "android") { "flex items-center justify-center gap-4 text-slate-400" } else { "flex items-center gap-6 text-slate-400" },
                          {
                             let count = props.tracks.len();
@@ -136,7 +139,7 @@ pub fn ShowcaseNormal(props: ShowcaseProps) -> Element {
                      }
                  }
 
-                div { class: "flex items-center gap-4",
+                div { class: "flex items-center gap-4 flex-shrink-0",
                      if !props.tracks.is_empty() {
                         button {
                             class: format!("w-14 h-14 rounded-full flex items-center justify-center {}", if *ctrl.shuffle.read() { "text-white" } else { "text-slate-400 hover:text-white" }),
@@ -227,7 +230,24 @@ pub fn ShowcaseNormal(props: ShowcaseProps) -> Element {
                          for (display_idx, (track, idx)) in sorted_track_pairs.iter().enumerate().skip(scroll_info.start_index).take(scroll_info.items_to_render) {
                          {
                              let idx = *idx;
-                             let cover_url = if is_server_source {
+                             let sc_path = track.path.to_string_lossy();
+                             let cover_url = if sc_path.starts_with("soundcloud:") {
+                                 // SoundCloud carries its thumbnail in the path
+                                 // (soundcloud:<hexUrl>:urlhex_<hex>:…). Resolve it
+                                 // regardless of active source — SC tracks can sit
+                                 // in local playlists too, where the else-branch
+                                 // library lookup would miss and drop the cover.
+                                 utils::map_cover_url(
+                                     utils::jellyfin_image::track_cover_url_with_album_fallback(
+                                         &sc_path,
+                                         &track.album_id,
+                                         "",
+                                         None,
+                                         80,
+                                         80,
+                                     ),
+                                 )
+                             } else if is_server_source {
                                  if let Some(server) = &config.read().server {
                                      let path_str = track.path.to_string_lossy();
                                      let url = match server.service {

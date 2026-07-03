@@ -446,6 +446,13 @@ impl YouTubeMusicClient {
         mix::start_mix(seed_video_id, self.cookies.as_deref().unwrap_or("")).await
     }
 
+    /// Radio blended from SEVERAL seed videos (e.g. tracks sampled across a
+    /// whole playlist) so the continuation reflects the playlist's overall
+    /// vibe, not just the last song. Interleaved + deduped across seeds.
+    pub async fn start_mix_multi(&self, seed_video_ids: &[String]) -> Result<Vec<Track>, String> {
+        mix::start_mix_multi(seed_video_ids, self.cookies.as_deref().unwrap_or("")).await
+    }
+
     pub async fn discover_home(&self) -> Result<discover::DiscoverHome, String> {
         discover::fetch_home(self.cookies.as_deref().unwrap_or("")).await
     }
