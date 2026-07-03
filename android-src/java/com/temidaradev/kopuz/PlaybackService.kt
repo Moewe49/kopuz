@@ -55,7 +55,7 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                nativeOnState(isPlaying, player.currentPosition)
+                nativeOnState(isPlaying, player.currentPosition, knownDuration(player))
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -84,7 +84,9 @@ class PlaybackService : MediaSessionService() {
     private val positionTicker = Handler(Looper.getMainLooper())
     private val positionTick = object : Runnable {
         override fun run() {
-            mediaSession?.player?.let { nativeOnState(it.isPlaying, it.currentPosition) }
+            mediaSession?.player?.let {
+                nativeOnState(it.isPlaying, it.currentPosition, knownDuration(it))
+            }
             positionTicker.postDelayed(this, 500)
         }
     }
@@ -163,9 +165,15 @@ class PlaybackService : MediaSessionService() {
         // --- Kotlin → Rust callbacks (implemented in Rust via JNI) ---------
 
         @JvmStatic external fun nativeOnTransition(mediaId: String, index: Int)
-        @JvmStatic external fun nativeOnState(isPlaying: Boolean, positionMs: Long)
+        @JvmStatic external fun nativeOnState(isPlaying: Boolean, positionMs: Long, durationMs: Long)
         @JvmStatic external fun nativeOnEnded()
         @JvmStatic external fun nativeOnError(mediaId: String, errorCode: Int)
+
+        /** Real media duration once ExoPlayer knows it, else 0. Track metadata
+         *  often lacks a duration (e.g. YT search results), so this feeds the
+         *  Rust side the authoritative value for the progress bar + seek max. */
+        private fun knownDuration(p: Player): Long =
+            p.duration.let { if (it == C.TIME_UNSET || it < 0) 0L else it }
 
         // --- helpers -------------------------------------------------------
 

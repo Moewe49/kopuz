@@ -8,8 +8,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, DefWindowProcW, EnableMenuItem, GWL_STYLE, GWLP_WNDPROC, GetSystemMenu,
     GetWindowLongPtrW, GetWindowRect, HTCAPTION, HTCLIENT, HTMAXBUTTON, HTSYSMENU, MF_BYCOMMAND,
     MF_ENABLED, MF_GRAYED, SC_MAXIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SetWindowLongPtrW,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_NCHITTEST, WM_NCRBUTTONUP, WM_SYSCOMMAND,
-    WNDPROC, WS_MAXIMIZE,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_NCHITTEST, WM_NCLBUTTONDOWN,
+    WM_NCLBUTTONUP, WM_NCRBUTTONUP, WM_SYSCOMMAND, WNDPROC, WS_MAXIMIZE,
 };
 
 static CUSTOM_TITLEBAR_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -85,6 +85,34 @@ unsafe extern "system" fn titlebar_wndproc(
             }
 
             call_prev_wndproc(hwnd, msg, wparam, lparam)
+        }
+        // Returning HTMAXBUTTON from the hit-test (needed for the Windows 11
+        // snap-layout flyout) reclassifies clicks there as NON-client, so the
+        // DOM maximize button underneath never sees them — and with no native
+        // caption DefWindowProc doesn't maximize either. The button was a dead
+        // click zone; handle the non-client click ourselves.
+        WM_NCLBUTTONDOWN
+            if CUSTOM_TITLEBAR_ENABLED.load(Ordering::Relaxed)
+                && wparam.0 as u32 == HTMAXBUTTON =>
+        {
+            LRESULT(0)
+        }
+        WM_NCLBUTTONUP
+            if CUSTOM_TITLEBAR_ENABLED.load(Ordering::Relaxed)
+                && wparam.0 as u32 == HTMAXBUTTON =>
+        {
+            let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+            let is_maximized = style & WS_MAXIMIZE.0 as isize != 0;
+            let cmd = if is_maximized { SC_RESTORE } else { SC_MAXIMIZE };
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    Some(hwnd),
+                    WM_SYSCOMMAND,
+                    WPARAM(cmd as usize),
+                    LPARAM(0),
+                );
+            }
+            LRESULT(0)
         }
         _ => call_prev_wndproc(hwnd, msg, wparam, lparam),
     }

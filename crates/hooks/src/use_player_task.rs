@@ -286,6 +286,36 @@ pub fn use_player_task(ctrl: PlayerController) {
                     ctrl.is_playing.set(update.playing);
                     ctrl.current_song_progress
                         .set((update.position_ms / 1000).max(0) as u64);
+                    // ExoPlayer is the only reliable duration source when the
+                    // track metadata has none (YT search results) — without
+                    // this the progress bar max stayed 0 and every seek
+                    // clamped to 0:00. u64::MAX is the radio sentinel
+                    // (seek disabled) — never overwrite it.
+                    let dur_secs = (update.duration_ms / 1000).max(0) as u64;
+                    if dur_secs > 0 {
+                        let cur = *ctrl.current_song_duration.peek();
+                        if cur != u64::MAX && cur != dur_secs {
+                            ctrl.current_song_duration.set(dur_secs);
+                        }
+                        // Backfill the queue Track too, so the re-hydrate on
+                        // the next auto-advance reconcile doesn't flash the
+                        // duration back to 0. peek-first: taking the write
+                        // lock every tick would dirty the queue Signal and
+                        // re-render everything watching it.
+                        if let Some(p) = ctrl.get_current_track_index() {
+                            let needs_backfill = ctrl
+                                .queue
+                                .peek()
+                                .get(p)
+                                .map(|t| t.duration == 0)
+                                .unwrap_or(false);
+                            if needs_backfill
+                                && let Some(t) = ctrl.queue.write().get_mut(p)
+                            {
+                                t.duration = dur_secs;
+                            }
+                        }
+                    }
                 }
 
                 let is_playing = *ctrl.is_playing.read();

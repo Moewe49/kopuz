@@ -54,6 +54,9 @@ static CUR_INDEX: AtomicUsize = AtomicUsize::new(0);
 static INDEX_DIRTY: AtomicBool = AtomicBool::new(false);
 static PLAYING: AtomicBool = AtomicBool::new(false);
 static POSITION_MS: AtomicI64 = AtomicI64::new(0);
+/// ExoPlayer's authoritative media duration — the ONLY reliable source when
+/// track metadata has none (e.g. YT search results). 0 = not yet known.
+static DURATION_MS: AtomicI64 = AtomicI64::new(0);
 
 /// A snapshot for the UI to reconcile. `current_index` is `Some` only when the
 /// playing track changed since the last read.
@@ -61,6 +64,7 @@ pub struct UiUpdate {
     pub current_index: Option<usize>,
     pub playing: bool,
     pub position_ms: i64,
+    pub duration_ms: i64,
 }
 
 /// Read the latest playback state (called by the Dioxus driver on its thread).
@@ -74,6 +78,7 @@ pub fn take_ui_update() -> UiUpdate {
         current_index,
         playing: PLAYING.load(Ordering::Acquire),
         position_ms: POSITION_MS.load(Ordering::Acquire),
+        duration_ms: DURATION_MS.load(Ordering::Acquire),
     }
 }
 
@@ -229,6 +234,9 @@ async fn handle_cmd(cmd: Cmd) {
 async fn handle_event(ev: ExoEvent) {
     match ev {
         ExoEvent::Transition { media_id, .. } => {
+            // New track → the previous track's duration must not leak onto it
+            // (ExoPlayer reports the fresh one within ~a tick once loaded).
+            DURATION_MS.store(0, Ordering::Release);
             let (qidx, refill_from, refill_to, cookies) = {
                 let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
                 let qidx = m.tracks.iter().position(|t| track_id(t) == media_id);
@@ -257,10 +265,14 @@ async fn handle_event(ev: ExoEvent) {
         ExoEvent::State {
             playing,
             position_ms,
+            duration_ms,
         } => {
             PLAYING.store(playing, Ordering::Release);
             if position_ms >= 0 {
                 POSITION_MS.store(position_ms, Ordering::Release);
+            }
+            if duration_ms > 0 {
+                DURATION_MS.store(duration_ms, Ordering::Release);
             }
         }
         ExoEvent::Ended => {
@@ -287,6 +299,7 @@ pub fn play(tracks: Vec<Track>, start_index: usize, cookies: Option<String>, pos
         m.resolved_upto = m.index;
         m.cookies = cookies;
     }
+    DURATION_MS.store(0, Ordering::Release);
     let _ = engine_tx().send(Cmd::PlayFrom { position_ms });
 }
 

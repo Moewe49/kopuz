@@ -509,18 +509,34 @@ pub fn JellyfinPlaylists(
                                 )
                             }).collect()
                         };
+                        // SoundCloud overlay tracks attached to this playlist
+                        // (they can't live in the server's track list).
+                        let sc_requests = crate::server::download_manager::soundcloud_requests_for(
+                            &playlist_store.read(),
+                            &playlist.id,
+                        );
                         let is_dl = {
                             let q = download_queue.read();
-                            playlist.tracks.iter().any(|tid| q.items.iter().any(|i| &i.id == tid && matches!(i.status, DownloadStatus::Queued | DownloadStatus::Downloading)))
+                            playlist.tracks.iter().map(|t| t.as_str())
+                                .chain(sc_requests.iter().map(|(id, _, _)| id.as_str()))
+                                .any(|tid| q.items.iter().any(|i| i.id == tid && matches!(i.status, DownloadStatus::Queued | DownloadStatus::Downloading)))
                         };
 
-                        let all_downloaded = !playlist.tracks.is_empty() && playlist.tracks.iter().all(|tid| {
-                            if let Some(path_str) = config.read().offline_tracks.get(tid) {
-                                std::path::Path::new(path_str).exists()
-                            } else {
-                                false
-                            }
-                        });
+                        let all_downloaded = {
+                            let conf = config.read();
+                            let offline = |key: &str| {
+                                conf.offline_tracks
+                                    .get(key)
+                                    .map(|p| std::path::Path::new(p).exists())
+                                    .unwrap_or(false)
+                            };
+                            (!playlist.tracks.is_empty() || !sc_requests.is_empty())
+                                && playlist.tracks.iter().all(|tid| offline(tid))
+                                // SC offline key = the hex permalink (path segment 1).
+                                && sc_requests
+                                    .iter()
+                                    .all(|(id, _, _)| offline(id.split(':').nth(1).unwrap_or(id)))
+                        };
                         // Count SoundCloud overlay tracks attached to this YT
                         // playlist so the overview total matches the detail.
                         let total_tracks = playlist.tracks.len()
@@ -562,38 +578,57 @@ pub fn JellyfinPlaylists(
                                     onclick: {
                                         let playlist_name_dl = playlist.name.clone();
                                         let playlist_id_dl2 = playlist.id.clone();
-                                        let known_ids = playlist.tracks.clone();
+                                        let known_ids = {
+                                            let mut ids = playlist.tracks.clone();
+                                            ids.extend(sc_requests.iter().map(|(id, _, _)| id.clone()));
+                                            ids
+                                        };
                                         move |evt: Event<MouseData>| {
                                             evt.stop_propagation();
                                             if all_downloaded {
                                                 crate::server::download_manager::delete_downloads(known_ids.clone(), config, download_queue);
                                                 return;
                                             }
-                                            let subdir = Some(playlist_name_dl.clone());
                                             // Group all of a playlist's downloads under
                                             // <downloads>/<Playlist Name>/.
-                                            if !track_requests_dl.is_empty() {
-                                                queue_downloads_into(track_requests_dl.clone(), subdir, config, download_queue);
+                                            let subdir = Some(playlist_name_dl.clone());
+                                            let is_yt = matches!(
+                                                config.peek().server.as_ref().map(|s| s.service),
+                                                Some(MusicService::YtMusic)
+                                            );
+                                            if !is_yt {
+                                                let mut requests = track_requests_dl.clone();
+                                                requests.extend(sc_requests.iter().cloned());
+                                                if !requests.is_empty() {
+                                                    queue_downloads_into(requests, subdir, config, download_queue);
+                                                }
                                                 return;
                                             }
-                                            // Tracks aren't loaded yet (e.g. a freshly
-                                            // imported playlist the bulk sync hasn't
-                                            // filled in) — fetch entries on demand so the
-                                            // download button still works. spawn_forever:
-                                            // navigating away must not cancel the fetch.
+                                            // YT: always fetch the CURRENT entries — the
+                                            // cached list goes stale when songs are added
+                                            // from other pages, which made this button
+                                            // claim "already downloaded" for fresh songs.
+                                            // spawn_forever: navigating away must not
+                                            // cancel the fetch.
                                             let pid = playlist_id_dl2.clone();
+                                            let fallback = track_requests_dl.clone();
+                                            let sc = sc_requests.clone();
                                             dioxus::core::spawn_forever(async move {
                                                 let cookies = config.peek().server.as_ref().and_then(|s| s.access_token.clone());
-                                                let Some(cookies) = cookies else { return; };
-                                                let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-                                                if let Ok(tracks) = yt.get_playlist_entries(&pid).await {
-                                                    let requests: Vec<(String, String, String)> = tracks.iter().filter_map(|t| {
-                                                        let vid = t.path.to_string_lossy().split(':').nth(1).map(|s| s.to_string())?;
-                                                        Some((vid, t.title.clone(), t.artist.clone()))
-                                                    }).collect();
-                                                    if !requests.is_empty() {
-                                                        queue_downloads_into(requests, subdir, config, download_queue);
+                                                let mut live: Vec<(String, String, String)> = Vec::new();
+                                                if let Some(cookies) = cookies {
+                                                    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
+                                                    if let Ok(tracks) = yt.get_playlist_entries(&pid).await {
+                                                        live = tracks.iter().filter_map(|t| {
+                                                            let vid = t.path.to_string_lossy().split(':').nth(1).filter(|s| !s.is_empty()).map(|s| s.to_string())?;
+                                                            Some((vid, t.title.clone(), t.artist.clone()))
+                                                        }).collect();
                                                     }
+                                                }
+                                                let mut requests = if live.is_empty() { fallback } else { live };
+                                                requests.extend(sc);
+                                                if !requests.is_empty() {
+                                                    queue_downloads_into(requests, subdir, config, download_queue);
                                                 }
                                             });
                                         }

@@ -30,6 +30,45 @@ fn epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// offline_tracks key for a queued download id. YT/Jellyfin ids are used
+/// as-is; a SoundCloud queue id (`soundcloud:<hexUrl>[:…]`) maps to just the
+/// hexUrl, because playback and the showcase buttons look tracks up by path
+/// segment 1 (`path.split(':').nth(1)`), which for SC paths is that hexUrl.
+fn offline_key(id: &str) -> &str {
+    id.strip_prefix("soundcloud:")
+        .and_then(|rest| rest.split(':').next())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(id)
+}
+
+/// `(queue_id, title, artist)` download requests for the SoundCloud tracks
+/// attached to a playlist via the local overlay. Server track lists can't hold
+/// `soundcloud:` entries (YT only accepts video ids), so bulk playlist
+/// downloads must pull them from `PlaylistStore::external_tracks` — without
+/// this they were silently skipped. The queue id is truncated to
+/// `soundcloud:<hexUrl>` so cover/title changes don't mint a new download id.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn soundcloud_requests_for(
+    store: &reader::PlaylistStore,
+    playlist_id: &str,
+) -> Vec<(String, String, String)> {
+    store
+        .external_tracks
+        .get(playlist_id)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(|p| {
+                    let ps = p.to_string_lossy();
+                    let t = ::server::soundcloud::track_from_path(&ps)?;
+                    let id: String = ps.split(':').take(2).collect::<Vec<_>>().join(":");
+                    Some((id, t.title, t.artist))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn register_progress_signal(signal: Signal<DownloadProgress>) {
     DOWNLOAD_PROGRESS.with(|s| s.set(Some(signal)));
 }
@@ -97,7 +136,7 @@ pub fn queue_downloads_into(
             // block a re-download (the "says downloaded but folder empty" bug).
             let on_disk = conf
                 .offline_tracks
-                .get(id)
+                .get(offline_key(id))
                 .map(|p| std::path::Path::new(p).exists())
                 .unwrap_or(false);
             if on_disk {
@@ -239,7 +278,7 @@ async fn download_worker(
         let on_disk = config
             .read()
             .offline_tracks
-            .get(&id)
+            .get(offline_key(&id))
             .map(|p| std::path::Path::new(p).exists())
             .unwrap_or(false);
         if on_disk {
@@ -283,7 +322,31 @@ async fn download_worker(
             if cancel_flag.load(Ordering::Relaxed) {
                 break;
             }
-            let outcome: Result<std::path::PathBuf, String> = if is_yt && ytdlp_available {
+            let outcome: Result<std::path::PathBuf, String> = if ::server::soundcloud::is_soundcloud_path(&id)
+            {
+                // SoundCloud: resolve the permalink to a progressive stream
+                // (yt-dlp under the hood) and stream it like any other URL.
+                // content_length from yt-dlp can be filesize_approx, so pass
+                // None to skip the strict Range/206 path (it requires exact
+                // lengths) and download sequentially.
+                match ::server::soundcloud::resolve_path(&id).await {
+                    Ok(info) => {
+                        download_with_progress(
+                            &id,
+                            &info.url,
+                            info.format.extension(),
+                            &dest_no_ext,
+                            Some(&info.user_agent),
+                            None,
+                            &mut queue,
+                            &session_start,
+                            &cancel_flag,
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                }
+            } else if is_yt && ytdlp_available {
                 remove_stem_files(&dest_no_ext);
                 ytdlp_download_with_progress(&id, &dest_no_ext, None, &mut queue, &session_start)
                     .await
@@ -347,7 +410,7 @@ async fn download_worker(
                     config
                         .write()
                         .offline_tracks
-                        .insert(id.clone(), path.to_string_lossy().into_owned());
+                        .insert(offline_key(&id).to_string(), path.to_string_lossy().into_owned());
                     if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                         item.status = DownloadStatus::Done;
                     }
@@ -499,7 +562,7 @@ pub fn delete_downloads(
     let mut q = queue.write();
 
     for id in ids {
-        if let Some(path_str) = conf.offline_tracks.remove(&id) {
+        if let Some(path_str) = conf.offline_tracks.remove(offline_key(&id)) {
             let path = std::path::Path::new(&path_str);
             if path.exists() {
                 let _ = std::fs::remove_file(path);

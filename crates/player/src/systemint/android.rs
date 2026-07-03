@@ -860,8 +860,14 @@ pub extern "system" fn Java_com_temidaradev_kopuz_PotMinter_nativeOnPot(
 pub enum ExoEvent {
     /// ExoPlayer auto-advanced / skipped to a new item.
     Transition { media_id: String, index: i32 },
-    /// Play/pause state changed (position in ms at the time).
-    State { playing: bool, position_ms: i64 },
+    /// Play/pause state changed or the ~500ms position tick. `duration_ms` is
+    /// ExoPlayer's authoritative media duration (0 while still unknown) —
+    /// track metadata often has none (e.g. YT search results).
+    State {
+        playing: bool,
+        position_ms: i64,
+        duration_ms: i64,
+    },
     /// The whole playlist ended (ExoPlayer ran out of items).
     Ended,
     /// A playback error (usually an expired googlevideo URL → re-resolve).
@@ -1020,10 +1026,12 @@ pub extern "system" fn Java_com_temidaradev_kopuz_PlaybackService_nativeOnState(
     _class: JClass,
     is_playing: jni::sys::jboolean,
     position_ms: jni::sys::jlong,
+    duration_ms: jni::sys::jlong,
 ) {
     push_exo_event(ExoEvent::State {
         playing: is_playing != 0,
         position_ms,
+        duration_ms,
     });
 }
 
