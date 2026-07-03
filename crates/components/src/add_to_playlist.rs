@@ -59,6 +59,71 @@ pub fn AddToPlaylistHost(
     // back in, so the song shows + plays inside the YT playlist anyway.
     let is_external = server::soundcloud::is_soundcloud_path(&track.path.to_string_lossy());
     let is_server = config.read().active_source == MusicSource::Server;
+    // A YT Music server can hold a matched YT video for a cross-service track,
+    // so it syncs across devices; Jellyfin/Subsonic can only hold their own
+    // catalog, so those keep the local overlay.
+    let is_ytmusic = matches!(
+        config.read().server.as_ref().map(|s| s.service),
+        Some(MusicService::YtMusic)
+    );
+
+    // Cross-service: try to match an external (SoundCloud) track to a YT video
+    // and add THAT to the YT playlist so it syncs everywhere. Falls back to the
+    // local overlay (the real SC track) when there's no confident match.
+    let attach_external_matched = move |playlist_id: String, track: Track| {
+        let mut store = playlist_store;
+        let cfg = config;
+        spawn(async move {
+            let artists = if track.artists.is_empty() {
+                vec![track.artist.clone()]
+            } else {
+                track.artists.clone()
+            };
+            let matched = server::spotify::matcher::match_external_to_yt(
+                &track.title,
+                &artists,
+                track.duration,
+            )
+            .await;
+            let video_id = matched.as_ref().and_then(|t| {
+                t.path
+                    .to_str()
+                    .and_then(|s| s.split(':').nth(1))
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty())
+            });
+            match video_id {
+                Some(vid) => {
+                    // Optimistic local reflect + remote add to the YT playlist.
+                    {
+                        let mut s = store.write();
+                        if let Some(pl) =
+                            s.jellyfin_playlists.iter_mut().find(|p| p.id == playlist_id)
+                            && !pl.tracks.contains(&vid)
+                        {
+                            pl.tracks.push(vid.clone());
+                        }
+                    }
+                    let conf = cfg.peek().clone();
+                    if let Some(token) =
+                        conf.server.as_ref().and_then(|s| s.access_token.clone())
+                    {
+                        let yt = server::ytmusic::YouTubeMusicClient::with_cookies(token);
+                        let _ = yt.add_to_playlist(&playlist_id, &vid).await;
+                    }
+                }
+                None => {
+                    // No confident YT match → keep the real SoundCloud track in
+                    // the overlay (plays natively; syncs once overlay sync lands).
+                    let mut s = store.write();
+                    let entry = s.external_tracks.entry(playlist_id).or_default();
+                    if !entry.contains(&track.path) {
+                        entry.push(track.path.clone());
+                    }
+                }
+            }
+        });
+    };
 
     // Attach an external track to a (server or local) playlist via the overlay.
     let mut add_external = move |playlist_id: String, track: Track| {
@@ -204,9 +269,12 @@ pub fn AddToPlaylistHost(
                         })
                         .unwrap_or_default()
                 };
-                if is_external {
-                    // Can't live in the server catalog → store in the overlay
-                    // for this playlist id (works for both server and local).
+                if is_external && is_server && is_ytmusic {
+                    // Match to a YT video (syncs across devices); overlay fallback.
+                    attach_external_matched(playlist_id, track_for_add.clone());
+                } else if is_external {
+                    // Non-YT server / local source: keep in the overlay for this
+                    // playlist id (works for both server and local).
                     add_external(playlist_id, track_for_add.clone());
                 } else if is_server {
                     server_add(playlist_id, track_for_add.clone());

@@ -143,6 +143,35 @@ async fn match_one(_cookies: Option<String>, sp: &SpotifyTrack) -> TrackMatch {
     }
 }
 
+/// Match an arbitrary `(title, artists, duration)` — e.g. a SoundCloud track —
+/// to a YT Music video. Returns the matched YT [`Track`] (path
+/// `ytmusic:<vid>:…`) when a candidate clears [`MIN_SCORE`], else `None`.
+/// Anonymous search; reuses the Spotify scoring so cross-service matching
+/// behaves identically. Used to store SC/Spotify tracks as their YT equivalent
+/// in a server playlist (which then syncs across devices).
+pub async fn match_external_to_yt(
+    title: &str,
+    artists: &[String],
+    duration_secs: u64,
+) -> Option<Track> {
+    let sp = SpotifyTrack {
+        title: title.to_string(),
+        artists: artists.to_vec(),
+        duration_secs,
+    };
+    let client = YouTubeMusicClient::new();
+    let query = format!("{} {}", title, artists.join(" "));
+    let candidates = client.search_tracks(&query).await.unwrap_or_default();
+    let mut best: Option<(f64, Track)> = None;
+    for cand in candidates.into_iter().take(CANDIDATE_LIMIT) {
+        let s = score(&sp, &cand);
+        if best.as_ref().is_none_or(|(b, _)| s > *b) {
+            best = Some((s, cand));
+        }
+    }
+    best.filter(|(s, _)| *s >= MIN_SCORE).map(|(_, t)| t)
+}
+
 /// Create the playlist on the signed-in YT Music account. Returns the
 /// new playlist id; the caller refreshes the library so it shows up.
 pub async fn clone_to_ytmusic<F>(
