@@ -1,10 +1,17 @@
 package com.temidaradev.kopuz
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -14,6 +21,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaStyleNotificationHelper
 import org.json.JSONArray
 
 /**
@@ -36,6 +44,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        createNotificationChannel()
         val player = ExoPlayer.Builder(this)
             // USAGE_MEDIA + focus handling → Samsung stops "AudioHardening"-muting us,
             // and calls/other media duck/pause us correctly.
@@ -52,14 +61,17 @@ class PlaybackService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 nativeOnTransition(mediaItem?.mediaId ?: "", player.currentMediaItemIndex)
+                refreshNotification()
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 nativeOnState(isPlaying, player.currentPosition, knownDuration(player))
+                refreshNotification()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) nativeOnEnded()
+                refreshNotification()
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -94,6 +106,73 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
         mediaSession
 
+    // CRITICAL for background playback: this app drives ExoPlayer directly (no
+    // MediaController connects), so Media3's automatic foreground promotion
+    // never triggered — the process stayed CACHED and Samsung froze it after a
+    // few songs (engine thread suspended → look-ahead stopped refilling →
+    // playback died). We foreground the service OURSELVES, immediately, so the
+    // OS keeps the process (and the native engine thread) alive in the
+    // background. startForeground here also satisfies the 5s deadline of
+    // startForegroundService BEFORE ExoPlayer buffers the network URL.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        goForeground()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun goForeground() {
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIF_ID,
+                buildNotification(),
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                else 0,
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /** Re-post the notification so its title/state track the current song. */
+    private fun refreshNotification() {
+        if (INSTANCE == null) return
+        try {
+            val mgr = getSystemService(NotificationManager::class.java)
+            mgr?.notify(NOTIF_ID, buildNotification())
+        } catch (_: Exception) {}
+    }
+
+    private fun buildNotification(): android.app.Notification {
+        val meta = mediaSession?.player?.mediaMetadata
+        val open = packageManager.getLaunchIntentForPackage(packageName)?.let {
+            PendingIntent.getActivity(
+                this, 0, it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        val b = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(meta?.title ?: "Kopuz")
+            .setContentText(meta?.artist ?: "")
+            .setOngoing(true)
+            .setContentIntent(open)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        mediaSession?.let { b.setStyle(MediaStyleNotificationHelper.MediaStyle(it)) }
+        return b.build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                CHANNEL_ID,
+                "Playback",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply { setShowBadge(false) }
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(ch)
+        }
+    }
+
     // Keep playing when the task is swiped away (a real music app doesn't stop).
     override fun onTaskRemoved(rootIntent: Intent?) {
         // no-op: don't stopSelf; playback continues via the foreground service.
@@ -101,6 +180,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         positionTicker.removeCallbacks(positionTick)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         mediaSession?.run {
             player.release()
             release()
@@ -115,6 +195,8 @@ class PlaybackService : MediaSessionService() {
         // A command that arrived before onCreate finished; replayed once the player exists.
         @Volatile private var pending: ((Player) -> Unit)? = null
         private val main = Handler(Looper.getMainLooper())
+        private const val NOTIF_ID = 1001
+        private const val CHANNEL_ID = "kopuz_playback"
 
         // --- Rust → Kotlin commands (called over JNI) ----------------------
 
@@ -197,12 +279,14 @@ class PlaybackService : MediaSessionService() {
             if (INSTANCE != null) return
             val intent = Intent(context, PlaybackService::class.java)
             try {
-                // NOT startForegroundService: that imposes a 5s "call startForeground()"
-                // deadline, but ExoPlayer may still be buffering the (network) URL at that
-                // point → ForegroundServiceDidNotStartInTime crash. Media3 promotes the
-                // service to foreground itself once playback actually starts. First play is
-                // always from the foregrounded app, so a plain startService is allowed.
-                context.startService(intent)
+                // startForegroundService (NOT plain startService): the service's
+                // onStartCommand calls startForeground() IMMEDIATELY (before
+                // ExoPlayer buffers the network URL), so it satisfies the 5s
+                // deadline AND the process becomes a real foreground service.
+                // Plain startService left it CACHED → Samsung froze it after a
+                // few songs and playback died. First play is always from the
+                // foregrounded app, so starting the FGS is allowed.
+                androidx.core.content.ContextCompat.startForegroundService(context, intent)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
