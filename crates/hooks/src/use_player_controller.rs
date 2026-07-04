@@ -2438,6 +2438,8 @@ impl PlayerController {
             .server
             .as_ref()
             .and_then(|s| s.access_token.clone());
+        // Let the engine start end-of-queue autoradio itself (works backgrounded).
+        crate::android_exo::set_autoradio(self.config.peek().autoradio);
         self.current_queue_index.set(idx);
         self.hydrate_current_track_metadata(idx, 0);
         let cover = self.cover_url_for_track(track);

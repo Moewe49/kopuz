@@ -279,6 +279,15 @@ pub fn use_player_task(ctrl: PlayerController) {
                 #[cfg(target_os = "android")]
                 {
                     let update = crate::android_exo::take_ui_update();
+                    // The engine seeded an autoradio continuation itself (queue
+                    // ended while backgrounded) → adopt it as the UI queue before
+                    // reconciling the index onto it.
+                    if let Some(new_queue) = update.new_queue {
+                        ctrl.queue.set(new_queue);
+                        ctrl.shuffle.set(false);
+                        ctrl.shuffle_order.set(Vec::new());
+                        ctrl.current_queue_index.set(0);
+                    }
                     if let Some(idx) = update.current_index {
                         eprintln!("[exo-driver] reconcile -> idx {idx}");
                         ctrl.reconcile_exo_current(idx);

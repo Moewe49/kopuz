@@ -49,6 +49,30 @@ fn mirror() -> &'static Mutex<Mirror> {
     })
 }
 
+/// (media_id, consecutive-error count) for the currently-failing track, so a
+/// dead video is retried once then skipped instead of looping forever.
+fn err_tracker() -> &'static Mutex<(String, u32)> {
+    static T: OnceLock<Mutex<(String, u32)>> = OnceLock::new();
+    T.get_or_init(|| Mutex::new((String::new(), 0)))
+}
+
+/// A queue the engine seeded itself (end-of-queue autoradio) — handed to the
+/// Dioxus driver so it replaces the UI queue. Behind a lock because it carries
+/// owned `Track`s, not a scalar.
+fn new_queue_slot() -> &'static Mutex<Option<Vec<Track>>> {
+    static Q: OnceLock<Mutex<Option<Vec<Track>>>> = OnceLock::new();
+    Q.get_or_init(|| Mutex::new(None))
+}
+
+/// Whether end-of-queue autoradio is enabled (mirrors config.autoradio). Set by
+/// the controller so the engine can start the continuation itself — on its own
+/// thread, which keeps running in the background (the Dioxus driver doesn't).
+static AUTORADIO_ON: AtomicBool = AtomicBool::new(true);
+
+pub fn set_autoradio(on: bool) {
+    AUTORADIO_ON.store(on, Ordering::Release);
+}
+
 // --- Shared playback state: engine writes, the Dioxus driver reads. ----------
 static CUR_INDEX: AtomicUsize = AtomicUsize::new(0);
 static INDEX_DIRTY: AtomicBool = AtomicBool::new(false);
@@ -70,6 +94,9 @@ pub struct UiUpdate {
     pub position_ms: i64,
     pub duration_ms: i64,
     pub ended: bool,
+    /// The engine replaced the queue itself (autoradio continuation) — the
+    /// driver adopts it as the new UI queue.
+    pub new_queue: Option<Vec<Track>>,
 }
 
 /// Read the latest playback state (called by the Dioxus driver on its thread).
@@ -79,12 +106,17 @@ pub fn take_ui_update() -> UiUpdate {
     } else {
         None
     };
+    let new_queue = new_queue_slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
     UiUpdate {
         current_index,
         playing: PLAYING.load(Ordering::Acquire),
         position_ms: POSITION_MS.load(Ordering::Acquire),
         duration_ms: DURATION_MS.load(Ordering::Acquire),
         ended: ENDED_DIRTY.swap(false, Ordering::AcqRel),
+        new_queue,
     }
 }
 
@@ -302,6 +334,53 @@ async fn handle_reorder_upcoming() {
     systemint::exo_replace_upcoming(&serde_json::Value::Array(items).to_string());
 }
 
+/// End-of-queue continuation: seed a YT radio from the WHOLE finished playlist,
+/// on the engine thread (so it works while backgrounded — the Dioxus driver's
+/// autoradio doesn't). Publishes the radio as the new UI queue and starts it.
+/// Returns true if a radio actually started.
+async fn seed_autoradio() -> bool {
+    let (seeds, exclude, cookies) = {
+        let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+        let played: Vec<String> = m.tracks.iter().filter_map(video_id).collect();
+        if played.is_empty() {
+            return false;
+        }
+        let n = played.len();
+        // Up to 4 seeds spread across the playlist (first + last included).
+        let mut seeds: Vec<String> = Vec::new();
+        for k in 0..4usize {
+            let pos = k * n.saturating_sub(1) / 3;
+            if let Some(v) = played.get(pos)
+                && !seeds.contains(v)
+            {
+                seeds.push(v.clone());
+            }
+        }
+        let exclude: std::collections::HashSet<String> = played.into_iter().collect();
+        (seeds, exclude, m.cookies.clone())
+    };
+    let yt =
+        ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.unwrap_or_default());
+    let mut radio = match yt.start_mix_multi(&seeds).await {
+        Ok(t) if !t.is_empty() => t,
+        _ => return false,
+    };
+    radio.retain(|t| video_id(t).map(|v| !exclude.contains(&v)).unwrap_or(true));
+    if radio.is_empty() {
+        return false;
+    }
+    *new_queue_slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(radio.clone());
+    {
+        let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+        m.tracks = radio;
+        m.index = 0;
+        m.resolved_upto = 0;
+    }
+    DURATION_MS.store(0, Ordering::Release);
+    let _ = engine_tx().send(Cmd::PlayFrom { position_ms: 0 });
+    true
+}
+
 async fn handle_event(ev: ExoEvent) {
     match ev {
         ExoEvent::Transition { media_id, .. } => {
@@ -363,6 +442,12 @@ async fn handle_event(ev: ExoEvent) {
                 }
                 eprintln!("[exo] ended early with tracks remaining — recovering");
                 let _ = engine_tx().send(Cmd::PlayFrom { position_ms: 0 });
+            } else if AUTORADIO_ON.load(Ordering::Acquire) && seed_autoradio().await {
+                // Seeded a radio continuation ON THIS THREAD — works even while
+                // the app is backgrounded (the Dioxus driver, which runs the
+                // desktop autoradio, is suspended then). The driver adopts the
+                // new queue into the UI via take_ui_update().new_queue.
+                eprintln!("[exo] queue ended — autoradio continuation started");
             } else {
                 PLAYING.store(false, Ordering::Release);
                 ENDED_DIRTY.store(true, Ordering::Release);
@@ -370,9 +455,50 @@ async fn handle_event(ev: ExoEvent) {
             }
         }
         ExoEvent::Error { media_id, code } => {
-            eprintln!("[exo] player error {code} on {media_id} — reresolving");
-            let pos = POSITION_MS.load(Ordering::Acquire);
-            let _ = engine_tx().send(Cmd::Reresolve { position_ms: pos });
+            // Retry the SAME track once (a transient 403 / stale URL re-resolves
+            // fine); if it errors again the track is genuinely broken (region-
+            // locked / removed) → SKIP it. Without this a single dead video
+            // looped forever (re-resolve → error → re-resolve …), which is the
+            // real "playback stops after a few songs" — it got stuck on a bad
+            // track. The counter keys on media_id, so a different failing track
+            // starts fresh.
+            let tries = {
+                let mut t = err_tracker().lock().unwrap_or_else(|e| e.into_inner());
+                if t.0 == media_id {
+                    t.1 += 1;
+                } else {
+                    t.0 = media_id.clone();
+                    t.1 = 1;
+                }
+                t.1
+            };
+            if tries <= 1 {
+                eprintln!("[exo] error {code} on {media_id} — reresolve (try {tries})");
+                let pos = POSITION_MS.load(Ordering::Acquire);
+                let _ = engine_tx().send(Cmd::Reresolve { position_ms: pos });
+            } else {
+                let (skip_from, has_more) = {
+                    let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                    let idx = m
+                        .tracks
+                        .iter()
+                        .position(|t| track_id(t) == media_id)
+                        .unwrap_or(m.index);
+                    (idx + 1, idx + 1 < m.tracks.len())
+                };
+                if has_more {
+                    eprintln!("[exo] error {code} on {media_id} — skipping to {skip_from}");
+                    {
+                        let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                        m.index = skip_from;
+                    }
+                    let _ = engine_tx().send(Cmd::PlayFrom { position_ms: 0 });
+                } else {
+                    eprintln!("[exo] error {code} on {media_id} — last track, ending");
+                    PLAYING.store(false, Ordering::Release);
+                    ENDED_DIRTY.store(true, Ordering::Release);
+                }
+            }
         }
     }
 }
