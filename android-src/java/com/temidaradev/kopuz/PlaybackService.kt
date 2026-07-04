@@ -56,6 +56,12 @@ class PlaybackService : MediaSessionService() {
                 /* handleAudioFocus = */ true
             )
             .setHandleAudioBecomingNoisy(true)
+            // Hold a partial CPU wake lock + WiFi lock WHILE PLAYING so Doze
+            // (screen off for a while) can't throttle the network/CPU — without
+            // this, streaming + the look-ahead refills stalled after the screen
+            // slept and playback stopped after a few songs. Needs WAKE_LOCK
+            // (declared in the manifest).
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
         player.addListener(object : Player.Listener {

@@ -23,9 +23,10 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, OnceLock};
 
 /// Upcoming tracks kept resolved ahead of the current one in ExoPlayer's
-/// playlist. Bigger = more resilient to a refill hiccup; smaller = faster start
-/// (each resolve is a network call).
-const WINDOW_AHEAD: usize = 3;
+/// playlist. Bigger = more resilient to a refill hiccup / a background stall
+/// (so ExoPlayer has more buffered songs to keep playing through it); smaller =
+/// faster start (each resolve is a network call).
+const WINDOW_AHEAD: usize = 5;
 
 /// Canonical queue mirror — plain data, owned by the engine thread. Never a Signal.
 struct Mirror {
