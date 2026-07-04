@@ -24,8 +24,9 @@ mod android;
 
 #[cfg(target_os = "android")]
 pub use android::{
-    ExoEvent, SystemEvent, exo_next, exo_pause, exo_play, exo_position, exo_prev, exo_resume,
-    exo_seek, exo_set_upcoming, exo_set_volume, exo_stop, get_android_music_dir, get_files_dir,
+    ExoEvent, SystemEvent, exo_next, exo_pause, exo_play, exo_position, exo_prev,
+    exo_replace_upcoming, exo_resume, exo_seek, exo_set_upcoming, exo_set_volume, exo_stop,
+    get_android_music_dir, get_files_dir,
     init, install_apk, move_task_to_back, request_permissions, set_background_handler,
     stop_session, take_back_pressed, take_exo_events, update_now_playing, wake_run_loop,
 };

@@ -286,6 +286,14 @@ pub fn use_player_task(ctrl: PlayerController) {
                     ctrl.is_playing.set(update.playing);
                     ctrl.current_song_progress
                         .set((update.position_ms / 1000).max(0) as u64);
+                    // The native engine hit the true end of the queue → continue
+                    // with autoradio (seeded from the whole finished playlist).
+                    // This runs on the Dioxus thread, so it only fires when the
+                    // app is foregrounded — acceptable for end-of-queue.
+                    if update.ended {
+                        let last = *ctrl.current_queue_index.peek();
+                        ctrl.try_start_autoradio(last);
+                    }
                     // ExoPlayer is the only reliable duration source when the
                     // track metadata has none (YT search results) — without
                     // this the progress bar max stayed 0 and every seek

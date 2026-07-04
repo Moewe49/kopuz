@@ -386,6 +386,24 @@ pub fn QueueListView(
         let lib = library.peek();
         let conf = config.peek();
 
+        // SoundCloud carries its thumbnail in the path (soundcloud:<hexUrl>:
+        // urlhex_<hex>:…) — decode it regardless of active source, else these
+        // rows (which often sit in local playlists) fell into the library
+        // lookup below and showed no cover.
+        let path_str = track.path.to_string_lossy();
+        if path_str.starts_with("soundcloud:") {
+            return utils::map_cover_url(
+                utils::jellyfin_image::track_cover_url_with_album_fallback(
+                    &path_str,
+                    &track.album_id,
+                    "",
+                    None,
+                    cover_max_width,
+                    80,
+                ),
+            );
+        }
+
         let is_server_track = conf.active_source == config::MusicSource::Server;
 
         if is_server_track {

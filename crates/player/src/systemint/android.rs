@@ -953,6 +953,21 @@ pub fn exo_set_upcoming(items_json: &str) {
     });
 }
 
+/// Replace only the upcoming items (everything after the current one), leaving
+/// the playing track untouched — used when shuffle is toggled mid-playback.
+pub fn exo_replace_upcoming(items_json: &str) {
+    call_playback_service(|env, class| {
+        let j_items = env.new_string(items_json)?;
+        env.call_static_method(
+            class,
+            "cmdReplaceUpcoming",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&j_items)],
+        )?
+        .v()
+    });
+}
+
 fn exo_void(method: &str) {
     call_playback_service(|env, class| env.call_static_method(class, method, "()V", &[])?.v());
 }

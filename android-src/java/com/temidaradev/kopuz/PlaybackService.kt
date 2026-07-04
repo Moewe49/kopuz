@@ -140,6 +140,22 @@ class PlaybackService : MediaSessionService() {
             onPlayer { p -> p.addMediaItems(items) }
         }
 
+        /** Replace everything AFTER the currently-playing item with `itemsJson`
+         *  (used when shuffle is toggled). The current item is untouched, so it
+         *  keeps playing with no re-buffer; only the upcoming tail changes. An
+         *  empty list just trims the stale upcoming items. */
+        @JvmStatic
+        fun cmdReplaceUpcoming(itemsJson: String) {
+            val items = parseItems(itemsJson)
+            onPlayer { p ->
+                val from = p.currentMediaItemIndex + 1
+                if (from in 1 until p.mediaItemCount) {
+                    p.removeMediaItems(from, p.mediaItemCount)
+                }
+                if (items.isNotEmpty()) p.addMediaItems(items)
+            }
+        }
+
         @JvmStatic fun cmdPause() = onPlayer { it.playWhenReady = false }
         @JvmStatic fun cmdResume() = onPlayer { it.playWhenReady = true }
         @JvmStatic fun cmdNext() = onPlayer { if (it.hasNextMediaItem()) it.seekToNextMediaItem() }

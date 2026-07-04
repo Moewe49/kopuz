@@ -1820,7 +1820,7 @@ impl PlayerController {
     /// At the end of the queue, kick off a YT Music radio mix seeded from the
     /// track at `idx` (a "Staub → similar songs" continuation). Returns true if
     /// a radio was started (so the caller shouldn't pause). YT tracks only.
-    fn try_start_autoradio(&mut self, _idx: usize) -> bool {
+    pub(crate) fn try_start_autoradio(&mut self, _idx: usize) -> bool {
         if !self.config.peek().autoradio {
             return false;
         }
@@ -2079,9 +2079,9 @@ impl PlayerController {
 
         // Android: ExoPlayer holds a pre-resolved queue in the OLD order, so
         // toggling shuffle mid-playback would leave the engine advancing through
-        // the old order while the UI shows the new one. Re-feed it the new play
-        // order, resuming the CURRENT track at its current position so the song
-        // continues without a visible restart.
+        // the old order while the UI shows the new one. Swap ONLY the upcoming
+        // items to the new play order — the current track keeps playing with no
+        // re-buffer (a full re-feed restarts/re-buffers it = an audible pause).
         #[cfg(target_os = "android")]
         if !self.queue.peek().is_empty() {
             let idx = *self.current_queue_index.peek();
@@ -2092,8 +2092,7 @@ impl PlayerController {
                 .server
                 .as_ref()
                 .and_then(|s| s.access_token.clone());
-            let pos_ms = (*self.current_song_progress.peek() as i64) * 1000;
-            crate::android_exo::play(tracks, idx, cookies, pos_ms);
+            crate::android_exo::reorder_upcoming(tracks, idx, cookies);
         }
     }
 

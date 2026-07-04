@@ -57,14 +57,19 @@ static POSITION_MS: AtomicI64 = AtomicI64::new(0);
 /// ExoPlayer's authoritative media duration — the ONLY reliable source when
 /// track metadata has none (e.g. YT search results). 0 = not yet known.
 static DURATION_MS: AtomicI64 = AtomicI64::new(0);
+/// One-shot: the whole queue TRULY ended (not an under-fill the engine can
+/// recover). The driver drains it to start autoradio on the Dioxus thread.
+static ENDED_DIRTY: AtomicBool = AtomicBool::new(false);
 
 /// A snapshot for the UI to reconcile. `current_index` is `Some` only when the
-/// playing track changed since the last read.
+/// playing track changed since the last read; `ended` is `true` once when the
+/// queue finished (→ the driver starts autoradio).
 pub struct UiUpdate {
     pub current_index: Option<usize>,
     pub playing: bool,
     pub position_ms: i64,
     pub duration_ms: i64,
+    pub ended: bool,
 }
 
 /// Read the latest playback state (called by the Dioxus driver on its thread).
@@ -79,6 +84,7 @@ pub fn take_ui_update() -> UiUpdate {
         playing: PLAYING.load(Ordering::Acquire),
         position_ms: POSITION_MS.load(Ordering::Acquire),
         duration_ms: DURATION_MS.load(Ordering::Acquire),
+        ended: ENDED_DIRTY.swap(false, Ordering::AcqRel),
     }
 }
 
@@ -92,6 +98,9 @@ enum Cmd {
     PlayFrom { position_ms: i64 },
     /// A URL went stale (403) — re-resolve the window fresh and restart it.
     Reresolve { position_ms: i64 },
+    /// Shuffle toggled: keep the current track playing, only swap the UPCOMING
+    /// items to the new play order (no re-buffer of the current song).
+    ReorderUpcoming,
 }
 
 fn engine_tx() -> &'static Sender<Cmd> {
@@ -213,32 +222,84 @@ async fn resolve_range(from: usize, to: usize, cookies: &Option<String>) -> Vec<
     items
 }
 
+/// Resolve forward from `start`, SKIPPING tracks that fail to resolve (dead YT
+/// videos, bot-checks, transient errors) until `WINDOW_AHEAD + 1` items are
+/// collected or the mirror ends. Returns the resolved item JSONs, the index of
+/// the FIRST playable track, and the index of the LAST resolved track. This is
+/// what keeps a single bad track from dead-stopping the whole queue.
+async fn resolve_forward(
+    start: usize,
+    cookies: &Option<String>,
+) -> (Vec<serde_json::Value>, Option<usize>, usize) {
+    let len = mirror().lock().unwrap_or_else(|e| e.into_inner()).tracks.len();
+    let mut items = Vec::new();
+    let mut first = None;
+    let mut last = start;
+    let mut i = start;
+    while i < len && items.len() <= WINDOW_AHEAD {
+        let track = {
+            let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+            m.tracks.get(i).cloned()
+        };
+        let Some(track) = track else { break };
+        if let Some(j) = resolve_item(&track, cookies).await {
+            if first.is_none() {
+                first = Some(i);
+            }
+            items.push(j);
+            last = i;
+        }
+        i += 1;
+    }
+    (items, first, last)
+}
+
 async fn handle_cmd(cmd: Cmd) {
     let position_ms = match cmd {
         Cmd::PlayFrom { position_ms } | Cmd::Reresolve { position_ms } => position_ms,
+        Cmd::ReorderUpcoming => return handle_reorder_upcoming().await,
     };
-    let (index, end, cookies) = {
+    let (start, cookies) = {
         let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-        let end = (m.index + WINDOW_AHEAD).min(m.tracks.len().saturating_sub(1));
-        (m.index, end, m.cookies.clone())
+        (m.index, m.cookies.clone())
     };
-    let items = resolve_range(index, end, &cookies).await;
-    if items.is_empty() {
-        eprintln!("[exo] no resolvable tracks at {index}; not starting");
+    let (items, first, last) = resolve_forward(start, &cookies).await;
+    let Some(first) = first else {
+        // Nothing from here on is playable → treat as end so autoradio kicks in.
+        eprintln!("[exo] nothing resolvable from {start}; ending");
+        PLAYING.store(false, Ordering::Release);
+        ENDED_DIRTY.store(true, Ordering::Release);
         return;
-    }
+    };
     {
         let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-        m.resolved_upto = index + items.len() - 1;
+        m.index = first;
+        m.resolved_upto = last;
     }
-    eprintln!("[exo] play from {index}: {} item(s)", items.len());
+    eprintln!("[exo] play from {first}: {} item(s)", items.len());
     systemint::exo_play(
         &serde_json::Value::Array(items).to_string(),
         0,
         position_ms.max(0),
     );
-    set_current_index(index);
+    set_current_index(first);
     PLAYING.store(true, Ordering::Release);
+}
+
+/// Shuffle toggled while playing: leave the current ExoPlayer item alone and
+/// replace ONLY the upcoming items with the new play order — no re-buffer.
+async fn handle_reorder_upcoming() {
+    let (from, cookies) = {
+        let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+        (m.index + 1, m.cookies.clone())
+    };
+    let (items, _first, last) = resolve_forward(from, &cookies).await;
+    if !items.is_empty() {
+        let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+        m.resolved_upto = last;
+    }
+    eprintln!("[exo] reorder upcoming from {from}: {} item(s)", items.len());
+    systemint::exo_replace_upcoming(&serde_json::Value::Array(items).to_string());
 }
 
 async fn handle_event(ev: ExoEvent) {
@@ -286,8 +347,27 @@ async fn handle_event(ev: ExoEvent) {
             }
         }
         ExoEvent::Ended => {
-            PLAYING.store(false, Ordering::Release);
-            eprintln!("[exo] playlist ended");
+            // ExoPlayer ran out of items. If the mirror still has tracks ahead,
+            // the look-ahead window under-filled (a resolve failed / a refill
+            // lagged) — recover by resolving+playing from the next track instead
+            // of dead-stopping mid-playlist. Only a TRUE end (index at the last
+            // track) flags autoradio for the driver.
+            let has_more = {
+                let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                m.index + 1 < m.tracks.len()
+            };
+            if has_more {
+                {
+                    let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                    m.index += 1;
+                }
+                eprintln!("[exo] ended early with tracks remaining — recovering");
+                let _ = engine_tx().send(Cmd::PlayFrom { position_ms: 0 });
+            } else {
+                PLAYING.store(false, Ordering::Release);
+                ENDED_DIRTY.store(true, Ordering::Release);
+                eprintln!("[exo] queue truly ended");
+            }
         }
         ExoEvent::Error { media_id, code } => {
             eprintln!("[exo] player error {code} on {media_id} — reresolving");
@@ -311,6 +391,22 @@ pub fn play(tracks: Vec<Track>, start_index: usize, cookies: Option<String>, pos
     }
     DURATION_MS.store(0, Ordering::Release);
     let _ = engine_tx().send(Cmd::PlayFrom { position_ms });
+}
+
+/// Shuffle toggled during playback: swap the mirror to the new play order but
+/// keep the CURRENT track playing and only rebuild the upcoming ExoPlayer items
+/// (no re-buffer / no gap). `current_idx` is the current track's play-order
+/// index in `tracks` (so `tracks[current_idx]` is the now-playing song).
+pub fn reorder_upcoming(tracks: Vec<Track>, current_idx: usize, cookies: Option<String>) {
+    {
+        let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+        let cap = tracks.len().saturating_sub(1);
+        m.tracks = tracks;
+        m.index = current_idx.min(cap);
+        m.resolved_upto = m.index;
+        m.cookies = cookies;
+    }
+    let _ = engine_tx().send(Cmd::ReorderUpcoming);
 }
 
 pub fn pause() {
