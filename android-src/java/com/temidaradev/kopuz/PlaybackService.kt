@@ -66,25 +66,22 @@ class PlaybackService : MediaSessionService() {
 
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                nativeOnTransition(mediaItem?.mediaId ?: "", player.currentMediaItemIndex)
+                safeNative { nativeOnTransition(mediaItem?.mediaId ?: "", player.currentMediaItemIndex) }
                 refreshNotification()
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                nativeOnState(isPlaying, player.currentPosition, knownDuration(player))
+                safeNative { nativeOnState(isPlaying, player.currentPosition, knownDuration(player)) }
                 refreshNotification()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) nativeOnEnded()
+                if (state == Player.STATE_ENDED) safeNative { nativeOnEnded() }
                 refreshNotification()
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                nativeOnError(
-                    player.currentMediaItem?.mediaId ?: "",
-                    error.errorCode
-                )
+                safeNative { nativeOnError(player.currentMediaItem?.mediaId ?: "", error.errorCode) }
             }
         })
 
@@ -99,11 +96,30 @@ class PlaybackService : MediaSessionService() {
         positionTicker.post(positionTick)
     }
 
+    // The Rust JNI callbacks (nativeOn*) only exist when the app process loaded
+    // the native lib. Android can restart THIS foreground service standalone
+    // (after killing the process) WITHOUT the Activity that loads the lib, so a
+    // nativeOn* call then throws UnsatisfiedLinkError and used to CRASH the
+    // service in a loop (the "playback stops / app restarts"). Guard every
+    // native call; on the first failure the service is orphaned (no Rust to
+    // drive it) → shut it down cleanly rather than crash-loop.
+    @Volatile private var nativeBroken = false
+    private inline fun safeNative(block: () -> Unit) {
+        if (nativeBroken) return
+        try {
+            block()
+        } catch (e: UnsatisfiedLinkError) {
+            nativeBroken = true
+            try { positionTicker.removeCallbacks(positionTick) } catch (_: Exception) {}
+            try { stopSelf() } catch (_: Exception) {}
+        }
+    }
+
     private val positionTicker = Handler(Looper.getMainLooper())
     private val positionTick = object : Runnable {
         override fun run() {
             mediaSession?.player?.let {
-                nativeOnState(it.isPlaying, it.currentPosition, knownDuration(it))
+                safeNative { nativeOnState(it.isPlaying, it.currentPosition, knownDuration(it)) }
             }
             positionTicker.postDelayed(this, 500)
         }
@@ -122,7 +138,12 @@ class PlaybackService : MediaSessionService() {
     // startForegroundService BEFORE ExoPlayer buffers the network URL.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         goForeground()
-        return super.onStartCommand(intent, flags, startId)
+        super.onStartCommand(intent, flags, startId)
+        // NOT sticky: playback is driven by the Rust engine in the app process.
+        // A standalone service restart (after the OS kills the process) has no
+        // Rust — it can't refill/advance and its native callbacks would crash.
+        // Let it stay dead; reopening the app relaunches everything cleanly.
+        return START_NOT_STICKY
     }
 
     private fun goForeground() {
