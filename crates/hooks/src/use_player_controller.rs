@@ -1922,8 +1922,14 @@ impl PlayerController {
         let back_behavior = self.config.peek().back_behavior;
 
         if back_behavior == BackBehavior::RewindThenPrev && progress > 3 {
-            self.player.write().seek(std::time::Duration::ZERO);
+            // Restart the current track from the beginning by RE-PLAYING it, not
+            // by seeking to 0: a backward seek-to-0 on a streamed webm/opus lands
+            // on the wrong cluster (the timer shows 0:00 but a different part of
+            // the song plays). Re-playing re-opens the stream at byte 0 cleanly;
+            // the resolved URL is cached, so it stays fast.
+            let cur = *self.current_queue_index.peek();
             self.current_song_progress.set(0);
+            self.play_track_no_history_without_crossfade(cur);
             return;
         }
 
