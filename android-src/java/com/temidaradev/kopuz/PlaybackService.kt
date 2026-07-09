@@ -265,6 +265,12 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
+        /** Clear the current timeline so the OLD song stops instantly (position
+         *  0, not playing) while the new track is being resolved — otherwise the
+         *  previous song kept playing for the multi-second resolve and the timer
+         *  didn't reset. cmdPlay repopulates it once resolved. */
+        @JvmStatic fun cmdClear() = onPlayer { it.clearMediaItems() }
+
         @JvmStatic fun cmdPause() = onPlayer { it.playWhenReady = false }
         @JvmStatic fun cmdResume() = onPlayer { it.playWhenReady = true }
         @JvmStatic fun cmdNext() = onPlayer { if (it.hasNextMediaItem()) it.seekToNextMediaItem() }

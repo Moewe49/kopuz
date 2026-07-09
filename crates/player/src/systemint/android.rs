@@ -972,6 +972,9 @@ fn exo_void(method: &str) {
     call_playback_service(|env, class| env.call_static_method(class, method, "()V", &[])?.v());
 }
 
+pub fn exo_clear() {
+    exo_void("cmdClear");
+}
 pub fn exo_pause() {
     exo_void("cmdPause");
 }

@@ -304,9 +304,27 @@ async fn handle_cmd(cmd: Cmd) {
         let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         (m.index, m.cookies.clone())
     };
-    let (items, first, last) = resolve_forward(start, &cookies).await;
-    let Some(first) = first else {
-        // Nothing from here on is playable → treat as end so autoradio kicks in.
+    // Resolve just the FIRST playable track and start it IMMEDIATELY. Resolving
+    // the whole look-ahead window up front meant 6 sequential multi-second YT
+    // resolves (~6-40s) before ANY audio — the old song kept playing and the
+    // timer didn't reset. Play track 1 after a single resolve, then fill the
+    // window in the background.
+    let len = mirror().lock().unwrap_or_else(|e| e.into_inner()).tracks.len();
+    let mut first_item = None;
+    let mut i = start;
+    while i < len {
+        let track = {
+            let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+            m.tracks.get(i).cloned()
+        };
+        let Some(track) = track else { break };
+        if let Some(j) = resolve_item(&track, i, &cookies).await {
+            first_item = Some((j, i));
+            break;
+        }
+        i += 1;
+    }
+    let Some((item, first)) = first_item else {
         eprintln!("[exo] nothing resolvable from {start}; ending");
         PLAYING.store(false, Ordering::Release);
         ENDED_DIRTY.store(true, Ordering::Release);
@@ -315,16 +333,26 @@ async fn handle_cmd(cmd: Cmd) {
     {
         let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         m.index = first;
-        m.resolved_upto = last;
+        m.resolved_upto = first;
     }
-    eprintln!("[exo] play from {first}: {} item(s)", items.len());
+    eprintln!("[exo] fast-start from {first}");
     systemint::exo_play(
-        &serde_json::Value::Array(items).to_string(),
+        &serde_json::Value::Array(vec![item]).to_string(),
         0,
         position_ms.max(0),
     );
     set_current_index(first);
     PLAYING.store(true, Ordering::Release);
+    // Now fill the look-ahead window behind the playing track and append it.
+    let (rest, _f, last) = resolve_forward(first + 1, &cookies).await;
+    if !rest.is_empty() {
+        {
+            let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+            m.resolved_upto = last.max(m.resolved_upto);
+        }
+        eprintln!("[exo] window filled {}..={last}: {} item(s)", first + 1, rest.len());
+        systemint::exo_set_upcoming(&serde_json::Value::Array(rest).to_string());
+    }
 }
 
 /// Shuffle toggled while playing: leave the current ExoPlayer item alone and
@@ -531,6 +559,12 @@ pub fn play(tracks: Vec<Track>, start_index: usize, cookies: Option<String>, pos
         m.cookies = cookies;
     }
     DURATION_MS.store(0, Ordering::Release);
+    // Stop the OLD track instantly so it doesn't keep playing (and the timer
+    // resets) while the new one resolves (~seconds). cmdPlay repopulates it.
+    if position_ms <= 0 {
+        POSITION_MS.store(0, Ordering::Release);
+        systemint::exo_clear();
+    }
     let _ = engine_tx().send(Cmd::PlayFrom { position_ms });
 }
 
