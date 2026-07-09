@@ -43,7 +43,12 @@ object PotMinter {
     private const val DESKTOP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    private const val ORIGIN = "https://music.youtube.com"
+    // www.youtube.com (NOT music.youtube.com) + anonymous: signed-in
+    // music.youtube.com now serves a strict CSP with no `unsafe-eval` that blocks
+    // the BotGuard `new Function`; anonymous www.youtube.com still allows eval.
+    // Verified on desktop. The shared BgUtils script's Function/Trusted-Types
+    // patch does the rest.
+    private const val ORIGIN = "https://www.youtube.com"
 
     @Volatile private var webView: WebView? = null
 
@@ -63,23 +68,13 @@ object PotMinter {
             userAgentString = DESKTOP_UA
         }
 
-        // Sign the WebView in with the user's YouTube cookies BEFORE loading.
-        // Anonymous, it lands on YouTube's EU consent wall (consent.youtube.com)
-        // instead of music.youtube.com, so our document-start script (scoped to
-        // the music.youtube.com origin) never injects and BgUtils never sets up.
-        // A signed-in session skips the wall and loads music.youtube.com directly.
+        // Load ANONYMOUSLY: signing in makes YouTube serve the strict CSP that
+        // blocks the BotGuard eval, so we must NOT inject the user's YT cookies.
+        // (Verified on desktop: anonymous www.youtube.com loads directly with no
+        // consent-wall redirect, unlike music.youtube.com.) `cookies` is now unused.
         val cm = CookieManager.getInstance()
         cm.setAcceptCookie(true)
         cm.setAcceptThirdPartyCookies(web, true)
-        if (cookies.isNotBlank()) {
-            for (pair in cookies.split(";")) {
-                val p = pair.trim()
-                if (p.isNotEmpty()) {
-                    cm.setCookie("https://music.youtube.com", "$p; Domain=.youtube.com; Path=/; Secure")
-                }
-            }
-            cm.flush()
-        }
 
         web.addJavascriptInterface(Bridge(), "kopuzIpc")
 

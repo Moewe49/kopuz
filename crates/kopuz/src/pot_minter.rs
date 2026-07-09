@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use dioxus::desktop::tao::dpi::{LogicalPosition, LogicalSize};
 use dioxus::desktop::tao::event_loop::EventLoopWindowTarget;
 use dioxus::desktop::tao::window::{Window, WindowBuilder};
-use dioxus::desktop::wry::{WebView, WebViewBuilder};
+use dioxus::desktop::wry::{WebContext, WebView, WebViewBuilder};
 use server::ytmusic::botguard::{self, MintRequest};
 use tokio::sync::mpsc;
 
@@ -51,6 +51,11 @@ type Pending = Rc<RefCell<HashMap<u64, tokio::sync::oneshot::Sender<Result<Strin
 struct Minter {
     _window: Window,
     webview: WebView,
+    // A cookie-isolated profile: signed-in music.youtube.com serves a strict CSP
+    // (no `unsafe-eval`) that blocks the BotGuard eval; the ANONYMOUS page keeps
+    // `unsafe-eval`, so the minter must NOT inherit the app's YT cookies. Kept
+    // alive for the WebView's lifetime.
+    _web_context: WebContext,
     pending: Pending,
     rx: mpsc::UnboundedReceiver<MintRequest>,
 }
@@ -94,8 +99,18 @@ pub fn install_if_wanted<T: 'static>(target: &EventLoopWindowTarget<T>) {
     let pending: Pending = Rc::new(RefCell::new(HashMap::new()));
     let pending_ipc = pending.clone();
 
-    let builder = WebViewBuilder::new()
-        .with_url("https://music.youtube.com/")
+    // Dedicated, cookie-isolated profile dir so the minter loads YouTube
+    // ANONYMOUSLY. Signed-in music.youtube.com serves a strict CSP with NO
+    // `unsafe-eval`, which blocks the BotGuard `new Function`; anonymous
+    // www.youtube.com keeps `unsafe-eval`, so an isolated profile + the www
+    // origin is what lets the mint run (combined with the Trusted-Types
+    // Function patch in init_script).
+    let profile = std::env::temp_dir().join("kopuz-minter-profile");
+    let _ = std::fs::create_dir_all(&profile);
+    let mut web_context = WebContext::new(Some(profile));
+
+    let builder = WebViewBuilder::new_with_web_context(&mut web_context)
+        .with_url("https://www.youtube.com/")
         .with_user_agent(UA)
         .with_initialization_script(&init_script())
         .with_ipc_handler(move |req| {
@@ -147,6 +162,7 @@ pub fn install_if_wanted<T: 'static>(target: &EventLoopWindowTarget<T>) {
         *s.borrow_mut() = Some(Minter {
             _window: window,
             webview,
+            _web_context: web_context,
             pending,
             rx,
         });

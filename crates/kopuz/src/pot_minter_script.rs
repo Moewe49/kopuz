@@ -30,11 +30,33 @@ window.module = {{ exports: {{}} }}; window.exports = window.module.exports;
 // this (no enforcement). Best-effort: a pre-existing default policy throws.
 try {{
   if (window.trustedTypes && window.trustedTypes.createPolicy) {{
-    window.trustedTypes.createPolicy('default', {{
-      createHTML: function(s) {{ return s; }},
-      createScript: function(s) {{ return s; }},
-      createScriptURL: function(s) {{ return s; }}
-    }});
+    // A permissive `default` policy is the first line — but YouTube's page later
+    // installs its OWN restrictive default policy (you can't replace one), so by
+    // BotGuard-run time `new Function(str)` is blocked again. Second line: keep
+    // our OWN named policy and PATCH `window.Function` (and its
+    // `prototype.constructor`) so every `new Function(str)` the BotGuard VM does
+    // pre-wraps the string in OUR trusted policy — bypassing whatever default
+    // policy is in force. WebKit (Linux/macOS) has no enforcement; harmless there.
+    try {{
+      window.trustedTypes.createPolicy('default', {{
+        createHTML: function(s) {{ return s; }},
+        createScript: function(s) {{ return s; }},
+        createScriptURL: function(s) {{ return s; }}
+      }});
+    }} catch (e) {{}}
+
+    var __ttp = window.trustedTypes.createPolicy('kopuz-eval', {{ createScript: function(s) {{ return s; }} }});
+    var __RF = window.Function;
+    var __wrap = function() {{
+      var a = Array.prototype.slice.call(arguments);
+      if (a.length && typeof a[a.length - 1] === 'string') {{
+        try {{ a[a.length - 1] = __ttp.createScript(a[a.length - 1]); }} catch (e) {{}}
+      }}
+      return __RF.apply(this, a);
+    }};
+    __wrap.prototype = __RF.prototype;
+    try {{ Object.defineProperty(__RF.prototype, 'constructor', {{ value: __wrap, configurable: true, writable: true }}); }} catch (e) {{}}
+    window.Function = __wrap;
   }}
 }} catch (e) {{}}
 {BGUTILS}
