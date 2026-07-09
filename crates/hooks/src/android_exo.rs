@@ -197,7 +197,15 @@ fn cover_url(track: &Track) -> String {
 }
 
 /// Resolve one track into an ExoPlayer MediaItem JSON object, or `None`.
-async fn resolve_item(track: &Track, cookies: &Option<String>) -> Option<serde_json::Value> {
+/// `index` is the track's position in the mirror — it becomes the ExoPlayer
+/// mediaId so a transition maps back to the EXACT queue slot (a track's PATH is
+/// not unique: a playlist can hold the same video twice, and matching by path
+/// picked the wrong slot → a huge bogus refill range that stalled the engine).
+async fn resolve_item(
+    track: &Track,
+    index: usize,
+    cookies: &Option<String>,
+) -> Option<serde_json::Value> {
     let id = track_id(track);
     let url = if let Some(vid) = video_id(track) {
         let yt =
@@ -226,7 +234,7 @@ async fn resolve_item(track: &Track, cookies: &Option<String>) -> Option<serde_j
     };
     Some(serde_json::json!({
         "url": url,
-        "mediaId": id,
+        "mediaId": index.to_string(),
         "title": track.title,
         "artist": track.artist,
         "album": track.album,
@@ -247,8 +255,8 @@ async fn resolve_range(from: usize, to: usize, cookies: &Option<String>) -> Vec<
         }
     };
     let mut items = Vec::new();
-    for t in &slice {
-        if let Some(j) = resolve_item(t, cookies).await {
+    for (offset, t) in slice.iter().enumerate() {
+        if let Some(j) = resolve_item(t, from + offset, cookies).await {
             items.push(j);
         }
     }
@@ -275,7 +283,7 @@ async fn resolve_forward(
             m.tracks.get(i).cloned()
         };
         let Some(track) = track else { break };
-        if let Some(j) = resolve_item(&track, cookies).await {
+        if let Some(j) = resolve_item(&track, i, cookies).await {
             if first.is_none() {
                 first = Some(i);
             }
@@ -390,14 +398,19 @@ async fn handle_event(ev: ExoEvent) {
             DURATION_MS.store(0, Ordering::Release);
             let (qidx, refill_from, refill_to, cookies) = {
                 let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-                let qidx = m.tracks.iter().position(|t| track_id(t) == media_id);
+                // mediaId IS the mirror index (unique, unlike a duplicate path).
+                let qidx = media_id.parse::<usize>().ok().filter(|&q| q < m.tracks.len());
                 if let Some(q) = qidx {
                     m.index = q;
                 }
                 let target = (m.index + WINDOW_AHEAD).min(m.tracks.len().saturating_sub(1));
-                let (from, to) = if target > m.resolved_upto {
-                    let from = m.resolved_upto + 1;
-                    m.resolved_upto = target;
+                // Refill only the window AHEAD of the current track, at most
+                // WINDOW_AHEAD tracks per transition. Never resolve a big gap
+                // behind (a stale index once made this resolve 47 tracks in a row
+                // and froze the engine for ~40s → the "random pauses").
+                let from = (m.resolved_upto + 1).max(m.index + 1);
+                let (from, to) = if target >= from {
+                    m.resolved_upto = target.max(m.resolved_upto);
                     (from, target)
                 } else {
                     (1, 0) // empty range
@@ -480,10 +493,11 @@ async fn handle_event(ev: ExoEvent) {
             } else {
                 let (skip_from, has_more) = {
                     let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-                    let idx = m
-                        .tracks
-                        .iter()
-                        .position(|t| track_id(t) == media_id)
+                    // mediaId is the mirror index.
+                    let idx = media_id
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|&q| q < m.tracks.len())
                         .unwrap_or(m.index);
                     (idx + 1, idx + 1 < m.tracks.len())
                 };
