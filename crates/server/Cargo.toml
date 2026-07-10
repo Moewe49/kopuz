@@ -20,6 +20,7 @@ percent-encoding = { workspace = true }
 httpdate = "1"
 hex = "0.4"
 web-time = { workspace = true }
+tracing = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "sync", "time"] }
 reader = { workspace = true }
 # Extract the ffmpeg(.exe) binary out of the downloaded release zip on first

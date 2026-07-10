@@ -113,13 +113,13 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
                     if let Some(u) = &uid {
                         remember_tier(u, false);
                     }
-                    eprintln!(
+                    tracing::warn!(
                         "[yt-player] {video_id} signed-in but non-Premium (itag={:?}) — needs a content pot, trying ANDROID_VR",
                         info.itag
                     );
                     decipher_fallback = Some(info);
                 }
-                Err(e) => eprintln!("[yt-player] decipher failed ({e}) — falling back"),
+                Err(e) => tracing::warn!("[yt-player] {video_id} decipher failed ({e}) — falling back"),
             }
         }
     }
@@ -158,7 +158,7 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
             (_, Err(e)) => format!("visitor_data: {e}"),
         }
     };
-    eprintln!("[yt-player] ANDROID_VR+pot failed ({last_err})");
+    tracing::warn!("[yt-player] {video_id} ANDROID_VR+pot failed ({last_err})");
 
     // Pot-free path: the TV (TVHTML5 embedded) client is **exempt from the
     // content PO token** — its deciphered stream survives deep/seek ranges with
@@ -167,12 +167,12 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     // the webview minter. Tried before the bare clients (which still 403 deep).
     match try_tv_decipher(video_id, cookies).await {
         Ok(info) => {
-            eprintln!("[yt-player] {video_id} resolved via TVHTML5 (pot-free, deep-range safe)");
+            tracing::info!("[yt-player] {video_id} resolved via TVHTML5 (pot-free, deep-range safe)");
             return Ok(info);
         }
         Err(e) => {
             last_err = format!("TVHTML5: {e}");
-            eprintln!("[yt-player] TVHTML5 fallback failed ({e}) — trying bare clients");
+            tracing::warn!("[yt-player] {video_id} TVHTML5 fallback failed ({e}) — trying bare clients");
         }
     }
 
@@ -199,11 +199,12 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
         }
     }
     if let Some(info) = decipher_fallback {
-        eprintln!(
+        tracing::warn!(
             "[yt-player] {video_id} no content pot available (minter not running?) — using the non-Premium decipher stream; deep seeks may 403"
         );
         return Ok(info);
     }
+    tracing::error!("[yt-player] {video_id} ALL stream paths failed; last error: {last_err}");
     Err(format!("all stream paths failed; last error: {last_err}"))
 }
 
@@ -334,7 +335,7 @@ fn pick_plain_format(json: &Value, client: YouTubeClient) -> Option<YtStreamInfo
         .pointer("/videoDetails/videoId")
         .and_then(|v| v.as_str())
         .unwrap_or("?");
-    eprintln!(
+    tracing::info!(
         "[yt-player] resolved {vid} itag={} {} kbps {mime} via {} (plain)",
         itag.unwrap_or(0),
         bitrate / 1000,
@@ -430,7 +431,7 @@ fn stream_info_from(
         .pointer("/videoDetails/videoId")
         .and_then(|v| v.as_str())
         .unwrap_or("?");
-    eprintln!(
+    tracing::info!(
         "[yt-player] resolved {vid} itag={} {} kbps {mime} via {} (decipher)",
         itag.unwrap_or(0),
         bitrate.unwrap_or(0) / 1000,

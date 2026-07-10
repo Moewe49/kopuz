@@ -6740,6 +6740,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
  "uuid 1.23.2",
  "web-time",
  "zip",
