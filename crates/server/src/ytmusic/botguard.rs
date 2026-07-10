@@ -54,7 +54,13 @@ pub async fn mint_content_pot(video_id: &str) -> Result<String, String> {
     // Bound the wait: if the webview bridge isn't ready (page still loading /
     // navigating, `window.__kopuzMint` not yet defined) the dispatch is a no-op
     // and no reply ever comes — without this the caller would hang forever.
-    match tokio::time::timeout(std::time::Duration::from_secs(15), rx).await {
+    // Kept short on purpose: a *warm* mint is sub-millisecond and local, so this
+    // window only ever gates a *cold* minter — and when the minter is still
+    // warming we want to fail fast and let `player::resolve` fall through to the
+    // pot-free, deep-range-safe TVHTML5 path rather than stall the first song for
+    // seconds. 15s here was the difference between "plays instantly" and "looks
+    // broken" on a fresh launch.
+    match tokio::time::timeout(std::time::Duration::from_millis(2500), rx).await {
         Ok(Ok(result)) => result,
         Ok(Err(_)) => Err("PO token minter dropped the reply".to_string()),
         Err(_) => Err("PO token mint timed out (webview not ready)".to_string()),

@@ -772,7 +772,11 @@ pub async fn mint_pot(video_id: &str) -> Result<String, String> {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
         .collect();
     pot_minter_mint_jni(&vid, id);
-    match tokio::time::timeout(Duration::from_secs(15), rx).await {
+    // Short on purpose: a warm mint is sub-ms; this only bounds a cold/warming
+    // minter, where failing fast lets the resolver fall through to the pot-free
+    // TVHTML5 path instead of stalling the first song for seconds. See the twin
+    // timeout in server::ytmusic::botguard.
+    match tokio::time::timeout(Duration::from_millis(2500), rx).await {
         Ok(Ok(result)) => result,
         Ok(Err(_)) => {
             if let Ok(mut m) = pot_pending().lock() {
