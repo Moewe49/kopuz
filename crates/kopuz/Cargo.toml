@@ -26,6 +26,10 @@ webbrowser = "1.2.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
+# Route tracing events to Android stderr (which the runtime pipes to logcat),
+# so the server-crate resolve diagnostics ([yt-player] etc., now emitted via
+# tracing) are visible on-device — otherwise they'd be dropped with no subscriber.
+tracing-subscriber = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dioxus = { workspace = true, features = ["web"] }

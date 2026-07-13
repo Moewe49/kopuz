@@ -1,0 +1,3 @@
+# The shared debug keystore is binary — never let git apply text/EOL filtering to
+# it, or its bytes change and the APK signature (hence in-place updatability) breaks.
+*.keystore binary

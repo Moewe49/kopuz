@@ -26,7 +26,15 @@ use std::sync::{Mutex, OnceLock};
 /// playlist. Bigger = more resilient to a refill hiccup / a background stall
 /// (so ExoPlayer has more buffered songs to keep playing through it); smaller =
 /// faster start (each resolve is a network call).
-const WINDOW_AHEAD: usize = 5;
+///
+/// Set to 8 (≈24 min of audio): when the app is backgrounded the pot-minter
+/// WebView is throttled by Android, so a refill that needs a fresh PO token can
+/// fail until playback returns to the foreground. A deeper pre-resolved window
+/// (built up-front while still foregrounded, where minting works) lets playback
+/// coast through those background gaps instead of dead-ending at the window
+/// edge after ~5 songs. Fast-start still plays after a single resolve, so the
+/// larger window only adds *background* fill work, not start latency.
+const WINDOW_AHEAD: usize = 8;
 
 /// Canonical queue mirror — plain data, owned by the engine thread. Never a Signal.
 struct Mirror {
