@@ -143,6 +143,34 @@ pub enum MusicSource {
     Server,
 }
 
+/// Which platform the unified search bar queries. Persisted so the choice
+/// survives a restart — the config loads asynchronously, so anything derived
+/// from it at first render would always read the default instead.
+///
+/// `Local`/`Server` mirror [`MusicSource`] (the sidebar toggle and the search
+/// dropdown stay in lockstep); `SoundCloud` and `Spotify` are overlay sources
+/// with no backend of their own.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum SearchSource {
+    #[default]
+    Local,
+    Server,
+    SoundCloud,
+    Spotify,
+}
+
+impl SearchSource {
+    /// The one to actually use given what is configured. A saved `Server` with
+    /// no server left configured would select an option the dropdown doesn't
+    /// render, leaving it showing nothing.
+    pub fn resolve(self, has_server: bool) -> Self {
+        match self {
+            Self::Server if !has_server => Self::Local,
+            other => other,
+        }
+    }
+}
+
 impl MusicSource {
     pub fn is_server(&self) -> bool {
         matches!(self, Self::Server)
@@ -542,6 +570,10 @@ pub struct AppConfig {
     /// Rotating PKCE refresh token for the connected Spotify account.
     #[serde(default)]
     pub spotify_refresh_token: String,
+    /// Last source picked in the search bar's dropdown. Restored on launch so
+    /// the search bar doesn't silently fall back to Local every start.
+    #[serde(default)]
+    pub search_source: SearchSource,
     /// "Stay signed in to YouTube Music automatically": when true, kopuz
     /// re-reads YouTube cookies from a signed-in desktop browser (Firefox /
     /// Chrome / Brave / Edge / …) on startup and periodically, so the session
@@ -902,6 +934,7 @@ impl Default for AppConfig {
             lastfm_session_key: String::new(),
             spotify_client_id: String::new(),
             spotify_refresh_token: String::new(),
+            search_source: SearchSource::Local,
             yt_auto_refresh: false,
             yt_oauth_refresh_token: String::new(),
             yt_oauth_client_id: String::new(),

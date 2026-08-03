@@ -468,6 +468,12 @@ spotify_liked_songs = Kedvelt számok
 spotify_not_connected = A Spotify nincs összekötve.
 spotify_client_id_missing = Először add meg a Spotify-alkalmazásod Client ID-ját.
 spotify_import_from = Importálás Spotify-ról
+spotify_search_hint = Írj fentre a Spotify kereséséhez.
+spotify_searching = Keresés a Spotifyon…
+spotify_search_needs_account = A Spotify-kereséshez csatlakoztatott Spotify-fiók kell. Nyisd meg a Lejátszási listák → Importálás Spotifyból menüt, és csatlakoztasd ott a (ingyenes) Spotify-alkalmazásodat.
+spotify_finding_match = „{ $title }” keresése a YouTube Musicon…
+spotify_no_match = Nincs találat a(z) „{ $title }” számra a YouTube Musicon.
+spotify_playback_note = A Spotify hanganyaga másolásvédett — a kopuz a YouTube Music megfelelő számát játssza le.
 sleep_timer = Elalvásidőzítő
 sleep_timer_minutes = { $min } perc
 sleep_timer_off = Kikapcsolás
@@ -536,3 +542,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = Kiválasztás…
+discord_test = Discord-kapcsolat tesztelése
+discord_test_button = Teszt küldése
+download_all_offline = Összes letöltése offline lejátszáshoz
+download_folder = Letöltési mappa
+onboarding_title = Üdv a Kopuzban
+onboarding_subtitle = Két módon töltheted meg zenével:
+onboarding_local_title = Helyi zenemappa
+onboarding_local_desc = Mutass rá a Kopuzzal egy hangfájlokat tartalmazó mappára a böngészéshez és lejátszáshoz.
+onboarding_stream_title = YouTube Music vagy egy szerver
+onboarding_stream_desc = Csatlakoztasd a YouTube Musicot (vagy Jellyfint / Subsonicot) a lejátszáshoz és letöltéshez.
+onboarding_open_settings = Beállítások megnyitása
+onboarding_later = Talán később
+premium_downloads = Prémium letöltések (256 kbps)
+premium_downloads_hint = Bejelentkezik a 256 kbps-os AAC letöltéséhez. Csak YouTube Premium-fiókkal hasznos; nagy terhelés alatt ritkán bot-ellenőrzést válthat ki. Kikapcsolva = névtelen 128 kbps.
+remove_downloads = Letöltések eltávolítása
+reset_to_default = Visszaállítás alapértelmezettre
+search_elsewhere = Semmi a(z) { $source } forráson — más forrásokban:

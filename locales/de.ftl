@@ -485,6 +485,12 @@ spotify_liked_songs = Lieblingssongs
 spotify_not_connected = Spotify ist nicht verbunden.
 spotify_client_id_missing = Gib zuerst die Client-ID deiner Spotify-App ein.
 spotify_import_from = Von Spotify importieren
+spotify_search_hint = Oben tippen, um Spotify zu durchsuchen.
+spotify_searching = Spotify wird durchsucht…
+spotify_search_needs_account = Die Spotify-Suche braucht dein verbundenes Spotify-Konto. Öffne Playlists → Aus Spotify importieren und verbinde dort deine (kostenlose) Spotify-App.
+spotify_finding_match = „{ $title }“ wird auf YouTube Music gesucht…
+spotify_no_match = Keine Entsprechung für „{ $title }“ auf YouTube Music gefunden.
+spotify_playback_note = Spotify-Audio ist kopiergeschützt — kopuz spielt den passenden Titel von YouTube Music ab.
 
 # Sleep-Timer
 sleep_timer = Sleep-Timer
@@ -555,3 +561,6 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+search_elsewhere = Nichts auf { $source } — andere Quellen haben:

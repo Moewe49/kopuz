@@ -704,6 +704,8 @@ pub extern "system" fn Java_com_temidaradev_kopuz_YtLogin_nativeOnYtCookies(
 
 static POT_INIT_DONE: AtomicBool = AtomicBool::new(false);
 static POT_REQ_ID: AtomicU64 = AtomicU64::new(1);
+/// Set once the WebView has actually returned a token — widens the mint bound.
+static POT_PROVEN: AtomicBool = AtomicBool::new(false);
 static POT_PENDING: OnceLock<Mutex<HashMap<u64, oneshot::Sender<Result<String, String>>>>> =
     OnceLock::new();
 
@@ -772,12 +774,24 @@ pub async fn mint_pot(video_id: &str) -> Result<String, String> {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
         .collect();
     pot_minter_mint_jni(&vid, id);
-    // Short on purpose: a warm mint is sub-ms; this only bounds a cold/warming
-    // minter, where failing fast lets the resolver fall through to the pot-free
-    // TVHTML5 path instead of stalling the first song for seconds. See the twin
-    // timeout in server::ytmusic::botguard.
-    match tokio::time::timeout(Duration::from_millis(2500), rx).await {
-        Ok(Ok(result)) => result,
+    // Short while the minter is cold (failing fast lets the resolver fall
+    // through instead of stalling the first song), generous once it has proven
+    // itself — a slow mint then means a background-throttled WebView, and
+    // waiting for it beats resolving a stream that 403s a minute in. Kept just
+    // under the twin timeout in server::ytmusic::botguard so THIS side cleans up
+    // its pending entry rather than leaking one per abandoned request.
+    let bound = if POT_PROVEN.load(Ordering::Relaxed) {
+        Duration::from_millis(6000)
+    } else {
+        Duration::from_millis(2500)
+    };
+    match tokio::time::timeout(bound, rx).await {
+        Ok(Ok(result)) => {
+            if result.is_ok() {
+                POT_PROVEN.store(true, Ordering::Relaxed);
+            }
+            result
+        }
         Ok(Err(_)) => {
             if let Ok(mut m) = pot_pending().lock() {
                 m.remove(&id);

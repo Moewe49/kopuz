@@ -91,6 +91,11 @@ const REDUCED_ANIMATIONS_CSS: Asset = asset!("../assets/reduced-animations.css")
 const TOOLBAR_ICONS: Asset = asset!("../assets/toolbar_icons", AssetOptions::folder());
 const QUEUE_STATE_SAVE_DEBOUNCE_MS: u64 = 1200;
 const QUEUE_STATE_PROGRESS_STEP_SECS: u64 = 5;
+// Coalesce rapid config mutations (listen-count bumps on every skip,
+// recently-played pushes on every track change, volume scrubbing, settings
+// sliders, bulk-download offline_tracks inserts) into a single disk write
+// instead of serializing the whole AppConfig — HashMaps and all — every time.
+const CONFIG_SAVE_DEBOUNCE_MS: u64 = 800;
 
 #[cfg(target_os = "windows")]
 #[component]
@@ -265,35 +270,48 @@ fn pick_installer_asset(assets: &[GithubReleaseAsset]) -> Option<String> {
 /// still show the OS's own confirmation — a sideloaded / self-updating app can't
 /// swap itself silently. Progress/errors surface via `on_status`.
 #[cfg(not(target_arch = "wasm32"))]
-fn start_update(installer_url: String, mut on_status: Signal<Option<String>>) {
+fn start_update(installer_url: String, version: String, mut on_status: Signal<Option<String>>) {
     on_status.set(Some("downloading".to_string()));
     spawn(async move {
         let dest = update_dest_path(&installer_url);
-        let ok = async {
-            let client = reqwest::Client::builder()
-                .user_agent(format!("kopuz/{}", env!("CARGO_PKG_VERSION")))
-                .timeout(std::time::Duration::from_secs(300))
-                .build()
-                .ok()?;
-            let bytes = client
-                .get(&installer_url)
-                .send()
-                .await
-                .ok()?
-                .error_for_status()
-                .ok()?
-                .bytes()
-                .await
-                .ok()?;
-            let dest = dest.clone();
-            tokio::task::spawn_blocking(move || std::fs::write(&dest, &bytes))
-                .await
-                .ok()?
-                .ok()?;
-            Some(())
-        }
-        .await
-        .is_some();
+        // Already downloaded this exact version? Install it straight away.
+        // Android sends the user to the "install unknown apps" settings page the
+        // first time, and the tap that comes back afterwards used to re-download
+        // the whole APK. Keeping the staged file means the second tap installs
+        // immediately.
+        let ok = if staged_version(&dest).as_deref() == Some(version.as_str()) {
+            true
+        } else {
+            let downloaded = async {
+                let client = reqwest::Client::builder()
+                    .user_agent(format!("kopuz/{}", env!("CARGO_PKG_VERSION")))
+                    .timeout(std::time::Duration::from_secs(300))
+                    .build()
+                    .ok()?;
+                let bytes = client
+                    .get(&installer_url)
+                    .send()
+                    .await
+                    .ok()?
+                    .error_for_status()
+                    .ok()?
+                    .bytes()
+                    .await
+                    .ok()?;
+                let dest = dest.clone();
+                tokio::task::spawn_blocking(move || std::fs::write(&dest, &bytes))
+                    .await
+                    .ok()?
+                    .ok()?;
+                Some(())
+            }
+            .await
+            .is_some();
+            if downloaded {
+                mark_staged_version(&dest, &version);
+            }
+            downloaded
+        };
         if ok {
             on_status.set(Some("installing".to_string()));
             launch_update(&dest);
@@ -302,6 +320,29 @@ fn start_update(installer_url: String, mut on_status: Signal<Option<String>>) {
             on_status.set(Some("failed".to_string()));
         }
     });
+}
+
+/// Sidecar recording which release the staged installer belongs to, so a
+/// half-finished update can be resumed without paying for the download twice.
+#[cfg(not(target_arch = "wasm32"))]
+fn staged_marker_path(dest: &std::path::Path) -> std::path::PathBuf {
+    dest.with_extension("staged-version")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn staged_version(dest: &std::path::Path) -> Option<String> {
+    let size = std::fs::metadata(dest).ok()?.len();
+    if size == 0 {
+        return None;
+    }
+    let marker = std::fs::read_to_string(staged_marker_path(dest)).ok()?;
+    let marker = marker.trim();
+    (!marker.is_empty()).then(|| marker.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn mark_staged_version(dest: &std::path::Path, version: &str) {
+    let _ = std::fs::write(staged_marker_path(dest), version);
 }
 
 /// Where to stage the downloaded installer. Android needs it in the app's files
@@ -341,14 +382,52 @@ fn launch_update(path: &std::path::Path) {
     }
     #[cfg(target_os = "windows")]
     {
-        // Launch the installer, then exit so it can overwrite the running exe.
-        // `.msi` goes through msiexec; the NSIS `setup.exe` runs directly.
+        // Run the installer SILENTLY, then relaunch — no setup wizard to click
+        // through for what is only ever "give me the newer build". Both
+        // installers keep the existing install location and leave the config in
+        // %LOCALAPPDATA% alone, so the session survives.
+        //
+        // Chained through `cmd /c` so the sequence outlives this process: the
+        // installer can't overwrite kopuz.exe while it is still running, so we
+        // must exit first, and only then can the new binary be started.
         let is_msi = path
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.eq_ignore_ascii_case("msi"))
             .unwrap_or(false);
-        let spawned = if is_msi {
+        let installer = path.to_string_lossy().to_string();
+        let relaunch = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        // Written to a .cmd rather than passed inline: `cmd /c` mangles quotes
+        // in a multi-command string in ways that depend on how many quotes it
+        // contains, and installer paths are quoted. A script file has none of
+        // that ambiguity.
+        //
+        // `start "" /wait` runs the installer to completion before relaunching.
+        // NSIS: /S = silent. msiexec: /qn = no UI, /norestart = never reboot us.
+        let run = if is_msi {
+            format!("start \"\" /wait msiexec /i \"{installer}\" /qn /norestart")
+        } else {
+            format!("start \"\" /wait \"{installer}\" /S")
+        };
+        let mut script = format!("@echo off\r\n{run}\r\n");
+        if !relaunch.is_empty() {
+            script.push_str(&format!("start \"\" \"{relaunch}\"\r\n"));
+        }
+        let script_path = std::env::temp_dir().join("kopuz-apply-update.cmd");
+        let spawned = std::fs::write(&script_path, script).is_ok()
+            && std::process::Command::new("cmd")
+                .arg("/c")
+                .arg(&script_path)
+                .spawn()
+                .is_ok();
+        if spawned {
+            std::process::exit(0);
+        }
+        // Silent chain didn't even start — fall back to the visible installer so
+        // the user is never left with a downloaded update they can't apply.
+        let shown = if is_msi {
             std::process::Command::new("msiexec")
                 .arg("/i")
                 .arg(path)
@@ -357,7 +436,7 @@ fn launch_update(path: &std::path::Path) {
         } else {
             std::process::Command::new(path).spawn().is_ok()
         };
-        if spawned {
+        if shown {
             std::process::exit(0);
         }
     }
@@ -388,7 +467,11 @@ fn launch_update(path: &std::path::Path) {
 /// and applies it. Shows a transient "Update…" label while it runs, and a
 /// retry label after a failure. Hidden when the release has no matching asset.
 #[cfg(not(target_arch = "wasm32"))]
-fn update_button(installer_url: Option<String>, update_status: Signal<Option<String>>) -> Element {
+fn update_button(
+    installer_url: Option<String>,
+    version: String,
+    update_status: Signal<Option<String>>,
+) -> Element {
     let status_now = update_status.read().clone();
     if matches!(status_now.as_deref(), Some("downloading") | Some("installing")) {
         return rsx! {
@@ -406,7 +489,7 @@ fn update_button(installer_url: Option<String>, update_status: Signal<Option<Str
     rsx! {
         button {
             class: "ml-2 px-2 py-0.5 text-xs rounded bg-sky-500/30 hover:bg-sky-500/50 transition-colors",
-            onclick: move |_| start_update(url.clone(), update_status),
+            onclick: move |_| start_update(url.clone(), version.clone(), update_status),
             "{label}"
         }
     }
@@ -1434,6 +1517,8 @@ fn App() -> Element {
     let mut palette = use_signal(|| Option::<Vec<utils::color::Color>>::None);
     let mut pending_queue_state_snapshot = use_signal(|| None::<PersistedQueueState>);
     let mut pending_queue_state_revision = use_signal(|| 0u64);
+    let mut pending_config_snapshot = use_signal(|| None::<config::AppConfig>);
+    let mut pending_config_revision = use_signal(|| 0u64);
 
     #[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
     use_effect(move || {
@@ -1668,7 +1753,8 @@ fn App() -> Element {
         }
         let mut config_snapshot = config.read().clone();
         config_snapshot.volume = *volume.peek();
-        persist_config_snapshot(config_snapshot, config_path());
+        pending_config_snapshot.set(Some(config_snapshot));
+        pending_config_revision.with_mut(|revision| *revision += 1);
     });
 
     use_effect(move || {
@@ -1679,7 +1765,34 @@ fn App() -> Element {
         let committed_volume = *persisted_volume.read();
         let mut config_snapshot = config.peek().clone();
         config_snapshot.volume = committed_volume;
-        persist_config_snapshot(config_snapshot, config_path());
+        pending_config_snapshot.set(Some(config_snapshot));
+        pending_config_revision.with_mut(|revision| *revision += 1);
+    });
+
+    // Debounced config writer: mirrors the queue-state saver below. Rapid
+    // config churn only bumps a revision; the actual serialize + disk write
+    // happens once the dust settles, coalescing bursts into one write.
+    use_future(move || async move {
+        let mut flushed_revision = 0u64;
+        loop {
+            let pending_revision = *pending_config_revision.read();
+            if pending_revision == flushed_revision {
+                utils::sleep(std::time::Duration::from_millis(250)).await;
+                continue;
+            }
+
+            utils::sleep(std::time::Duration::from_millis(CONFIG_SAVE_DEBOUNCE_MS)).await;
+
+            let latest_revision = *pending_config_revision.read();
+            if latest_revision != pending_revision {
+                continue;
+            }
+
+            if let Some(snapshot) = pending_config_snapshot.read().clone() {
+                persist_config_snapshot(snapshot, config_path());
+            }
+            flushed_revision = latest_revision;
+        }
     });
 
     // Keepalive is rearm-on-account-change, not rearm-on-every-config-
@@ -2495,18 +2608,44 @@ fn App() -> Element {
     provide_context(components::soundcloud_search::YtdlpPrefillUrl(
         ytdlp_prefill_url,
     ));
-    // Unified search-bar source selector (Local / server / SoundCloud).
-    // Seeds from the currently active source.
-    let initial_search_source = {
-        let conf = config.peek();
-        if conf.server.is_some() && conf.active_source == config::MusicSource::Server {
-            components::search_bar::SearchSource::Server
-        } else {
-            components::search_bar::SearchSource::Local
-        }
-    };
-    let search_source = use_signal(|| initial_search_source);
+    // Unified search-bar source selector (Local / server / SoundCloud / Spotify).
+    //
+    // Seeded to the default and corrected below rather than read from the
+    // config here: `config` is populated by an ASYNC load, so at first render it
+    // is still `AppConfig::default()`. Peeking it meant the search source was
+    // pinned to Local on every launch — the dropdown said "Local" while a server
+    // was active, and the saved choice never came back.
+    let mut search_source = use_signal(config::SearchSource::default);
     provide_context(components::search_bar::SearchSourceState(search_source));
+    // Adopt the persisted choice once, as soon as the config load lands.
+    let mut search_source_seeded = use_signal(|| false);
+    use_effect(move || {
+        if !*initial_load_done.read() || *search_source_seeded.peek() {
+            return;
+        }
+        search_source_seeded.set(true);
+        let conf = config.peek();
+        search_source.set(conf.search_source.resolve(conf.server.is_some()));
+    });
+    // Keep the dropdown honest when the backend is switched somewhere else (the
+    // sidebar's Local/Server toggle, the offline auto-switch). An explicit
+    // SoundCloud/Spotify pick is left alone — those overlay the backend rather
+    // than replacing it. `peek` on the source + the equality guard are what stop
+    // this from re-triggering itself.
+    use_effect(move || {
+        let want = match config.read().active_source {
+            config::MusicSource::Server => config::SearchSource::Server,
+            _ => config::SearchSource::Local,
+        };
+        let current = *search_source.peek();
+        if matches!(
+            current,
+            config::SearchSource::Local | config::SearchSource::Server
+        ) && current != want
+        {
+            search_source.set(want);
+        }
+    });
     provide_context(scroll_positions);
     provide_context(fetched_artist_images);
     provide_context(is_fetching_artist_images);
@@ -2748,7 +2887,7 @@ fn App() -> Element {
                             }
                             {
                                 #[cfg(not(target_arch = "wasm32"))]
-                                { update_button(update.installer_url.clone(), update_status) }
+                                { update_button(update.installer_url.clone(), update.version.clone(), update_status) }
                                 #[cfg(target_arch = "wasm32")]
                                 { rsx! {} }
                             }

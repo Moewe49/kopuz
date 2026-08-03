@@ -9,7 +9,6 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use dioxus::prelude::spawn;
 use server::ytmusic::botguard;
 use tokio::sync::mpsc;
 
@@ -33,14 +32,43 @@ pub fn start(cookies: String) {
     // Bring the WebView up now so the BotGuard integrity token pre-warms before
     // the first track resolves (mirrors the desktop minter's warm-up).
     player::systemint::pot_minter_init(&init_script(), &cookies);
-    // Drain mint requests on the Dioxus runtime (tokio-backed, so the bridge's
-    // mint timeout works). Serialized — a music queue resolves tracks roughly in
-    // order and a warm minter mints sub-second, so one-at-a-time is plenty.
-    spawn(async move {
-        while let Some(req) = rx.recv().await {
-            let result = player::systemint::mint_pot(&req.video_id).await;
-            let _ = req.reply.send(result);
-        }
-    });
+    // Drain mint requests on a DEDICATED OS thread — never on the Dioxus
+    // runtime.
+    //
+    // Android suspends the wry/winit event loop while the Activity is Stopped,
+    // and with it every Dioxus task. A drain task living there stops polling the
+    // moment the app is backgrounded, so each mint request sat in the channel
+    // untouched until its 2.5s timeout fired: no PO token → `player::resolve`
+    // fell all the way through to the bare clients → googlevideo 403s past the
+    // first ~1 MB, or LOGIN_REQUIRED. That is the background half of "playback
+    // stops after a few minutes". The ExoPlayer engine thread has the same
+    // requirement and is built the same way (see `hooks::android_exo`).
+    //
+    // Serialized — a music queue resolves tracks roughly in order and a warm
+    // minter mints sub-second, so one-at-a-time is plenty.
+    let spawned = std::thread::Builder::new()
+        .name("kopuz-pot-minter".into())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("[pot-minter-android] runtime: {e}");
+                    return;
+                }
+            };
+            rt.block_on(async move {
+                while let Some(req) = rx.recv().await {
+                    let result = player::systemint::mint_pot(&req.video_id).await;
+                    let _ = req.reply.send(result);
+                }
+            });
+        });
+    if let Err(e) = spawned {
+        eprintln!("[pot-minter-android] drain thread: {e}");
+        return;
+    }
     eprintln!("[pot-minter-android] driver started");
 }

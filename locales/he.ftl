@@ -468,6 +468,12 @@ spotify_liked_songs = שירים שאהבתי
 spotify_not_connected = Spotify אינו מחובר.
 spotify_client_id_missing = הזינו קודם את ה-Client ID של אפליקציית Spotify שלכם.
 spotify_import_from = ייבוא מ-Spotify
+spotify_search_hint = הקלידו למעלה כדי לחפש ב-Spotify.
+spotify_searching = מחפש ב-Spotify…
+spotify_search_needs_account = חיפוש ב-Spotify דורש חשבון Spotify מחובר. פתחו רשימות השמעה ← ייבוא מ-Spotify וחברו שם את אפליקציית ה-Spotify (החינמית) שלכם.
+spotify_finding_match = מחפש את „{ $title }” ב-YouTube Music…
+spotify_no_match = לא נמצאה התאמה ל„{ $title }” ב-YouTube Music.
+spotify_playback_note = האודיו של Spotify מוגן מפני העתקה — kopuz מנגן את הרצועה המתאימה מ-YouTube Music.
 sleep_timer = טיימר שינה
 sleep_timer_minutes = { $min } דקות
 sleep_timer_off = כיבוי
@@ -536,3 +542,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = בחירה…
+discord_test = בדיקת החיבור ל-Discord
+discord_test_button = שליחת בדיקה
+download_all_offline = הורדת הכול להשמעה לא מקוונת
+download_folder = תיקיית הורדות
+onboarding_title = ברוכים הבאים ל-Kopuz
+onboarding_subtitle = שתי דרכים למלא אותו במוזיקה:
+onboarding_local_title = תיקיית מוזיקה מקומית
+onboarding_local_desc = הפנו את Kopuz לתיקייה עם קובצי שמע כדי לעיין בהם ולהשמיע אותם.
+onboarding_stream_title = YouTube Music או שרת
+onboarding_stream_desc = חברו את YouTube Music (או Jellyfin / Subsonic) להשמעה והורדה.
+onboarding_open_settings = פתיחת ההגדרות
+onboarding_later = אולי מאוחר יותר
+premium_downloads = הורדות פרימיום (256 kbps)
+premium_downloads_hint = מתחבר כדי להוריד AAC ב-256 kbps. עוזר רק לחשבונות YouTube Premium; בעומס גבוה עלול לעיתים נדירות להפעיל בדיקת בוט. כבוי = 128 kbps אנונימי.
+remove_downloads = הסרת ההורדות
+reset_to_default = איפוס לברירת המחדל
+search_elsewhere = אין כלום ב-{ $source } — במקורות אחרים יש:

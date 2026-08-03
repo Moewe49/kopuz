@@ -474,6 +474,12 @@ spotify_liked_songs = お気に入りの曲
 spotify_not_connected = Spotify が連携されていません。
 spotify_client_id_missing = 先に Spotify アプリの Client ID を入力してください。
 spotify_import_from = Spotify からインポート
+spotify_search_hint = 上に入力して Spotify を検索します。
+spotify_searching = Spotify を検索中…
+spotify_search_needs_account = Spotify 検索には接続済みの Spotify アカウントが必要です。プレイリスト →「Spotify からインポート」を開き、そこで（無料の）Spotify アプリを接続してください。
+spotify_finding_match = 「{ $title }」を YouTube Music で検索中…
+spotify_no_match = 「{ $title }」に一致する曲が YouTube Music に見つかりませんでした。
+spotify_playback_note = Spotify の音声はコピー保護されています。kopuz は一致する曲を YouTube Music から再生します。
 sleep_timer = スリープタイマー
 sleep_timer_minutes = { $min } 分
 sleep_timer_off = オフにする
@@ -542,3 +548,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = 選択…
+discord_test = Discord 接続をテスト
+discord_test_button = テストを送信
+download_all_offline = オフライン再生用にすべてダウンロード
+download_folder = ダウンロードフォルダ
+onboarding_title = Kopuz へようこそ
+onboarding_subtitle = 音楽で満たす方法は 2 つあります:
+onboarding_local_title = ローカルの音楽フォルダ
+onboarding_local_desc = 音声ファイルの入ったフォルダを Kopuz に指定すると、閲覧して再生できます。
+onboarding_stream_title = YouTube Music またはサーバー
+onboarding_stream_desc = YouTube Music（または Jellyfin / Subsonic）を接続して、再生とダウンロードができます。
+onboarding_open_settings = 設定を開く
+onboarding_later = 後で
+premium_downloads = プレミアムダウンロード（256 kbps）
+premium_downloads_hint = サインインして 256 kbps の AAC を取得します。YouTube Premium アカウントでのみ有効です。高負荷時にまれにボットチェックが発生することがあります。オフ = 匿名の 128 kbps。
+remove_downloads = ダウンロードを削除
+reset_to_default = 既定値に戻す
+search_elsewhere = { $source } には無し — 他のソースにはあります:

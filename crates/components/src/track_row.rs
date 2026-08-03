@@ -87,7 +87,13 @@ pub fn TrackRow(
     let config = use_context::<Signal<AppConfig>>();
     let mut ctrl = use_context::<PlayerController>();
     let nav_ctrl = use_context::<NavigationController>();
-    let is_modern = config.read().ui_style == UiStyle::Modern;
+    // Subscribe only to the specific config fields this row depends on, via
+    // memos. Reading `config` directly would re-render every visible row on
+    // *any* config write (listen-count bumps on skip, recently-played, volume,
+    // settings) — with a virtualized list that's ~50 row re-renders per write.
+    let is_modern_memo = use_memo(move || config.read().ui_style == UiStyle::Modern);
+    let is_server_memo = use_memo(move || config.read().active_source == MusicSource::Server);
+    let is_modern = *is_modern_memo.read();
     let show_selection_highlight = is_selection_mode && is_selected;
     let selection_shadow = if show_selection_highlight {
         "inset 0 0 0 9999px rgba(255,255,255,0.07)"
@@ -150,7 +156,7 @@ pub fn TrackRow(
     }
 
     let has_download = on_download.is_some();
-    let is_server = config.read().active_source == MusicSource::Server;
+    let is_server = *is_server_memo.read();
     let has_download = has_download && is_server;
 
     if has_download {
@@ -288,6 +294,51 @@ pub fn TrackRow(
         }
     };
 
+    // Hover-prewarm: when the pointer settles on a not-yet-downloaded YT row,
+    // resolve its stream in the background so the (otherwise cold ~5s) resolve
+    // is already cached by the time the user clicks. Mirrors the queue's
+    // next-track prefetch, but aimed at whatever the user is about to play.
+    // The short debounce means a fast scroll-by leaves before the resolve
+    // fires (and gets cancelled) — only a deliberate rest warms a stream.
+    let prewarm_vid: Option<String> = {
+        let p = track.path.to_string_lossy();
+        if is_downloaded || !p.starts_with("ytmusic:") {
+            None
+        } else {
+            p.split(':')
+                .nth(1)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        }
+    };
+    let prewarm_vid_modern = prewarm_vid.clone();
+    let prewarm_vid_normal = prewarm_vid;
+    let mut prewarm_task = use_signal(|| None);
+    // Copy closure (captures only Copy signals) so it can be reused across both
+    // layouts; the per-layout handler passes its own cloned video id.
+    let mut trigger_prewarm = move |vid: String| {
+        if prewarm_task.peek().is_some() {
+            return;
+        }
+        let token = config
+            .peek()
+            .server
+            .as_ref()
+            .and_then(|s| s.access_token.clone())
+            .unwrap_or_default();
+        let task = spawn(async move {
+            utils::sleep(std::time::Duration::from_millis(180)).await;
+            let yt = server::ytmusic::YouTubeMusicClient::with_cookies(token);
+            yt.prewarm_stream(&vid).await;
+        });
+        prewarm_task.set(Some(task));
+    };
+    let mut cancel_prewarm = move || {
+        if let Some(task) = prewarm_task.write().take() {
+            task.cancel();
+        }
+    };
+
     let fmt_dur = |s: u64| format!("{}:{:02}", s / 60, s % 60);
     let duration_str = fmt_dur(track.duration);
 
@@ -358,7 +409,15 @@ pub fn TrackRow(
                     cancel_long_press();
                     clear_dragged_queue_track();
                 },
-                onmouseleave: move |_| cancel_long_press(),
+                onmouseenter: move |_| {
+                    if let Some(vid) = prewarm_vid_modern.clone() {
+                        trigger_prewarm(vid);
+                    }
+                },
+                onmouseleave: move |_| {
+                    cancel_long_press();
+                    cancel_prewarm();
+                },
                 ontouchstart: move |_| start_long_press(),
                 ontouchend: move |_| cancel_long_press(),
                 oncontextmenu: move |evt| {
@@ -648,7 +707,15 @@ pub fn TrackRow(
                 cancel_long_press();
                 clear_dragged_queue_track();
             },
-            onmouseleave: move |_| cancel_long_press(),
+            onmouseenter: move |_| {
+                if let Some(vid) = prewarm_vid_normal.clone() {
+                    trigger_prewarm(vid);
+                }
+            },
+            onmouseleave: move |_| {
+                cancel_long_press();
+                cancel_prewarm();
+            },
             ontouchstart: move |_| start_long_press(),
             ontouchend: move |_| cancel_long_press(),
             oncontextmenu: move |evt| {

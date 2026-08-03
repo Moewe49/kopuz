@@ -738,6 +738,14 @@ impl PlayerController {
 
                     #[cfg(not(target_arch = "wasm32"))]
                     spawn(async move {
+                        // Duration that ends up in NowPlayingMeta. Starts from the
+                        // track's (possibly 0) metadata duration and gets upgraded to
+                        // the real stream length once YT/SoundCloud resolve it — without
+                        // this, a 0:00 search result kept meta.duration = 0, so the
+                        // player clamped every seek back to the start (the "can't scrub"
+                        // bug). The queue Track + UI signal were already backfilled; meta
+                        // was the missing piece.
+                        let mut resolved_duration_secs = track.duration;
                         let (stream_url, yt_format, yt_user_agent, yt_reresolve) = if let Some(
                             video_id,
                         ) =
@@ -773,6 +781,7 @@ impl PlayerController {
                                         && let Some(secs) = info.duration_secs
                                         && secs > 0
                                     {
+                                        resolved_duration_secs = secs;
                                         if let Some(p) = phys_idx
                                             && let Some(t) = queue_for_yt.write().get_mut(p)
                                         {
@@ -843,6 +852,7 @@ impl PlayerController {
                                         && let Some(secs) = info.duration_secs
                                         && secs > 0
                                     {
+                                        resolved_duration_secs = secs;
                                         if let Some(p) = phys_idx
                                             && let Some(t) = queue_for_yt.write().get_mut(p)
                                         {
@@ -920,7 +930,9 @@ impl PlayerController {
                                     title: track.title.clone(),
                                     artist: track.artist.clone(),
                                     album: track.album.clone(),
-                                    duration: std::time::Duration::from_secs(track.duration),
+                                    duration: std::time::Duration::from_secs(
+                                        resolved_duration_secs,
+                                    ),
                                     artwork: Some(cover_url.clone()),
                                 };
 
@@ -2098,7 +2110,8 @@ impl PlayerController {
                 .server
                 .as_ref()
                 .and_then(|s| s.access_token.clone());
-            crate::android_exo::reorder_upcoming(tracks, idx, cookies);
+            let offline = self.config.peek().offline_tracks.clone();
+            crate::android_exo::reorder_upcoming(tracks, idx, cookies, offline);
         }
     }
 
@@ -2444,6 +2457,9 @@ impl PlayerController {
             .server
             .as_ref()
             .and_then(|s| s.access_token.clone());
+        // Downloaded copies resolve to local files in the engine — the only
+        // stream path Android's background restrictions can't break.
+        let offline = self.config.peek().offline_tracks.clone();
         // Let the engine start end-of-queue autoradio itself (works backgrounded).
         crate::android_exo::set_autoradio(self.config.peek().autoradio);
         self.current_queue_index.set(idx);
@@ -2454,7 +2470,7 @@ impl PlayerController {
         self.is_playing.set(true);
         self.is_loading.set(true);
         self.skip_in_progress.set(false);
-        crate::android_exo::play(tracks, idx, cookies, 0);
+        crate::android_exo::play(tracks, idx, cookies, offline, 0);
     }
 
     /// ExoPlayer auto-advanced to play-order index `idx` — sync the UI without

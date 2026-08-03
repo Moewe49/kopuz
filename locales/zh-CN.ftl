@@ -468,6 +468,12 @@ spotify_liked_songs = 喜欢的歌曲
 spotify_not_connected = Spotify 未连接。
 spotify_client_id_missing = 请先输入你的 Spotify 应用 Client ID。
 spotify_import_from = 从 Spotify 导入
+spotify_search_hint = 在上方输入以搜索 Spotify。
+spotify_searching = 正在搜索 Spotify…
+spotify_search_needs_account = Spotify 搜索需要已连接的 Spotify 账号。打开「播放列表 → 从 Spotify 导入」，并在那里连接你的（免费）Spotify 应用。
+spotify_finding_match = 正在 YouTube Music 上查找“{ $title }”…
+spotify_no_match = 在 YouTube Music 上未找到与“{ $title }”匹配的歌曲。
+spotify_playback_note = Spotify 音频有版权保护 —— kopuz 会播放 YouTube Music 上的对应曲目。
 sleep_timer = 睡眠定时器
 sleep_timer_minutes = { $min } 分钟
 sleep_timer_off = 关闭
@@ -536,3 +542,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = 选择…
+discord_test = 测试 Discord 连接
+discord_test_button = 发送测试
+download_all_offline = 全部下载以便离线播放
+download_folder = 下载文件夹
+onboarding_title = 欢迎使用 Kopuz
+onboarding_subtitle = 有两种方式为它填充音乐：
+onboarding_local_title = 本地音乐文件夹
+onboarding_local_desc = 为 Kopuz 指定一个存放音频文件的文件夹，即可浏览和播放。
+onboarding_stream_title = YouTube Music 或服务器
+onboarding_stream_desc = 连接 YouTube Music（或 Jellyfin / Subsonic）即可播放和下载。
+onboarding_open_settings = 打开设置
+onboarding_later = 以后再说
+premium_downloads = 高级下载（256 kbps）
+premium_downloads_hint = 登录后获取 256 kbps 的 AAC。仅对 YouTube Premium 账号有效；负载较高时偶尔可能触发机器人验证。关闭 = 匿名 128 kbps。
+remove_downloads = 移除下载
+reset_to_default = 恢复默认
+search_elsewhere = { $source } 上没有 —— 其他来源有：

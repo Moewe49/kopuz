@@ -468,6 +468,12 @@ spotify_liked_songs = Piese apreciate
 spotify_not_connected = Spotify nu este conectat.
 spotify_client_id_missing = Introdu mai întâi Client ID-ul aplicației tale Spotify.
 spotify_import_from = Importă din Spotify
+spotify_search_hint = Scrie mai sus pentru a căuta pe Spotify.
+spotify_searching = Se caută pe Spotify…
+spotify_search_needs_account = Căutarea pe Spotify are nevoie de contul tău Spotify conectat. Deschide Playlisturi → Importă din Spotify și conectează acolo aplicația ta Spotify (gratuită).
+spotify_finding_match = Se caută „{ $title }” pe YouTube Music…
+spotify_no_match = Nicio potrivire pentru „{ $title }” pe YouTube Music.
+spotify_playback_note = Audio-ul Spotify este protejat la copiere — kopuz redă piesa echivalentă de pe YouTube Music.
 sleep_timer = Temporizator de somn
 sleep_timer_minutes = { $min } minute
 sleep_timer_off = Dezactivează
@@ -536,3 +542,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = Alege…
+discord_test = Testează conexiunea Discord
+discord_test_button = Trimite test
+download_all_offline = Descarcă tot pentru redare offline
+download_folder = Folder de descărcări
+onboarding_title = Bun venit în Kopuz
+onboarding_subtitle = Două moduri de a-l umple cu muzică:
+onboarding_local_title = Folder local de muzică
+onboarding_local_desc = Arată-i lui Kopuz un folder cu fișiere audio ca să le răsfoiești și să le asculți.
+onboarding_stream_title = YouTube Music sau un server
+onboarding_stream_desc = Conectează YouTube Music (sau Jellyfin / Subsonic) pentru redare și descărcare.
+onboarding_open_settings = Deschide setările
+onboarding_later = Poate mai târziu
+premium_downloads = Descărcări premium (256 kbps)
+premium_downloads_hint = Se autentifică pentru a descărca AAC la 256 kbps. Ajută doar conturile YouTube Premium; la încărcare mare poate declanșa rar o verificare anti-bot. Dezactivat = 128 kbps anonim.
+remove_downloads = Elimină descărcările
+reset_to_default = Resetează la implicit
+search_elsewhere = Nimic pe { $source } — alte surse au:

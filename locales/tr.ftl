@@ -468,6 +468,12 @@ spotify_liked_songs = Beğenilen şarkılar
 spotify_not_connected = Spotify bağlı değil.
 spotify_client_id_missing = Önce Spotify uygulamanın Client ID'sini gir.
 spotify_import_from = Spotify'dan içe aktar
+spotify_search_hint = Spotify'da aramak için yukarıya yazın.
+spotify_searching = Spotify'da aranıyor…
+spotify_search_needs_account = Spotify araması bağlı bir Spotify hesabı gerektirir. Çalma Listeleri → Spotify'dan içe aktar bölümünü açın ve (ücretsiz) Spotify uygulamanızı orada bağlayın.
+spotify_finding_match = “{ $title }” YouTube Music'te aranıyor…
+spotify_no_match = “{ $title }” için YouTube Music'te eşleşme bulunamadı.
+spotify_playback_note = Spotify sesi kopya korumalıdır — kopuz eşleşen parçayı YouTube Music'ten çalar.
 sleep_timer = Uyku zamanlayıcısı
 sleep_timer_minutes = { $min } dakika
 sleep_timer_off = Kapat
@@ -536,3 +542,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = Seç…
+discord_test = Discord bağlantısını test et
+discord_test_button = Test gönder
+download_all_offline = Çevrimdışı dinlemek için hepsini indir
+download_folder = İndirme klasörü
+onboarding_title = Kopuz'a hoş geldiniz
+onboarding_subtitle = Müzikle doldurmanın iki yolu:
+onboarding_local_title = Yerel müzik klasörü
+onboarding_local_desc = Kopuz'a ses dosyalarının bulunduğu bir klasörü gösterin; göz atıp çalabilirsiniz.
+onboarding_stream_title = YouTube Music ya da bir sunucu
+onboarding_stream_desc = Dinlemek ve indirmek için YouTube Music'i (ya da Jellyfin / Subsonic) bağlayın.
+onboarding_open_settings = Ayarları aç
+onboarding_later = Belki sonra
+premium_downloads = Premium indirmeler (256 kbps)
+premium_downloads_hint = 256 kbps AAC almak için oturum açar. Yalnızca YouTube Premium hesaplarında işe yarar; yoğun kullanımda nadiren bot kontrolü tetikleyebilir. Kapalı = anonim 128 kbps.
+remove_downloads = İndirmeleri kaldır
+reset_to_default = Varsayılana sıfırla
+search_elsewhere = { $source } üzerinde yok — diğer kaynaklarda:

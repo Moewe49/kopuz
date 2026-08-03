@@ -468,6 +468,12 @@ spotify_liked_songs = Αγαπημένα κομμάτια
 spotify_not_connected = Το Spotify δεν είναι συνδεδεμένο.
 spotify_client_id_missing = Εισαγάγετε πρώτα το Client ID της εφαρμογής σας Spotify.
 spotify_import_from = Εισαγωγή από το Spotify
+spotify_search_hint = Πληκτρολογήστε παραπάνω για αναζήτηση στο Spotify.
+spotify_searching = Αναζήτηση στο Spotify…
+spotify_search_needs_account = Η αναζήτηση στο Spotify χρειάζεται συνδεδεμένο λογαριασμό Spotify. Ανοίξτε Λίστες → Εισαγωγή από Spotify και συνδέστε εκεί τη (δωρεάν) εφαρμογή σας Spotify.
+spotify_finding_match = Αναζήτηση του «{ $title }» στο YouTube Music…
+spotify_no_match = Δεν βρέθηκε αντιστοιχία για «{ $title }» στο YouTube Music.
+spotify_playback_note = Ο ήχος του Spotify προστατεύεται από αντιγραφή — το kopuz αναπαράγει το αντίστοιχο κομμάτι από το YouTube Music.
 sleep_timer = Χρονοδιακόπτης ύπνου
 sleep_timer_minutes = { $min } λεπτά
 sleep_timer_off = Απενεργοποίηση
@@ -536,3 +542,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = Επιλογή…
+discord_test = Δοκιμή σύνδεσης Discord
+discord_test_button = Αποστολή δοκιμής
+download_all_offline = Λήψη όλων για αναπαραγωγή εκτός σύνδεσης
+download_folder = Φάκελος λήψεων
+onboarding_title = Καλώς ήρθατε στο Kopuz
+onboarding_subtitle = Δύο τρόποι να το γεμίσετε με μουσική:
+onboarding_local_title = Τοπικός φάκελος μουσικής
+onboarding_local_desc = Δείξτε στο Kopuz έναν φάκελο με αρχεία ήχου για περιήγηση και αναπαραγωγή.
+onboarding_stream_title = YouTube Music ή διακομιστής
+onboarding_stream_desc = Συνδέστε το YouTube Music (ή Jellyfin / Subsonic) για αναπαραγωγή και λήψεις.
+onboarding_open_settings = Άνοιγμα ρυθμίσεων
+onboarding_later = Ίσως αργότερα
+premium_downloads = Λήψεις premium (256 kbps)
+premium_downloads_hint = Συνδέεται για λήψη AAC 256 kbps. Βοηθά μόνο σε λογαριασμούς YouTube Premium· υπό μεγάλο φόρτο μπορεί σπάνια να ενεργοποιήσει έλεγχο anti-bot. Απενεργοποιημένο = ανώνυμα 128 kbps.
+remove_downloads = Αφαίρεση λήψεων
+reset_to_default = Επαναφορά προεπιλογών
+search_elsewhere = Τίποτα στο { $source } — άλλες πηγές έχουν:

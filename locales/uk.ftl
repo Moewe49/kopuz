@@ -468,6 +468,12 @@ spotify_liked_songs = Вподобані треки
 spotify_not_connected = Spotify не підключено.
 spotify_client_id_missing = Спершу введіть Client ID вашого застосунку Spotify.
 spotify_import_from = Імпорт зі Spotify
+spotify_search_hint = Введіть запит вище, щоб шукати у Spotify.
+spotify_searching = Пошук у Spotify…
+spotify_search_needs_account = Для пошуку у Spotify потрібен під'єднаний акаунт Spotify. Відкрийте Плейлисти → Імпорт зі Spotify і під'єднайте там свій (безкоштовний) застосунок Spotify.
+spotify_finding_match = Пошук «{ $title }» у YouTube Music…
+spotify_no_match = У YouTube Music не знайдено відповідника для «{ $title }».
+spotify_playback_note = Аудіо Spotify захищене від копіювання — kopuz відтворює відповідний трек із YouTube Music.
 sleep_timer = Таймер сну
 sleep_timer_minutes = { $min } хвилин
 sleep_timer_off = Вимкнути
@@ -536,3 +542,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = Вибрати…
+discord_test = Перевірити з'єднання з Discord
+discord_test_button = Надіслати тест
+download_all_offline = Завантажити все для офлайн-відтворення
+download_folder = Тека завантажень
+onboarding_title = Вітаємо в Kopuz
+onboarding_subtitle = Два способи наповнити його музикою:
+onboarding_local_title = Локальна тека з музикою
+onboarding_local_desc = Укажіть Kopuz теку з аудіофайлами, щоб переглядати й відтворювати їх.
+onboarding_stream_title = YouTube Music або сервер
+onboarding_stream_desc = Під'єднайте YouTube Music (або Jellyfin / Subsonic), щоб слухати й завантажувати.
+onboarding_open_settings = Відкрити налаштування
+onboarding_later = Можливо, пізніше
+premium_downloads = Premium-завантаження (256 кбіт/с)
+premium_downloads_hint = Виконує вхід, щоб отримувати AAC 256 кбіт/с. Допомагає лише акаунтам YouTube Premium; за високого навантаження зрідка може спричинити перевірку на бота. Вимкнено = анонімні 128 кбіт/с.
+remove_downloads = Видалити завантаження
+reset_to_default = Скинути до типових
+search_elsewhere = У { $source } нічого — в інших джерелах є:

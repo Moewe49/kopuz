@@ -137,7 +137,10 @@ pub struct ShowcaseProps {
 #[component]
 pub fn Showcase(props: ShowcaseProps) -> Element {
     let config = use_context::<Signal<AppConfig>>();
-    match config.read().ui_style {
+    // Memo so the whole showcase (and its track list) doesn't re-diff on every
+    // unrelated config write — only when the UI style actually flips.
+    let ui_style = use_memo(move || config.read().ui_style);
+    match *ui_style.read() {
         config::UiStyle::Modern => rsx! {
             crate::modern::showcase::ShowcaseModern { ..props }
         },

@@ -33,7 +33,10 @@ pub fn Bottombar(
     let c = *is_rightbar_open.read();
     set_queue_drag_enabled(c);
 
-    match config.read().ui_style {
+    // Memo so the always-mounted player bar doesn't re-render on every config
+    // write (e.g. the listen-count bump on each skip) — only on a style flip.
+    let ui_style = use_memo(move || config.read().ui_style);
+    match *ui_style.read() {
         UiStyle::Normal => rsx! {
             BottombarNormal {
                 library, favorites_store, config, player, is_playing, is_fullscreen,

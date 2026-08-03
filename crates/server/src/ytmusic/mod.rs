@@ -98,6 +98,16 @@ fn stream_cache_put(video_id: &str, info: &YtStreamInfo) {
     }
 }
 
+/// Forget a cached stream URL so the next resolve fetches a fresh one. Call
+/// this when a previously-resolved googlevideo URL starts failing (403 on a
+/// deep range, expired `expire=` param): re-resolving through the cache would
+/// hand the player the exact same broken URL and the retry could never recover.
+pub fn invalidate_stream(video_id: &str) {
+    if let Ok(mut cache) = stream_cache().lock() {
+        cache.remove(video_id);
+    }
+}
+
 pub const SOURCE_PREFIX: &str = "ytmusic";
 
 /// Surfaced by auth-only operations (like/unlike, add-to-playlist,

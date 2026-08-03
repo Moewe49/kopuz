@@ -8,16 +8,18 @@ use std::time::Duration;
 
 /// Which platform the unified search bar queries. `Server` follows the
 /// configured media server (YouTube Music / Jellyfin / Subsonic); `Local`
-/// the on-disk library; `SoundCloud` the yt-dlp-backed SoundCloud search.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SearchSource {
-    Local,
-    Server,
-    SoundCloud,
-}
+/// the on-disk library; `SoundCloud` the native SoundCloud search; `Spotify`
+/// Spotify's catalogue (played back through YouTube Music — Spotify audio
+/// itself is DRM-locked).
+///
+/// Lives in `config` because it is persisted: re-exported here so the rest of
+/// the UI keeps referring to it as `search_bar::SearchSource`.
+pub use config::SearchSource;
 
 /// App-wide selected search source, driven by the dropdown in [`SearchBar`]
-/// and read by the search page to decide which results view to render.
+/// and read by the search page to decide which results view to render. The
+/// authoritative value is `config.search_source`; this signal mirrors it so
+/// components can react without every one of them writing config.
 #[derive(Clone, Copy)]
 pub struct SearchSourceState(pub Signal<SearchSource>);
 
@@ -74,6 +76,7 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
         SearchSource::Local => "local",
         SearchSource::Server => "server",
         SearchSource::SoundCloud => "soundcloud",
+        SearchSource::Spotify => "spotify",
     };
 
     rsx! {
@@ -84,20 +87,36 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
                 class: "appearance-none bg-white/5 border border-white/10 rounded-full py-3 pl-4 pr-9 text-white text-sm focus:outline-none focus:border-white/20 transition-colors cursor-pointer",
                 value: "{value_str}",
                 onchange: move |e| {
+                    let picked = match e.value().as_str() {
+                        "local" => SearchSource::Local,
+                        "server" => SearchSource::Server,
+                        "soundcloud" => SearchSource::SoundCloud,
+                        "spotify" => SearchSource::Spotify,
+                        _ => return,
+                    };
+                    source.set(picked);
+                    // ONE write, not three. Each `config.write()` marks the
+                    // signal dirty and re-runs every subscriber mid-change, so
+                    // splitting this left observers seeing a half-applied state
+                    // (a new active_source with source_explicitly_set still
+                    // false), which is exactly what let the choice snap back.
                     let mut cfg = config;
-                    match e.value().as_str() {
-                        "local" => {
-                            source.set(SearchSource::Local);
-                            cfg.write().active_source = MusicSource::Local;
-                            cfg.write().source_explicitly_set = true;
+                    let mut c = cfg.write();
+                    c.search_source = picked;
+                    match picked {
+                        // Local/Server also drive the app-wide backend so the
+                        // sidebar toggle and this dropdown can't disagree.
+                        SearchSource::Local => {
+                            c.active_source = MusicSource::Local;
+                            c.source_explicitly_set = true;
                         }
-                        "server" => {
-                            source.set(SearchSource::Server);
-                            cfg.write().active_source = MusicSource::Server;
-                            cfg.write().source_explicitly_set = true;
+                        SearchSource::Server => {
+                            c.active_source = MusicSource::Server;
+                            c.source_explicitly_set = true;
                         }
-                        "soundcloud" => source.set(SearchSource::SoundCloud),
-                        _ => {}
+                        // Overlay sources render their own view and leave the
+                        // configured backend alone.
+                        SearchSource::SoundCloud | SearchSource::Spotify => {}
                     }
                 },
                 onkeydown: move |e| e.stop_propagation(),
@@ -110,6 +129,11 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
                 if soundcloud_ok {
                     option { value: "soundcloud", selected: current == SearchSource::SoundCloud, "SoundCloud" }
                 }
+                // Always listed, unlike SoundCloud: Spotify search needs a
+                // connected account, and hiding the option until then would
+                // make the feature undiscoverable. The view itself explains
+                // how to connect.
+                option { value: "spotify", selected: current == SearchSource::Spotify, "Spotify" }
             }
         }
     }

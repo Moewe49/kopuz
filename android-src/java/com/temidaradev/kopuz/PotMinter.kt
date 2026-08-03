@@ -144,6 +144,20 @@ object PotMinter {
                 nativeOnPot(reqId, "", "minter webview not initialized")
                 return@post
             }
+            // Un-freeze the renderer before asking it to do work. Android (and
+            // wry, which pauses its WebViews when the Activity stops) suspends
+            // background WebView JS, and a mint that never runs is the whole
+            // reason background look-ahead refills failed: no PO token → the
+            // stream falls back to a bare googlevideo URL that 403s about a
+            // minute in. resumeTimers() is process-global, so this also keeps
+            // the UI WebView's timers alive — acceptable, since we only call it
+            // while a track is actually being resolved for playback.
+            try {
+                web.onResume()
+                web.resumeTimers()
+            } catch (e: Exception) {
+                Log.w(TAG, "resume before mint failed: ${e.message}")
+            }
             // If __kopuzMint isn't defined yet (page still loading / BgUtils not
             // ready), report back immediately so the resolver falls back fast
             // instead of stalling on the 15s mint timeout. When it IS ready the

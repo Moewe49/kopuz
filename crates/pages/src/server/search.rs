@@ -258,6 +258,16 @@ pub fn JellyfinSearch(
                         selected_track_for_playlist,
                         on_select_album,
                         extra_below: Some(rsx! {
+                            // Nothing on this backend → offer what the other
+                            // sources have for the same query, so a track the
+                            // selected server simply doesn't carry is still one
+                            // click away instead of a dead end.
+                            if tracks.is_empty() && albums.is_empty() {
+                                components::cross_source_search::CrossSourceFallback {
+                                    query: data.search_query.read().clone(),
+                                    library,
+                                }
+                            }
                             if !yt_sections.is_empty() {
                                 div { class: "mt-10 space-y-4",
                                     for (title_key, items) in [

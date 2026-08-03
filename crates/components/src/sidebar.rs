@@ -13,7 +13,10 @@ pub struct SidebarCollapsed(pub Signal<bool>);
 #[component]
 pub fn Sidebar(props: SidebarProps) -> Element {
     let config = use_context::<Signal<config::AppConfig>>();
-    match config.read().ui_style {
+    // Memo so the always-mounted sidebar doesn't re-render on every config
+    // write — only when the UI style actually changes.
+    let ui_style = use_memo(move || config.read().ui_style);
+    match *ui_style.read() {
         config::UiStyle::Modern => rsx! {
             crate::modern::sidebar::SidebarModern {
                 current_route: props.current_route,

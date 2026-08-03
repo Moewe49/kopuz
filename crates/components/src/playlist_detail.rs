@@ -32,6 +32,49 @@ pub fn PlaylistDetail(
         .map(|s| s.service == MusicService::YtMusic)
         .unwrap_or(false);
 
+    // Warm the first couple of streams the moment a YT playlist's tracks land,
+    // so pressing Play (or clicking the top track) starts without the cold
+    // ~5s resolve — the user spends a few seconds reading the list, which is
+    // exactly the head start the resolve needs. Best-effort, cached, and skips
+    // tracks already on disk (those play locally, no resolve). Reads `tracks`
+    // reactively so it re-warms when the user opens a different playlist.
+    use_effect(move || {
+        if !active_service_is_ytmusic {
+            return;
+        }
+        let conf = config.peek();
+        let token = conf
+            .server
+            .as_ref()
+            .and_then(|s| s.access_token.clone())
+            .unwrap_or_default();
+        let vids: Vec<String> = tracks
+            .read()
+            .iter()
+            .filter_map(|t| {
+                let p = t.path.to_string_lossy();
+                if !p.starts_with("ytmusic:") {
+                    return None;
+                }
+                let vid = p.split(':').nth(1).filter(|s| !s.is_empty())?;
+                if conf.offline_tracks.contains_key(vid) {
+                    return None;
+                }
+                Some(vid.to_string())
+            })
+            .take(2)
+            .collect();
+        if vids.is_empty() {
+            return;
+        }
+        spawn(async move {
+            let yt = server::ytmusic::YouTubeMusicClient::with_cookies(token);
+            for vid in vids {
+                yt.prewarm_stream(&vid).await;
+            }
+        });
+    });
+
     let (playlist_name, local_tracks_paths, is_jellyfin, playlist_custom_cover, playlist_image_tag) =
         if let Some(p) = store.playlists.iter().find(|p| p.id == playlist_id) {
             (

@@ -1,5 +1,6 @@
 use components::search_bar::{SearchBar, SearchSource, SearchSourceState};
 use components::soundcloud_search::SoundCloudSearchView;
+use components::spotify_search::SpotifySearchView;
 use config::{AppConfig, MusicSource};
 use dioxus::prelude::*;
 use player::player;
@@ -35,6 +36,7 @@ pub fn Search(
     // dropdown sets active_source too, so the two never disagree).
     let source = use_context::<SearchSourceState>().0;
     let is_soundcloud = *source.read() == SearchSource::SoundCloud;
+    let is_spotify = *source.read() == SearchSource::Spotify;
     let is_server = config.read().active_source == MusicSource::Server;
 
     rsx! {
@@ -45,6 +47,14 @@ pub fn Search(
                 class: "p-8 absolute inset-0 flex flex-col",
                 SearchBar { search_query }
                 SoundCloudSearchView { search_query }
+            }
+        } else if is_spotify {
+            // Spotify is an overlay source like SoundCloud: its own results
+            // view, playback routed through the YT Music match.
+            div {
+                class: "p-8 absolute inset-0 flex flex-col",
+                SearchBar { search_query }
+                SpotifySearchView { search_query }
             }
         } else if is_server {
             ServerSearch {

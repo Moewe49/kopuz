@@ -30,6 +30,10 @@ pub struct TrackMatch {
     pub spotify: SpotifyTrack,
     /// `None` = no candidate cleared [`MIN_SCORE`].
     pub video_id: Option<String>,
+    /// The winning YT track itself, so a caller that wants to *play* the match
+    /// (rather than write it into a playlist) doesn't have to search again.
+    /// `Some` exactly when `video_id` is.
+    pub track: Option<Track>,
     pub matched_label: String,
     pub score: f64,
 }
@@ -104,6 +108,7 @@ where
             m.unwrap_or_else(|| TrackMatch {
                 spotify: tracks[i].clone(),
                 video_id: None,
+                track: None,
                 matched_label: String::new(),
                 score: 0.0,
             })
@@ -131,16 +136,34 @@ async fn match_one(_cookies: Option<String>, sp: &SpotifyTrack) -> TrackMatch {
         Some((s, t)) if s >= MIN_SCORE => TrackMatch {
             spotify: sp.clone(),
             video_id: video_id_of(t),
+            track: Some(t.clone()),
             matched_label: format!("{} — {}", t.title, t.artist),
             score: s,
         },
         _ => TrackMatch {
             spotify: sp.clone(),
             video_id: None,
+            track: None,
             matched_label: String::new(),
             score: best.map(|(s, _)| s).unwrap_or(0.0),
         },
     }
+}
+
+/// Match a whole Spotify playlist to *playable* YT tracks, in the original
+/// order, dropping the ones nothing confident was found for. Same scoring and
+/// concurrency as the import path — this is the "play it now" counterpart to
+/// [`import_playlist`], for when the user wants to listen without cloning the
+/// playlist into their YouTube account.
+pub async fn match_playlist_to_tracks<F>(tracks: &[SpotifyTrack], on_event: F) -> Vec<Track>
+where
+    F: FnMut(CloneEvent),
+{
+    match_playlist(None, tracks, on_event)
+        .await
+        .into_iter()
+        .filter_map(|m| m.track)
+        .collect()
 }
 
 /// Match an arbitrary `(title, artists, duration)` — e.g. a SoundCloud track —

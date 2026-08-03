@@ -237,6 +237,15 @@ fn pct_encode(s: &str) -> String {
 /// rotation would break decipher until restart.
 static PLAYER_JS: Mutex<Option<(Instant, Arc<(String, u64)>)>> = Mutex::new(None);
 const PLAYER_JS_TTL: Duration = Duration::from_secs(60 * 60);
+/// How long a *failed* fetch is remembered. Without this every resolve retried
+/// the whole (multi-MB) fetch — on Android, where the decipher path fails for
+/// other reasons, that burned a watch-page download per track.
+const PLAYER_JS_FAIL_TTL: Duration = Duration::from_secs(60);
+static PLAYER_JS_FAIL: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+
+/// YouTube's EU cookie interstitial replaces the watch page with a consent
+/// wall (and then there is no `jsUrl` in it). Same value yt-dlp sets.
+const CONSENT_COOKIE: &str = "SOCS=CAI; CONSENT=YES+cb";
 
 /// Fetch YouTube's player `base.js` and its embedded `signatureTimestamp`,
 /// cached for [`PLAYER_JS_TTL`]. Seeded from any `video_id`'s watch page.
@@ -247,20 +256,59 @@ pub async fn player_js(video_id: &str) -> Result<Arc<(String, u64)>, String> {
     {
         return Ok(data.clone());
     }
-    let data = Arc::new(fetch_player_js(video_id).await?);
-    if let Ok(mut g) = PLAYER_JS.lock() {
-        *g = Some((Instant::now(), data.clone()));
+    if let Ok(g) = PLAYER_JS_FAIL.lock()
+        && let Some((at, err)) = g.as_ref()
+        && at.elapsed() < PLAYER_JS_FAIL_TTL
+    {
+        return Err(err.clone());
     }
-    Ok(data)
+    match fetch_player_js(video_id).await {
+        Ok(data) => {
+            let data = Arc::new(data);
+            if let Ok(mut g) = PLAYER_JS.lock() {
+                *g = Some((Instant::now(), data.clone()));
+            }
+            if let Ok(mut g) = PLAYER_JS_FAIL.lock() {
+                *g = None;
+            }
+            Ok(data)
+        }
+        Err(e) => {
+            if let Ok(mut g) = PLAYER_JS_FAIL.lock() {
+                *g = Some((Instant::now(), e.clone()));
+            }
+            Err(e)
+        }
+    }
 }
 
-async fn fetch_player_js(video_id: &str) -> Result<(String, u64), String> {
+/// Locate the current player `base.js`. Two sources, cheapest first:
+///
+/// 1. `/iframe_api` — a ~1 KB script that names the live player build
+///    (`/s/player/<hash>/…`). No cookies, no consent wall, no geo variance.
+/// 2. The watch page — ~1.5 MB and, behind YouTube's EU cookie interstitial,
+///    served *without* a `jsUrl` at all (the historical "no jsUrl in watch
+///    page" failure that killed the whole decipher path on mobile networks).
+///    Sent with a consent cookie so the interstitial is skipped.
+async fn player_js_url(video_id: &str) -> Result<String, String> {
     let http = super::innertube::http_client();
+    if let Ok(resp) = http
+        .get("https://www.youtube.com/iframe_api")
+        .header("User-Agent", WEB_UA)
+        .send()
+        .await
+        && let Ok(body) = resp.text().await
+        && let Some(url) = player_url_from_iframe_api(&body)
+    {
+        return Ok(url);
+    }
+
     let watch = http
         .get(format!(
             "https://www.youtube.com/watch?v={video_id}&bpctr=9999999999"
         ))
         .header("User-Agent", WEB_UA)
+        .header("Cookie", CONSENT_COOKIE)
         .send()
         .await
         .map_err(|e| format!("watch page fetch: {e}"))?
@@ -270,11 +318,32 @@ async fn fetch_player_js(video_id: &str) -> Result<(String, u64), String> {
     let raw = str_between(&watch, "\"jsUrl\":\"", "\"")
         .ok_or("no jsUrl in watch page")?
         .replace("\\/", "/");
-    let js_url = if raw.starts_with("http") {
+    Ok(if raw.starts_with("http") {
         raw
     } else {
         format!("https://www.youtube.com{raw}")
-    };
+    })
+}
+
+/// Pull the live player build out of `/iframe_api`, which is a one-line
+/// `var scriptUrl = 'https:\/\/www.youtube.com\/s\/player\/<hash>\/…'`, and
+/// point it at that build's `base.js`.
+fn player_url_from_iframe_api(body: &str) -> Option<String> {
+    let unescaped = body.replace("\\/", "/");
+    let hash = str_between(&unescaped, "/s/player/", "/")?;
+    let ok = !hash.is_empty()
+        && hash.len() <= 32
+        && hash
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    ok.then(|| {
+        format!("https://www.youtube.com/s/player/{hash}/player_ias.vflset/en_US/base.js")
+    })
+}
+
+async fn fetch_player_js(video_id: &str) -> Result<(String, u64), String> {
+    let http = super::innertube::http_client();
+    let js_url = player_js_url(video_id).await?;
     let base_js = http
         .get(&js_url)
         .header("User-Agent", WEB_UA)
@@ -442,6 +511,25 @@ pub fn webview_channel() -> (Box<dyn JsEngine>, mpsc::UnboundedReceiver<SolveReq
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iframe_api_yields_the_base_js_url() {
+        // Verbatim shape of the real /iframe_api response (escaped slashes).
+        let body = r#"var scriptUrl = 'https:\/\/www.youtube.com\/s\/player\/bed7a914\/www-widgetapi.vflset\/www-widgetapi.js';try{}catch(e){}"#;
+        assert_eq!(
+            player_url_from_iframe_api(body).as_deref(),
+            Some("https://www.youtube.com/s/player/bed7a914/player_ias.vflset/en_US/base.js"),
+        );
+    }
+
+    #[test]
+    fn iframe_api_rejects_a_body_without_a_player_build() {
+        assert!(player_url_from_iframe_api("").is_none());
+        assert!(player_url_from_iframe_api("<html>consent wall</html>").is_none());
+        // A path segment that isn't a plausible build hash must not be trusted
+        // into a URL we then fetch.
+        assert!(player_url_from_iframe_api(r#"/s/player/..%2f..%2fetc/"#).is_none());
+    }
 
     #[test]
     fn pct_roundtrip() {

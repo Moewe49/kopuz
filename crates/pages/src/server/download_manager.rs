@@ -218,14 +218,16 @@ pub fn queue_downloads_into(
     // killed the workers mid-run and left the queue frozen at "N queued".
     // The session must belong to the app, not to whichever page started it.
     dioxus::core::spawn_forever(async move {
-        // 3 parallel workers, each a separate yt-dlp process pulling the next
+        // 4 parallel workers, each a separate yt-dlp process pulling the next
         // queued track. 6-way looked fast on a cold IP, but a real several-
         // hundred-track run tripped YouTube's per-IP 429 throttle and lost
-        // 37-51 tracks. Directly tested: 3-way with the tv,web_embedded client
-        // set + request spacing completes 8/8 even on an already-throttled IP
-        // (~5s/track). Completion beats raw speed here — the user wants every
-        // song, and one unattended ~8-min run beats re-chasing dozens of fails.
+        // 37-51 tracks. 3-way completed 8/8 even on an already-throttled IP
+        // (~5s/track). Bumped to 4: one more worker shaves ~25% off wall-clock
+        // while still staying well under the throttle ceiling that bit at 6.
+        // Completion still beats raw speed, so we stop at 4 rather than chase
+        // 5/6 and risk having to re-run the batch.
         tokio::join!(
+            download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),
             download_worker(queue, config, session_start, cancel_flag.clone()),

@@ -467,6 +467,12 @@ spotify_liked_songs = Lagu yang Disukai
 spotify_not_connected = Spotify belum terhubung.
 spotify_client_id_missing = Masukkan dulu Client ID aplikasi Spotify kamu.
 spotify_import_from = Impor dari Spotify
+spotify_search_hint = Ketik di atas untuk mencari di Spotify.
+spotify_searching = Mencari di Spotify…
+spotify_search_needs_account = Pencarian Spotify memerlukan akun Spotify yang terhubung. Buka Playlist → Impor dari Spotify dan hubungkan aplikasi Spotify (gratis) Anda di sana.
+spotify_finding_match = Mencari “{ $title }” di YouTube Music…
+spotify_no_match = Tidak ada yang cocok dengan “{ $title }” di YouTube Music.
+spotify_playback_note = Audio Spotify dilindungi dari penyalinan — kopuz memutar trek yang cocok dari YouTube Music.
 sleep_timer = Timer tidur
 sleep_timer_minutes = { $min } menit
 sleep_timer_off = Matikan
@@ -535,3 +541,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = Pilih…
+discord_test = Uji koneksi Discord
+discord_test_button = Kirim uji
+download_all_offline = Unduh semua untuk pemutaran luring
+download_folder = Folder unduhan
+onboarding_title = Selamat datang di Kopuz
+onboarding_subtitle = Dua cara mengisinya dengan musik:
+onboarding_local_title = Folder musik lokal
+onboarding_local_desc = Arahkan Kopuz ke folder berisi berkas audio untuk menjelajah dan memutarnya.
+onboarding_stream_title = YouTube Music atau sebuah server
+onboarding_stream_desc = Hubungkan YouTube Music (atau Jellyfin / Subsonic) untuk memutar dan mengunduh.
+onboarding_open_settings = Buka pengaturan
+onboarding_later = Mungkin nanti
+premium_downloads = Unduhan premium (256 kbps)
+premium_downloads_hint = Masuk untuk mengambil AAC 256 kbps. Hanya berguna untuk akun YouTube Premium; saat beban tinggi jarang bisa memicu pemeriksaan bot. Mati = 128 kbps anonim.
+remove_downloads = Hapus unduhan
+reset_to_default = Setel ulang ke bawaan
+search_elsewhere = Tidak ada di { $source } — sumber lain punya:

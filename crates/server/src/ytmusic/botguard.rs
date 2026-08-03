@@ -10,6 +10,7 @@
 //! the old `rustypipe-botguard` subprocess — no external binary, flatpak-safe.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::{mpsc, oneshot};
 
@@ -21,6 +22,28 @@ pub struct MintRequest {
 }
 
 static MINTER: OnceLock<mpsc::UnboundedSender<MintRequest>> = OnceLock::new();
+
+/// Flipped the first time a mint actually succeeds. Before that a slow minter
+/// is almost certainly a *broken* one, so we give up quickly; after it, a slow
+/// mint is a throttled-but-working WebView (Android backgrounds ours) and
+/// waiting beats losing the token. See [`mint_timeout`].
+static MINT_PROVEN: AtomicBool = AtomicBool::new(false);
+
+/// Cold: fail fast so a never-ready minter can't stall the first song for
+/// seconds — `player::resolve` falls through to its pot-free paths instead.
+const MINT_TIMEOUT_COLD: std::time::Duration = std::time::Duration::from_millis(2500);
+/// Warm: the only mints that go slow now are look-ahead refills, which nobody
+/// is waiting on. Giving up on them costs a *broken stream* later, which is far
+/// worse than the wait.
+const MINT_TIMEOUT_WARM: std::time::Duration = std::time::Duration::from_millis(7000);
+
+fn mint_timeout() -> std::time::Duration {
+    if MINT_PROVEN.load(Ordering::Relaxed) {
+        MINT_TIMEOUT_WARM
+    } else {
+        MINT_TIMEOUT_COLD
+    }
+}
 
 /// Register the minter channel. Called by the UI once the anon YT Music minter
 /// WebView is up. Idempotent-ish: a second call is ignored (returns the sender
@@ -54,14 +77,15 @@ pub async fn mint_content_pot(video_id: &str) -> Result<String, String> {
     // Bound the wait: if the webview bridge isn't ready (page still loading /
     // navigating, `window.__kopuzMint` not yet defined) the dispatch is a no-op
     // and no reply ever comes — without this the caller would hang forever.
-    // Kept short on purpose: a *warm* mint is sub-millisecond and local, so this
-    // window only ever gates a *cold* minter — and when the minter is still
-    // warming we want to fail fast and let `player::resolve` fall through to the
-    // pot-free, deep-range-safe TVHTML5 path rather than stall the first song for
-    // seconds. 15s here was the difference between "plays instantly" and "looks
-    // broken" on a fresh launch.
-    match tokio::time::timeout(std::time::Duration::from_millis(2500), rx).await {
-        Ok(Ok(result)) => result,
+    // See [`mint_timeout`] for why the bound widens once the minter has proven
+    // itself.
+    match tokio::time::timeout(mint_timeout(), rx).await {
+        Ok(Ok(result)) => {
+            if result.is_ok() {
+                MINT_PROVEN.store(true, Ordering::Relaxed);
+            }
+            result
+        }
         Ok(Err(_)) => Err("PO token minter dropped the reply".to_string()),
         Err(_) => Err("PO token mint timed out (webview not ready)".to_string()),
     }

@@ -474,6 +474,12 @@ spotify_liked_songs = الأغاني المفضلة
 spotify_not_connected = Spotify غير مرتبط.
 spotify_client_id_missing = أدخل أولًا Client ID لتطبيق Spotify الخاص بك.
 spotify_import_from = استيراد من Spotify
+spotify_search_hint = اكتب في الأعلى للبحث في Spotify.
+spotify_searching = جارٍ البحث في Spotify…
+spotify_search_needs_account = يتطلب البحث في Spotify حساب Spotify متصلاً. افتح قوائم التشغيل ← الاستيراد من Spotify واربط هناك تطبيق Spotify (المجاني) الخاص بك.
+spotify_finding_match = جارٍ البحث عن «{ $title }» في YouTube Music…
+spotify_no_match = لم يُعثر على مطابقة لـ «{ $title }» في YouTube Music.
+spotify_playback_note = صوت Spotify محمي من النسخ — يشغّل kopuz المقطع المطابق من YouTube Music.
 sleep_timer = مؤقّت النوم
 sleep_timer_minutes = { $min } دقيقة
 sleep_timer_off = إيقاف
@@ -542,3 +548,23 @@ autoradio_setting = Autoplay radio when the queue ends
 spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
 spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
 spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
+
+# Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
+choose_folder = اختيار…
+discord_test = اختبار الاتصال بـ Discord
+discord_test_button = إرسال اختبار
+download_all_offline = تنزيل الكل للتشغيل دون اتصال
+download_folder = مجلد التنزيلات
+onboarding_title = مرحبًا بك في Kopuz
+onboarding_subtitle = طريقتان لملئه بالموسيقى:
+onboarding_local_title = مجلد الموسيقى المحلي
+onboarding_local_desc = وجّه Kopuz إلى مجلد يحتوي على ملفات صوتية لتصفحها وتشغيلها.
+onboarding_stream_title = YouTube Music أو خادم
+onboarding_stream_desc = اربط YouTube Music (أو Jellyfin / Subsonic) للتشغيل والتنزيل.
+onboarding_open_settings = فتح الإعدادات
+onboarding_later = ربما لاحقًا
+premium_downloads = تنزيلات Premium (256 كيلوبت/ث)
+premium_downloads_hint = يسجّل الدخول لجلب AAC بجودة 256 كيلوبت/ث. يفيد حسابات YouTube Premium فقط؛ وقد يُطلق نادرًا فحص روبوتات عند الحمل العالي. مُعطّل = 128 كيلوبت/ث بدون تسجيل دخول.
+remove_downloads = إزالة التنزيلات
+reset_to_default = إعادة التعيين إلى الافتراضي
+search_elsewhere = لا شيء في { $source } — لدى مصادر أخرى:

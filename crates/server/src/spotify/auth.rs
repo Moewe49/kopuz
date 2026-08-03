@@ -8,6 +8,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -141,6 +142,80 @@ pub async fn refresh_token(client_id: &str, refresh: &str) -> Result<TokenRespon
     resp.json::<TokenResponse>()
         .await
         .map_err(|e| format!("token refresh JSON: {e}"))
+}
+
+/// An access token ready to use, plus the rotated refresh token when Spotify
+/// handed out a new one.
+#[derive(Debug, Clone)]
+pub struct FreshToken {
+    pub access_token: String,
+    /// `Some` only when Spotify rotated the refresh token. The caller **must**
+    /// persist it — the previous one is dead from that moment on.
+    pub rotated_refresh: Option<String>,
+}
+
+/// Process-wide access token, so every feature that talks to Spotify (import,
+/// search, …) shares one.
+static ACCESS: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::new(None);
+/// Serializes refreshes. Spotify rotates PKCE refresh tokens, so two refreshes
+/// racing means one of them burns the other's token and the account silently
+/// disconnects.
+static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Refresh this long before the token actually expires, so a request can't
+/// start valid and land expired.
+const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
+
+fn cached_access() -> Option<String> {
+    let g = ACCESS.lock().ok()?;
+    let (tok, at) = g.as_ref()?;
+    (*at > Instant::now()).then(|| tok.clone())
+}
+
+/// A usable access token for `client_id`, refreshing through `refresh` when the
+/// cached one is gone or about to expire.
+pub async fn access_token(client_id: &str, refresh: &str) -> Result<FreshToken, String> {
+    if let Some(tok) = cached_access() {
+        return Ok(FreshToken {
+            access_token: tok,
+            rotated_refresh: None,
+        });
+    }
+    if client_id.trim().is_empty() || refresh.trim().is_empty() {
+        return Err("Spotify not connected".into());
+    }
+    let _guard = REFRESH_LOCK.lock().await;
+    // Someone else may have refreshed while we waited for the lock.
+    if let Some(tok) = cached_access() {
+        return Ok(FreshToken {
+            access_token: tok,
+            rotated_refresh: None,
+        });
+    }
+    let tokens = refresh_token(client_id, refresh).await?;
+    if let Ok(mut g) = ACCESS.lock() {
+        let ttl = Duration::from_secs(tokens.expires_in).saturating_sub(EXPIRY_MARGIN);
+        *g = Some((tokens.access_token.clone(), Instant::now() + ttl));
+    }
+    Ok(FreshToken {
+        access_token: tokens.access_token,
+        rotated_refresh: tokens.refresh_token.filter(|r| !r.is_empty()),
+    })
+}
+
+/// Seed the shared cache with a token obtained some other way (the initial
+/// PKCE exchange), so the first API call after connecting doesn't refresh.
+pub fn remember_access(access_token: &str, expires_in: u64) {
+    if let Ok(mut g) = ACCESS.lock() {
+        let ttl = Duration::from_secs(expires_in).saturating_sub(EXPIRY_MARGIN);
+        *g = Some((access_token.to_string(), Instant::now() + ttl));
+    }
+}
+
+/// Drop the cached token (disconnect, or a 401 that means it went stale early).
+pub fn forget_access() {
+    if let Ok(mut g) = ACCESS.lock() {
+        *g = None;
+    }
 }
 
 fn wait_for_code(listener: &TcpListener) -> Result<String, String> {

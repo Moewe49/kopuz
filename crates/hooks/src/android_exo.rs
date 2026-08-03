@@ -18,7 +18,8 @@
 
 use player::systemint::{self, ExoEvent};
 use reader::models::Track;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, OnceLock};
 
@@ -27,14 +28,24 @@ use std::sync::{Mutex, OnceLock};
 /// (so ExoPlayer has more buffered songs to keep playing through it); smaller =
 /// faster start (each resolve is a network call).
 ///
-/// Set to 8 (≈24 min of audio): when the app is backgrounded the pot-minter
-/// WebView is throttled by Android, so a refill that needs a fresh PO token can
-/// fail until playback returns to the foreground. A deeper pre-resolved window
-/// (built up-front while still foregrounded, where minting works) lets playback
-/// coast through those background gaps instead of dead-ending at the window
-/// edge after ~5 songs. Fast-start still plays after a single resolve, so the
-/// larger window only adds *background* fill work, not start latency.
-const WINDOW_AHEAD: usize = 8;
+/// This window is the app's ONLY defence against Android's background rules.
+/// Every YouTube stream-resolve path ultimately needs something the OS suspends
+/// once the Activity stops — the PO-token minter WebView, and the sig/n decipher
+/// solver that runs in the UI WebView — so a refill attempted while backgrounded
+/// can simply fail. Pre-resolving deep while still foregrounded (googlevideo
+/// URLs stay valid for hours) is what lets a screen-off session play on. 20
+/// tracks is roughly an hour of audio; the fill runs behind the fast-started
+/// first song and flushes in chunks, so it costs no start latency.
+const WINDOW_AHEAD: usize = 20;
+
+/// How many resolved items to hand ExoPlayer at a time while filling the window.
+/// Small enough that a deep fill starts feeding the player within seconds, big
+/// enough not to cross the JNI boundary per track.
+const FLUSH_EVERY: usize = 3;
+
+/// Attempts a single look-ahead slot gets before it is written off as genuinely
+/// unplayable (region-locked / removed) and skipped for good.
+const MAX_RESOLVE_ATTEMPTS: u32 = 3;
 
 /// Canonical queue mirror — plain data, owned by the engine thread. Never a Signal.
 struct Mirror {
@@ -44,6 +55,15 @@ struct Mirror {
     /// Highest `tracks` index already handed to ExoPlayer.
     resolved_upto: usize,
     cookies: Option<String>,
+    /// `offline_tracks` snapshot from the config: id → downloaded file path,
+    /// keyed the same way the rest of the app keys it (`path.split(':')[1]`).
+    /// A downloaded track resolves to a local file, which needs no network, no
+    /// PO token and no decipher — the one playback path Android's background
+    /// restrictions cannot touch.
+    offline: HashMap<String, String>,
+    /// Per-slot failed-resolve counter, so a transient failure is retried on the
+    /// next pass while a dead track is eventually skipped. Cleared with `tracks`.
+    attempts: HashMap<usize, u32>,
 }
 
 fn mirror() -> &'static Mutex<Mirror> {
@@ -54,8 +74,60 @@ fn mirror() -> &'static Mutex<Mirror> {
             index: 0,
             resolved_upto: 0,
             cookies: None,
+            offline: HashMap::new(),
+            attempts: HashMap::new(),
         })
     })
+}
+
+/// Bumped whenever the queue is replaced (`play` / `reorder_upcoming`). A deep
+/// window fill checks it between tracks and bails when it goes stale, so tapping
+/// a new song never waits behind a fill that is already irrelevant.
+static QUEUE_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// How far the fast-start scan walks looking for a playable track before it
+/// gives up and lets the stall retry handle it.
+const MAX_FAST_START_SCAN: usize = 12;
+/// Gap between stall retries, and how many to make (≈4 min of trying).
+const STALL_RETRY_SECS: u64 = 12;
+const MAX_STALL_RETRIES: u32 = 20;
+
+/// `(when to retry, attempt number)` while playback is stalled on a queue whose
+/// tracks currently refuse to resolve. `None` = not stalled.
+fn stall_retry() -> &'static Mutex<Option<(std::time::Instant, u32)>> {
+    static S: OnceLock<Mutex<Option<(std::time::Instant, u32)>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(None))
+}
+
+fn next_retry_at() -> std::time::Instant {
+    std::time::Instant::now() + std::time::Duration::from_secs(STALL_RETRY_SECS)
+}
+
+/// Schedule the next stall retry and return its attempt number.
+fn arm_stall_retry() -> u32 {
+    let mut s = stall_retry().lock().unwrap_or_else(|e| e.into_inner());
+    let attempt = match *s {
+        Some((_, n)) => n + 1,
+        None => 1,
+    };
+    *s = Some((next_retry_at(), attempt));
+    attempt
+}
+
+fn clear_stall_retry() {
+    *stall_retry().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// True once the pending stall retry is due (and re-arms it, so a retry that
+/// itself hangs can't spin the engine loop).
+fn stall_retry_due() -> bool {
+    let mut s = stall_retry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some((at, n)) = *s else { return false };
+    if at > std::time::Instant::now() {
+        return false;
+    }
+    *s = Some((next_retry_at(), n));
+    true
 }
 
 /// (media_id, consecutive-error count) for the currently-failing track, so a
@@ -169,6 +241,15 @@ fn engine_tx() -> &'static Sender<Cmd> {
                     for ev in systemint::take_exo_events() {
                         rt.block_on(handle_event(ev));
                     }
+                    // Playback stalled because nothing would resolve (almost
+                    // always: the app was backgrounded, so the minter/decipher
+                    // WebViews were suspended). Try again — when the app comes
+                    // back to the foreground this is what resumes the music by
+                    // itself.
+                    if stall_retry_due() {
+                        eprintln!("[exo] stall retry");
+                        rt.block_on(handle_cmd(Cmd::PlayFrom { position_ms: 0 }));
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(120));
                 }
             });
@@ -204,6 +285,16 @@ fn cover_url(track: &Track) -> String {
     .unwrap_or_default()
 }
 
+/// The key a track's downloaded copy is filed under in `config.offline_tracks`
+/// — the first path segment after the scheme, for both `ytmusic:<vid>:…` and
+/// `soundcloud:<hex>`.
+fn offline_key(track: &Track) -> Option<String> {
+    let path = track.path.to_string_lossy();
+    let (_scheme, rest) = path.split_once(':')?;
+    let id = rest.split(':').next()?;
+    (!id.is_empty()).then(|| id.to_string())
+}
+
 /// Resolve one track into an ExoPlayer MediaItem JSON object, or `None`.
 /// `index` is the track's position in the mirror — it becomes the ExoPlayer
 /// mediaId so a transition maps back to the EXACT queue slot (a track's PATH is
@@ -213,9 +304,18 @@ async fn resolve_item(
     track: &Track,
     index: usize,
     cookies: &Option<String>,
+    offline: &HashMap<String, String>,
 ) -> Option<serde_json::Value> {
     let id = track_id(track);
-    let url = if let Some(vid) = video_id(track) {
+    // A downloaded copy wins over streaming: no network, no PO token, no
+    // decipher — so it keeps resolving while the app is backgrounded, where the
+    // remote paths can't. (It is also what the desktop controller prefers.)
+    let downloaded = offline_key(track)
+        .and_then(|k| offline.get(&k).cloned())
+        .filter(|p| std::path::Path::new(p).exists());
+    let url = if let Some(local) = downloaded {
+        format!("file://{local}")
+    } else if let Some(vid) = video_id(track) {
         let yt =
             ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.clone().unwrap_or_default());
         match yt.get_stream(&vid).await {
@@ -251,56 +351,93 @@ async fn resolve_item(
     }))
 }
 
-/// Resolve tracks `[from..=to]` from the mirror into a JSON array (skipping
-/// unresolvable ones). Returns the JSON + how many resolved.
-async fn resolve_range(from: usize, to: usize, cookies: &Option<String>) -> Vec<serde_json::Value> {
-    let slice: Vec<Track> = {
-        let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-        if from > to || from >= m.tracks.len() {
-            Vec::new()
-        } else {
-            m.tracks[from..=to.min(m.tracks.len() - 1)].to_vec()
-        }
-    };
-    let mut items = Vec::new();
-    for (offset, t) in slice.iter().enumerate() {
-        if let Some(j) = resolve_item(t, from + offset, cookies).await {
-            items.push(j);
-        }
-    }
-    items
+/// How a refill's first batch reaches ExoPlayer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flush {
+    /// Append to the existing playlist (normal look-ahead top-up).
+    Append,
+    /// Drop everything after the current item first (shuffle re-order), then
+    /// append. Sent even when nothing resolves, so stale upcoming items go away.
+    Replace,
 }
 
-/// Resolve forward from `start`, SKIPPING tracks that fail to resolve (dead YT
-/// videos, bot-checks, transient errors) until `WINDOW_AHEAD + 1` items are
-/// collected or the mirror ends. Returns the resolved item JSONs, the index of
-/// the FIRST playable track, and the index of the LAST resolved track. This is
-/// what keeps a single bad track from dead-stopping the whole queue.
-async fn resolve_forward(
-    start: usize,
-    cookies: &Option<String>,
-) -> (Vec<serde_json::Value>, Option<usize>, usize) {
-    let len = mirror().lock().unwrap_or_else(|e| e.into_inner()).tracks.len();
-    let mut items = Vec::new();
-    let mut first = None;
-    let mut last = start;
-    let mut i = start;
-    while i < len && items.len() <= WINDOW_AHEAD {
+/// Fill the look-ahead window with tracks `[from..=to]`, handing them to
+/// ExoPlayer in small batches as they resolve and advancing `resolved_upto`
+/// as it goes.
+///
+/// The loop **stops at the first track that fails but still has retries left**,
+/// leaving its slot unclaimed so the next pass picks it up again. The previous
+/// behaviour advanced `resolved_upto` across the whole range *before* resolving,
+/// so any track that failed — a throttled PO mint, a blip — was dropped from the
+/// queue for good and the window shrank by one song per hiccup until playback
+/// ran dry. A slot that has burned [`MAX_RESOLVE_ATTEMPTS`] is genuinely dead
+/// (region-locked, removed) and is skipped permanently instead.
+///
+/// Bails out early if the queue was replaced underneath it (see [`QUEUE_GEN`]).
+async fn refill_window(from: usize, to: usize, cookies: &Option<String>, flush: Flush) {
+    let gen_at_start = QUEUE_GEN.load(Ordering::Acquire);
+    let (len, offline) = {
+        let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+        (m.tracks.len(), m.offline.clone())
+    };
+    let to = to.min(len.saturating_sub(1));
+
+    let mut pending: Vec<serde_json::Value> = Vec::new();
+    let mut replace_pending = flush == Flush::Replace;
+    let mut i = from;
+    while i <= to && i < len {
+        if QUEUE_GEN.load(Ordering::Acquire) != gen_at_start {
+            eprintln!("[exo] refill {from}..={to} abandoned — queue changed");
+            return;
+        }
         let track = {
             let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
             m.tracks.get(i).cloned()
         };
         let Some(track) = track else { break };
-        if let Some(j) = resolve_item(&track, i, cookies).await {
-            if first.is_none() {
-                first = Some(i);
+        match resolve_item(&track, i, cookies, &offline).await {
+            Some(item) => {
+                pending.push(item);
+                let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                m.attempts.remove(&i);
+                m.resolved_upto = m.resolved_upto.max(i);
             }
-            items.push(j);
-            last = i;
+            None => {
+                let tries = {
+                    let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                    let n = m.attempts.entry(i).or_insert(0);
+                    *n += 1;
+                    *n
+                };
+                if tries < MAX_RESOLVE_ATTEMPTS {
+                    eprintln!("[exo] refill: slot {i} unresolved (try {tries}) — retry next pass");
+                    break;
+                }
+                eprintln!("[exo] refill: slot {i} unresolvable after {tries} tries — skipping");
+                let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                m.resolved_upto = m.resolved_upto.max(i);
+            }
+        }
+        if pending.len() >= FLUSH_EVERY {
+            send_items(std::mem::take(&mut pending), &mut replace_pending);
         }
         i += 1;
     }
-    (items, first, last)
+    if !pending.is_empty() || replace_pending {
+        send_items(pending, &mut replace_pending);
+    }
+}
+
+/// Hand one batch to ExoPlayer. The first batch of a [`Flush::Replace`] refill
+/// trims the stale tail; every batch after it appends.
+fn send_items(items: Vec<serde_json::Value>, replace_pending: &mut bool) {
+    let json = serde_json::Value::Array(items).to_string();
+    if *replace_pending {
+        *replace_pending = false;
+        systemint::exo_replace_upcoming(&json);
+    } else {
+        systemint::exo_set_upcoming(&json);
+    }
 }
 
 async fn handle_cmd(cmd: Cmd) {
@@ -308,9 +445,9 @@ async fn handle_cmd(cmd: Cmd) {
         Cmd::PlayFrom { position_ms } | Cmd::Reresolve { position_ms } => position_ms,
         Cmd::ReorderUpcoming => return handle_reorder_upcoming().await,
     };
-    let (start, cookies) = {
+    let (start, cookies, offline) = {
         let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-        (m.index, m.cookies.clone())
+        (m.index, m.cookies.clone(), m.offline.clone())
     };
     // Resolve just the FIRST playable track and start it IMMEDIATELY. Resolving
     // the whole look-ahead window up front meant 6 sequential multi-second YT
@@ -320,24 +457,43 @@ async fn handle_cmd(cmd: Cmd) {
     let len = mirror().lock().unwrap_or_else(|e| e.into_inner()).tracks.len();
     let mut first_item = None;
     let mut i = start;
-    while i < len {
+    // Bounded scan: a run this long of unresolvable tracks is a *systemic*
+    // failure (backgrounded minter, dead network), not a patch of bad videos.
+    // Walking the rest of a 300-track playlist at seconds per failed resolve
+    // would wedge the engine for many minutes; the stall retry below recovers
+    // instead.
+    let scan_end = len.min(start + MAX_FAST_START_SCAN);
+    while i < scan_end {
         let track = {
             let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
             m.tracks.get(i).cloned()
         };
         let Some(track) = track else { break };
-        if let Some(j) = resolve_item(&track, i, &cookies).await {
+        if let Some(j) = resolve_item(&track, i, &cookies, &offline).await {
             first_item = Some((j, i));
             break;
         }
         i += 1;
     }
     let Some((item, first)) = first_item else {
-        eprintln!("[exo] nothing resolvable from {start}; ending");
+        // Nothing resolved. On Android this is usually *temporary*: while the
+        // Activity is stopped both the PO-token minter WebView and the decipher
+        // solver are suspended, so every remote resolve fails until the app is
+        // foregrounded again. Schedule a retry rather than declaring the queue
+        // over — that is what makes playback pick itself back up (previously it
+        // stayed dead until the user opened the app and pressed play).
+        let attempt = arm_stall_retry();
         PLAYING.store(false, Ordering::Release);
-        ENDED_DIRTY.store(true, Ordering::Release);
+        if attempt > MAX_STALL_RETRIES {
+            eprintln!("[exo] nothing resolvable from {start} after {attempt} retries; ending");
+            clear_stall_retry();
+            ENDED_DIRTY.store(true, Ordering::Release);
+        } else {
+            eprintln!("[exo] nothing resolvable from {start}; retry {attempt} in {STALL_RETRY_SECS}s");
+        }
         return;
     };
+    clear_stall_retry();
     {
         let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         m.index = first;
@@ -351,16 +507,12 @@ async fn handle_cmd(cmd: Cmd) {
     );
     set_current_index(first);
     PLAYING.store(true, Ordering::Release);
-    // Now fill the look-ahead window behind the playing track and append it.
-    let (rest, _f, last) = resolve_forward(first + 1, &cookies).await;
-    if !rest.is_empty() {
-        {
-            let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-            m.resolved_upto = last.max(m.resolved_upto);
-        }
-        eprintln!("[exo] window filled {}..={last}: {} item(s)", first + 1, rest.len());
-        systemint::exo_set_upcoming(&serde_json::Value::Array(rest).to_string());
-    }
+    // Now fill the look-ahead window behind the playing track. This is the deep
+    // pre-resolve that carries a backgrounded session, so it runs to the full
+    // WINDOW_AHEAD; it flushes in batches, so ExoPlayer gets its next tracks
+    // within seconds rather than at the end of the whole fill.
+    eprintln!("[exo] filling window {}..={}", first + 1, first + WINDOW_AHEAD);
+    refill_window(first + 1, first + WINDOW_AHEAD, &cookies, Flush::Append).await;
 }
 
 /// Shuffle toggled while playing: leave the current ExoPlayer item alone and
@@ -370,13 +522,8 @@ async fn handle_reorder_upcoming() {
         let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         (m.index + 1, m.cookies.clone())
     };
-    let (items, _first, last) = resolve_forward(from, &cookies).await;
-    if !items.is_empty() {
-        let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-        m.resolved_upto = last;
-    }
-    eprintln!("[exo] reorder upcoming from {from}: {} item(s)", items.len());
-    systemint::exo_replace_upcoming(&serde_json::Value::Array(items).to_string());
+    eprintln!("[exo] reorder upcoming from {from}");
+    refill_window(from, from + WINDOW_AHEAD, &cookies, Flush::Replace).await;
 }
 
 /// End-of-queue continuation: seed a YT radio from the WHOLE finished playlist,
@@ -415,11 +562,13 @@ async fn seed_autoradio() -> bool {
         return false;
     }
     *new_queue_slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(radio.clone());
+    QUEUE_GEN.fetch_add(1, Ordering::AcqRel);
     {
         let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         m.tracks = radio;
         m.index = 0;
         m.resolved_upto = 0;
+        m.attempts.clear();
     }
     DURATION_MS.store(0, Ordering::Release);
     let _ = engine_tx().send(Cmd::PlayFrom { position_ms: 0 });
@@ -440,26 +589,25 @@ async fn handle_event(ev: ExoEvent) {
                     m.index = q;
                 }
                 let target = (m.index + WINDOW_AHEAD).min(m.tracks.len().saturating_sub(1));
-                // Refill only the window AHEAD of the current track, at most
-                // WINDOW_AHEAD tracks per transition. Never resolve a big gap
-                // behind (a stale index once made this resolve 47 tracks in a row
-                // and froze the engine for ~40s → the "random pauses").
+                // Refill only the window AHEAD of the current track. Never
+                // resolve a big gap behind (a stale index once made this resolve
+                // 47 tracks in a row and froze the engine for ~40s → the "random
+                // pauses"). `resolved_upto` is advanced by the refill itself,
+                // per track that actually resolved.
                 let from = (m.resolved_upto + 1).max(m.index + 1);
-                let (from, to) = if target >= from {
-                    m.resolved_upto = target.max(m.resolved_upto);
-                    (from, target)
-                } else {
-                    (1, 0) // empty range
-                };
-                (qidx, from, to, m.cookies.clone())
+                (qidx, from, target, m.cookies.clone())
             };
             if let Some(q) = qidx {
                 set_current_index(q);
             }
+            // A clean transition means the previous failure run is over — the
+            // error counter tracks *consecutive* failures, so a track that
+            // errored once and then played fine must not be skipped outright the
+            // next time it hiccups.
+            *err_tracker().lock().unwrap_or_else(|e| e.into_inner()) = (String::new(), 0);
             eprintln!("[exo] transition -> qidx {qidx:?}, refill [{refill_from}..={refill_to}]");
-            let items = resolve_range(refill_from, refill_to, &cookies).await;
-            if !items.is_empty() {
-                systemint::exo_set_upcoming(&serde_json::Value::Array(items).to_string());
+            if refill_to >= refill_from {
+                refill_window(refill_from, refill_to, &cookies, Flush::Append).await;
             }
         }
         ExoEvent::State {
@@ -524,6 +672,22 @@ async fn handle_event(ev: ExoEvent) {
             };
             if tries <= 1 {
                 eprintln!("[exo] error {code} on {media_id} — reresolve (try {tries})");
+                // Drop the cached URL first. A playback error means THAT url is
+                // dead (403 on a deep range, expired signature); without this the
+                // 2h stream cache handed the retry the identical broken URL, so
+                // the "retry once" never actually retried anything and the track
+                // was skipped on the second error.
+                {
+                    let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(vid) = media_id
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|q| m.tracks.get(q))
+                        .and_then(video_id)
+                    {
+                        ::server::ytmusic::invalidate_stream(&vid);
+                    }
+                }
                 let pos = POSITION_MS.load(Ordering::Acquire);
                 let _ = engine_tx().send(Cmd::Reresolve { position_ms: pos });
             } else {
@@ -556,8 +720,17 @@ async fn handle_event(ev: ExoEvent) {
 
 // --- Public API (called on the Dioxus thread from the controller / driver) ---
 
-/// Start (or restart) playback of `tracks` from `start_index`.
-pub fn play(tracks: Vec<Track>, start_index: usize, cookies: Option<String>, position_ms: i64) {
+/// Start (or restart) playback of `tracks` from `start_index`. `offline` is the
+/// config's `offline_tracks` snapshot so the engine can prefer downloaded files.
+pub fn play(
+    tracks: Vec<Track>,
+    start_index: usize,
+    cookies: Option<String>,
+    offline: HashMap<String, String>,
+    position_ms: i64,
+) {
+    QUEUE_GEN.fetch_add(1, Ordering::AcqRel);
+    clear_stall_retry();
     {
         let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         let cap = tracks.len().saturating_sub(1);
@@ -565,6 +738,8 @@ pub fn play(tracks: Vec<Track>, start_index: usize, cookies: Option<String>, pos
         m.index = start_index.min(cap);
         m.resolved_upto = m.index;
         m.cookies = cookies;
+        m.offline = offline;
+        m.attempts.clear();
     }
     DURATION_MS.store(0, Ordering::Release);
     // Stop the OLD track instantly so it doesn't keep playing (and the timer
@@ -580,7 +755,13 @@ pub fn play(tracks: Vec<Track>, start_index: usize, cookies: Option<String>, pos
 /// keep the CURRENT track playing and only rebuild the upcoming ExoPlayer items
 /// (no re-buffer / no gap). `current_idx` is the current track's play-order
 /// index in `tracks` (so `tracks[current_idx]` is the now-playing song).
-pub fn reorder_upcoming(tracks: Vec<Track>, current_idx: usize, cookies: Option<String>) {
+pub fn reorder_upcoming(
+    tracks: Vec<Track>,
+    current_idx: usize,
+    cookies: Option<String>,
+    offline: HashMap<String, String>,
+) {
+    QUEUE_GEN.fetch_add(1, Ordering::AcqRel);
     {
         let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         let cap = tracks.len().saturating_sub(1);
@@ -588,12 +769,16 @@ pub fn reorder_upcoming(tracks: Vec<Track>, current_idx: usize, cookies: Option<
         m.index = current_idx.min(cap);
         m.resolved_upto = m.index;
         m.cookies = cookies;
+        m.offline = offline;
+        m.attempts.clear();
     }
     let _ = engine_tx().send(Cmd::ReorderUpcoming);
 }
 
 pub fn pause() {
     PLAYING.store(false, Ordering::Release);
+    // A paused user is not a stalled queue — stop retrying behind their back.
+    clear_stall_retry();
     systemint::exo_pause();
 }
 pub fn resume() {
@@ -615,5 +800,6 @@ pub fn set_volume(v: f32) {
 }
 pub fn stop() {
     PLAYING.store(false, Ordering::Release);
+    clear_stall_retry();
     systemint::exo_stop();
 }

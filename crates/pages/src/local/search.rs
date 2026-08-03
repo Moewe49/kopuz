@@ -149,6 +149,16 @@ pub fn LocalSearch(
                         show_playlist_modal,
                         selected_track_for_playlist,
                         on_select_album,
+                        // Nothing in the on-disk library → show what the online
+                        // sources have, same as the server search does.
+                        extra_below: Some(rsx! {
+                            if tracks.is_empty() && albums.is_empty() {
+                                components::cross_source_search::CrossSourceFallback {
+                                    query: data.search_query.read().clone(),
+                                    library,
+                                }
+                            }
+                        }),
                     }
                 } else {
                     SearchGenres {
