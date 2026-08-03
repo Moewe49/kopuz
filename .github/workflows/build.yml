@@ -87,9 +87,18 @@ jobs:
         # asset without hitting the 60-req/hr unauthenticated limit. Disable the
         # compile fallback so a missed prebuilt fails fast instead of building
         # dioxus-cli from source (which breaks on auth-git2/git2 0.21).
-        run: cargo binstall dioxus-cli@0.7.9 -y --disable-strategies compile
+        #
+        # --force: the rust-cache can restore a "dx already installed" marker
+        # without a usable binary, and the next step then dies with "the term
+        # 'dx' is not recognized". release.yml already carries both this and the
+        # PATH line below; this job was missing them and failed intermittently.
+        run: cargo binstall dioxus-cli@0.7.9 -y --force --disable-strategies compile
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add cargo bin to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
 
       - name: Bundle Windows installer (.msi)
         run: dx bundle --release --platform desktop --package kopuz
