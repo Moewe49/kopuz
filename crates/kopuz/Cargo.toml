@@ -90,6 +90,9 @@ windows = { version = "0.62", features = [
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# The updater applies the portable .zip over the installation in place, so it
+# needs to read the archive itself (no installer, no helper script).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winres = "0.1"

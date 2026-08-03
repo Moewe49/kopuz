@@ -241,8 +241,16 @@ fn pick_installer_asset(assets: &[GithubReleaseAsset]) -> Option<String> {
     }
     #[cfg(target_os = "windows")]
     {
-        // Prefer the NSIS setup.exe; fall back to the MSI.
-        pick(&|n| n.ends_with("setup.exe")).or_else(|| pick(&|n| n.ends_with(".msi")))
+        // Prefer the portable .zip. It carries exactly the installed layout
+        // (kopuz.exe + assets/), so the updater can apply it over the install
+        // directory itself: no setup wizard, no path prompts, no elevation (the
+        // app installs per-user under %LOCALAPPDATA%\Programs) — and no
+        // unsigned NSIS installer for Defender's ML heuristics to flag as
+        // Trojan:Win32/Wacatac.B!ml, which is what blocked the download.
+        // The installers stay as fallbacks for installs that predate the zip.
+        pick(&|n| n.contains("portable") && n.ends_with(".zip"))
+            .or_else(|| pick(&|n| n.ends_with("setup.exe")))
+            .or_else(|| pick(&|n| n.ends_with(".msi")))
     }
     #[cfg(target_os = "linux")]
     {
@@ -353,6 +361,8 @@ fn update_dest_path(url: &str) -> std::path::PathBuf {
     let lower = url.to_ascii_lowercase();
     let name = if lower.ends_with(".apk") {
         "kopuz-update.apk"
+    } else if lower.ends_with(".zip") {
+        "kopuz-update.zip"
     } else if lower.ends_with(".msi") {
         "kopuz-update.msi"
     } else if lower.ends_with(".appimage") {
@@ -382,52 +392,33 @@ fn launch_update(path: &std::path::Path) {
     }
     #[cfg(target_os = "windows")]
     {
-        // Run the installer SILENTLY, then relaunch — no setup wizard to click
-        // through for what is only ever "give me the newer build". Both
-        // installers keep the existing install location and leave the config in
-        // %LOCALAPPDATA% alone, so the session survives.
-        //
-        // Chained through `cmd /c` so the sequence outlives this process: the
-        // installer can't overwrite kopuz.exe while it is still running, so we
-        // must exit first, and only then can the new binary be started.
+        // Normal path: the portable .zip, applied over the installation right
+        // here. No installer process at all — which is the point, since the
+        // unsigned NSIS setup.exe is what Defender's ML heuristic flags.
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+        {
+            match apply_zip_update(path) {
+                Ok(exe) => {
+                    let _ = std::process::Command::new(exe).spawn();
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    tracing::error!("in-place update failed: {e}");
+                    return;
+                }
+            }
+        }
+        // Fallback for releases without a portable zip: hand over to the
+        // installer and exit so it can replace the running binary.
         let is_msi = path
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.eq_ignore_ascii_case("msi"))
             .unwrap_or(false);
-        let installer = path.to_string_lossy().to_string();
-        let relaunch = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        // Written to a .cmd rather than passed inline: `cmd /c` mangles quotes
-        // in a multi-command string in ways that depend on how many quotes it
-        // contains, and installer paths are quoted. A script file has none of
-        // that ambiguity.
-        //
-        // `start "" /wait` runs the installer to completion before relaunching.
-        // NSIS: /S = silent. msiexec: /qn = no UI, /norestart = never reboot us.
-        let run = if is_msi {
-            format!("start \"\" /wait msiexec /i \"{installer}\" /qn /norestart")
-        } else {
-            format!("start \"\" /wait \"{installer}\" /S")
-        };
-        let mut script = format!("@echo off\r\n{run}\r\n");
-        if !relaunch.is_empty() {
-            script.push_str(&format!("start \"\" \"{relaunch}\"\r\n"));
-        }
-        let script_path = std::env::temp_dir().join("kopuz-apply-update.cmd");
-        let spawned = std::fs::write(&script_path, script).is_ok()
-            && std::process::Command::new("cmd")
-                .arg("/c")
-                .arg(&script_path)
-                .spawn()
-                .is_ok();
-        if spawned {
-            std::process::exit(0);
-        }
-        // Silent chain didn't even start — fall back to the visible installer so
-        // the user is never left with a downloaded update they can't apply.
-        let shown = if is_msi {
+        let spawned = if is_msi {
             std::process::Command::new("msiexec")
                 .arg("/i")
                 .arg(path)
@@ -436,7 +427,7 @@ fn launch_update(path: &std::path::Path) {
         } else {
             std::process::Command::new(path).spawn().is_ok()
         };
-        if shown {
+        if spawned {
             std::process::exit(0);
         }
     }
@@ -460,6 +451,134 @@ fn launch_update(path: &std::path::Path) {
             }
         }
         let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    }
+}
+
+/// Unpack the portable zip over the current installation and return the path of
+/// the new executable to start.
+///
+/// Windows refuses to *overwrite* a running .exe but happily *renames* it, so
+/// every file that is in the way is moved aside to `<name>.old` (swept on the
+/// next launch, when it is no longer locked) and the new one takes its place.
+/// Everything is extracted to a staging directory first — a download that dies
+/// halfway must never leave a half-replaced installation behind.
+///
+/// Doing it in-process is deliberate: the obvious alternative, dropping a batch
+/// file into %TEMP% and running it through cmd.exe, is precisely the shape
+/// antivirus heuristics score as a dropper.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+fn apply_zip_update(zip_path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    let install_dir = exe
+        .parent()
+        .ok_or_else(|| "cannot determine the install directory".to_string())?;
+    apply_zip_update_into(zip_path, install_dir)
+}
+
+/// The testable core of [`apply_zip_update`], with the target directory passed
+/// in rather than derived from the running process.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+fn apply_zip_update_into(
+    zip_path: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let install_dir = install_dir.to_path_buf();
+
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("open archive: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("read archive: {e}"))?;
+
+    let staging = install_dir.join(".kopuz-update");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| {
+        format!(
+            "cannot write to {} ({e}) — an install outside your user profile needs admin rights",
+            install_dir.display()
+        )
+    })?;
+
+    let mut staged: Vec<std::path::PathBuf> = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("archive entry {i}: {e}"))?;
+        // enclosed_name() rejects absolute paths and `..` traversal. Without it
+        // a crafted archive could write anywhere on disk ("zip slip").
+        let Some(rel) = entry.enclosed_name() else {
+            continue;
+        };
+        if entry.is_dir() {
+            continue;
+        }
+        let out = staging.join(&rel);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("staging dir: {e}"))?;
+        }
+        let mut dest = std::fs::File::create(&out)
+            .map_err(|e| format!("staging {}: {e}", rel.display()))?;
+        std::io::copy(&mut entry, &mut dest)
+            .map_err(|e| format!("extracting {}: {e}", rel.display()))?;
+        staged.push(rel);
+    }
+
+    // A zip without the binary would "succeed" into a broken install.
+    let has_exe = staged.iter().any(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case("kopuz.exe"))
+    });
+    if !has_exe {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err("the archive contains no kopuz.exe".into());
+    }
+
+    for rel in &staged {
+        let dest = install_dir.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("install dir: {e}"))?;
+        }
+        if dest.exists() {
+            let aside = dest.with_file_name(format!(
+                "{}.old",
+                dest.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            let _ = std::fs::remove_file(&aside);
+            std::fs::rename(&dest, &aside)
+                .map_err(|e| format!("cannot move {} aside: {e}", dest.display()))?;
+        }
+        std::fs::rename(staging.join(rel), &dest)
+            .map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    }
+    let _ = std::fs::remove_dir_all(&staging);
+    Ok(install_dir.join("kopuz.exe"))
+}
+
+/// Delete the `<name>.old` files the previous in-place update left behind. They
+/// could not be removed then — the running process still held them open.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+fn sweep_update_leftovers() {
+    fn sweep(dir: &std::path::Path, depth: u8) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if depth > 0 {
+                    sweep(&path, depth - 1);
+                }
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("old"))
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        sweep(dir, 2);
     }
 }
 
@@ -936,6 +1055,11 @@ fn make_hq_image(raw: &[u8], cache_path: &std::path::Path) -> Option<Vec<u8>> {
 }
 
 fn main() {
+    // Clear out what the last in-place update had to leave behind (the old
+    // binary was still locked by the process that installed the new one).
+    #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+    sweep_update_leftovers();
+
     // Android has no file logger; instead route tracing to stderr, which the
     // mobile runtime pipes into logcat (tag RustStdoutStderr) alongside the
     // engine's eprintln lines. Without a subscriber the server-crate resolve
@@ -3363,5 +3487,151 @@ fn App() -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), target_os = "windows"))]
+mod update_tests {
+    use super::*;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    /// Unique scratch directory per test — these touch the real filesystem.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kopuz-update-test-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).expect("create zip");
+        let mut zip = zip::ZipWriter::new(file);
+        let opts: zip::write::FileOptions<'_, ()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, body) in entries {
+            zip.start_file(*name, opts).expect("start entry");
+            zip.write_all(body).expect("write entry");
+        }
+        zip.finish().expect("finish zip");
+    }
+
+    fn install_with(dir: &Path, files: &[(&str, &[u8])]) {
+        for (rel, body) in files {
+            let p = dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+    }
+
+    #[test]
+    fn replaces_the_install_and_parks_the_previous_files() {
+        let root = scratch("replace");
+        let install = root.join("install");
+        install_with(
+            &install,
+            &[("kopuz.exe", b"OLD-BINARY"), ("assets/app.css", b"old-css")],
+        );
+        let zip = root.join("update.zip");
+        write_zip(
+            &zip,
+            &[("kopuz.exe", b"NEW-BINARY"), ("assets/app.css", b"new-css")],
+        );
+
+        let exe = apply_zip_update_into(&zip, &install).expect("update should apply");
+
+        assert_eq!(exe, install.join("kopuz.exe"));
+        assert_eq!(std::fs::read(install.join("kopuz.exe")).unwrap(), b"NEW-BINARY");
+        assert_eq!(
+            std::fs::read(install.join("assets/app.css")).unwrap(),
+            b"new-css"
+        );
+        // The running binary can't be deleted yet, so it must be parked, not lost.
+        assert_eq!(
+            std::fs::read(install.join("kopuz.exe.old")).unwrap(),
+            b"OLD-BINARY",
+            "the previous binary must be recoverable until the next launch",
+        );
+        assert!(
+            !install.join(".kopuz-update").exists(),
+            "staging directory must be cleaned up",
+        );
+    }
+
+    #[test]
+    fn sweep_removes_the_parked_files() {
+        let root = scratch("sweep");
+        install_with(
+            &root,
+            &[
+                ("kopuz.exe.old", b"stale"),
+                ("assets/app.css.old", b"stale"),
+                ("kopuz.exe", b"live"),
+            ],
+        );
+        // Same walk the startup sweep performs, rooted at the scratch dir.
+        fn sweep(dir: &Path, depth: u8) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if depth > 0 {
+                        sweep(&path, depth - 1);
+                    }
+                } else if path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("old"))
+                {
+                    std::fs::remove_file(&path).unwrap();
+                }
+            }
+        }
+        sweep(&root, 2);
+
+        assert!(!root.join("kopuz.exe.old").exists());
+        assert!(!root.join("assets/app.css.old").exists());
+        assert!(root.join("kopuz.exe").exists(), "live files stay");
+    }
+
+    #[test]
+    fn refuses_an_archive_without_the_binary_and_leaves_the_install_alone() {
+        let root = scratch("no-exe");
+        let install = root.join("install");
+        install_with(&install, &[("kopuz.exe", b"OLD-BINARY")]);
+        let zip = root.join("update.zip");
+        write_zip(&zip, &[("readme.txt", b"nothing useful here")]);
+
+        let err = apply_zip_update_into(&zip, &install).expect_err("must be rejected");
+
+        assert!(err.contains("kopuz.exe"), "unexpected error: {err}");
+        assert_eq!(
+            std::fs::read(install.join("kopuz.exe")).unwrap(),
+            b"OLD-BINARY",
+            "a bad archive must not touch the installation",
+        );
+        assert!(!install.join(".kopuz-update").exists());
+    }
+
+    #[test]
+    fn zip_slip_entries_cannot_escape_the_install_directory() {
+        let root = scratch("slip");
+        let install = root.join("install");
+        install_with(&install, &[("kopuz.exe", b"OLD-BINARY")]);
+        let zip = root.join("update.zip");
+        write_zip(
+            &zip,
+            &[
+                ("../../pwned.txt", b"escaped"),
+                ("kopuz.exe", b"NEW-BINARY"),
+            ],
+        );
+
+        apply_zip_update_into(&zip, &install).expect("the valid entry should still apply");
+
+        assert!(
+            !root.join("pwned.txt").exists() && !root.parent().unwrap().join("pwned.txt").exists(),
+            "a traversal entry must never be written outside the install dir",
+        );
+        assert_eq!(std::fs::read(install.join("kopuz.exe")).unwrap(), b"NEW-BINARY");
     }
 }
