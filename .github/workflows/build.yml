@@ -100,20 +100,30 @@ jobs:
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
 
-      - name: Bundle Windows installer (.msi)
-        run: dx bundle --release --platform desktop --package kopuz
+      # Builds the app, NOT an installer. The NSIS/MSI bundle used to be built
+      # and uploaded here, but running that installer over an existing
+      # installation wiped a user's %APPDATA% config — session, playlists,
+      # favourites. It is no longer published in releases, so it must not be
+      # downloadable from CI either. Building the portable app is also the
+      # honest Windows compile check: it is exactly what the release ships.
+      - name: Build app
+        run: dx build --release --platform desktop --package kopuz
 
-      - name: List bundle output
+      - name: Portable zip
         if: always()
         shell: pwsh
-        run: Get-ChildItem -Recurse target/dx -Include *.msi,*.exe -ErrorAction SilentlyContinue | Select-Object FullName
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $app = "target/dx/kopuz/release/windows/app"
+          if (Test-Path $app) {
+            Compress-Archive -Path "$app/*" -DestinationPath dist/Kopuz-windows-portable.zip -Force
+          }
+          Get-ChildItem dist -ErrorAction SilentlyContinue | Select-Object FullName
 
-      - name: Upload Windows installer
+      - name: Upload portable build
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: kopuz-windows-installer
-          path: |
-            target/dx/**/*setup*.exe
-            target/dx/**/*.msi
+          name: kopuz-windows-portable
+          path: dist/Kopuz-windows-portable.zip
           if-no-files-found: warn
