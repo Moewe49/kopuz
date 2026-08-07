@@ -28,15 +28,25 @@ pub struct PlaylistSummary {
 /// and reporting only the status turned "limit=24 is above the new maximum of
 /// 10" into a bare "400 Bad Request" that took a web search to decode.
 pub(super) fn describe_error(status: reqwest::StatusCode, body: &str) -> String {
-    let detail = serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|v| {
-            v.pointer("/error/message")
-                .and_then(|m| m.as_str())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_else(|| body.chars().take(200).collect());
-    if detail.trim().is_empty() {
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    let field = |name: &str| {
+        parsed
+            .as_ref()
+            .and_then(|v| v.pointer(&format!("/error/{name}")))
+            .and_then(|m| m.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    // `reason` is where Spotify puts the machine-readable cause when `message`
+    // is a useless "Forbidden" — e.g. PREMIUM_REQUIRED, QUOTA_EXCEEDED. It is
+    // the difference between a dead end and knowing what to change.
+    let detail = match (field("message"), field("reason")) {
+        (Some(m), Some(r)) if m != r => format!("{m} ({r})"),
+        (Some(m), _) => m,
+        (None, Some(r)) => r,
+        (None, None) => body.chars().take(200).collect::<String>().trim().to_string(),
+    };
+    if detail.is_empty() {
         format!("Spotify API {status}")
     } else {
         format!("Spotify API {status}: {detail}")
@@ -306,6 +316,22 @@ mod tests {
         let msg = describe_error(reqwest::StatusCode::FORBIDDEN, "<html>nope</html>");
         assert!(msg.contains("403"), "got: {msg}");
         assert!(msg.contains("nope"), "got: {msg}");
+    }
+
+    #[test]
+    fn surfaces_the_machine_readable_reason_when_the_message_says_nothing() {
+        // Exactly what Spotify answers for a Dev Mode playlist read: a message
+        // that only repeats the status. The `reason` is the part worth showing.
+        let body = r#"{"error":{"status":403,"message":"Forbidden","reason":"PREMIUM_REQUIRED"}}"#;
+        let msg = describe_error(reqwest::StatusCode::FORBIDDEN, body);
+        assert!(msg.contains("PREMIUM_REQUIRED"), "got: {msg}");
+    }
+
+    #[test]
+    fn does_not_repeat_itself_when_message_and_reason_agree() {
+        let body = r#"{"error":{"status":403,"message":"Forbidden","reason":"Forbidden"}}"#;
+        let msg = describe_error(reqwest::StatusCode::FORBIDDEN, body);
+        assert_eq!(msg.matches("Forbidden").count(), 2, "status + one detail, got: {msg}");
     }
 
     #[test]

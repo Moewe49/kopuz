@@ -215,7 +215,10 @@ pub fn SpotifyImportModal(
             let result = async {
                 let token = ensure_token().await?;
                 match &id {
-                    Some(pid) => spotify::api::fetch_playlist(&token, pid).await,
+                    // Not the plain API read: Spotify's Dev Mode rules 403 any
+                    // playlist the account doesn't own, so this falls back to
+                    // the anonymous web-player path for public ones.
+                    Some(pid) => spotify::fetch_playlist_for_import(&token, pid).await,
                     None => spotify::api::fetch_liked_songs(&token).await,
                 }
             }

@@ -50,6 +50,35 @@ impl SpotifyEntityKind {
     }
 }
 
+/// Fetch a playlist's tracks for import, by whichever route works.
+///
+/// The authenticated read is tried first — it is the only one that can see
+/// private playlists. But Spotify's February 2026 migration limits Development
+/// Mode apps to "playlists the user owns or collaborates on", and everything
+/// else answers a bare `403 Forbidden` with no explanation. That verdict says
+/// nothing about whether the playlist is *readable*: the anonymous web-player
+/// path ([`embed::fetch_public`], which goes through the pathfinder GraphQL
+/// endpoint) reads any PUBLIC playlist in full, with no app registration and no
+/// Dev Mode rules attached.
+///
+/// So a 403 on your own connected account is not the end of the import — it
+/// just means we ask the way the web player asks. Both errors are reported if
+/// neither works, because "which one failed" is the useful part.
+pub async fn fetch_playlist_for_import(
+    token: &str,
+    id: &str,
+) -> Result<SpotifyPlaylist, String> {
+    let authed = match api::fetch_playlist(token, id).await {
+        Ok(playlist) if !playlist.tracks.is_empty() => return Ok(playlist),
+        Ok(_) => "the connected account returned an empty playlist".to_string(),
+        Err(e) => e,
+    };
+    match embed::fetch_public(SpotifyEntityKind::Playlist, id).await {
+        Ok(playlist) => Ok(playlist),
+        Err(anon) => Err(format!("{authed} — and reading it publicly failed too: {anon}")),
+    }
+}
+
 /// Accepts the shapes people actually paste:
 /// `https://open.spotify.com/playlist/<id>?si=…`,
 /// `https://open.spotify.com/intl-de/album/<id>`,
