@@ -145,6 +145,24 @@ fn main() {
     {
         let mut res = winres::WindowsResource::new();
         res.set_icon("assets/app.ico");
+        // winres fills FileVersion / ProductVersion / ProductName / CompanyName
+        // from the Cargo metadata, but leaves FileDescription and
+        // LegalCopyright empty. An executable with a blank description is one of
+        // the traits antivirus heuristics weigh — real software fills it in, a
+        // dropped payload usually doesn't. This alone won't clear the
+        // Wacatac.B!ml false positive (locally built binaries carry the exact
+        // same metadata and pass, so it isn't the differentiator), but it costs
+        // nothing and removes one more reason to look suspicious.
+        // Set explicitly rather than relying on Cargo metadata: the workspace
+        // declares no `authors`, so a plain `cargo build` leaves CompanyName
+        // blank (only `dx build` fills it). Spelling them out keeps both build
+        // paths identical. ASCII only — the resource encoding mangles dashes.
+        res.set("FileDescription", "Kopuz - music player");
+        res.set("ProductName", "Kopuz");
+        res.set("CompanyName", "Temidaradev");
+        res.set("LegalCopyright", "Copyright (c) 2026 Temidaradev. MIT License.");
+        res.set("InternalName", "kopuz.exe");
+        res.set("OriginalFilename", "kopuz.exe");
         res.compile().expect("failed to compile Windows resources");
     }
 
