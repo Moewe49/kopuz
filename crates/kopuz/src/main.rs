@@ -539,10 +539,7 @@ fn apply_zip_update_into(
             std::fs::create_dir_all(parent).map_err(|e| format!("install dir: {e}"))?;
         }
         if dest.exists() {
-            let aside = dest.with_file_name(format!(
-                "{}.old",
-                dest.file_name().unwrap_or_default().to_string_lossy()
-            ));
+            let aside = parked_path(&dest);
             let _ = std::fs::remove_file(&aside);
             std::fs::rename(&dest, &aside)
                 .map_err(|e| format!("cannot move {} aside: {e}", dest.display()))?;
@@ -551,7 +548,55 @@ fn apply_zip_update_into(
             .map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
     }
     let _ = std::fs::remove_dir_all(&staging);
-    Ok(install_dir.join("kopuz.exe"))
+
+    let exe = install_dir.join("kopuz.exe");
+    verify_or_roll_back(&exe)?;
+    Ok(exe)
+}
+
+/// Where a file about to be replaced is parked so the update can be undone.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+fn parked_path(dest: &std::path::Path) -> std::path::PathBuf {
+    dest.with_file_name(format!(
+        "{}.old",
+        dest.file_name().unwrap_or_default().to_string_lossy()
+    ))
+}
+
+/// Make sure the freshly installed binary is still there, and put the previous
+/// one back if it isn't.
+///
+/// Antivirus is the reason this exists. Windows Defender's ML heuristic flags
+/// unsigned Rust binaries as `Trojan:Win32/Wacatac.B!ml` — a documented generic
+/// false positive — and quarantines the new kopuz.exe seconds after it lands.
+/// Without this the update would leave the user with no executable at all: the
+/// old one renamed aside, the new one deleted behind our back. Restoring the
+/// parked copy turns that into a failed update instead of a broken install.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+fn verify_or_roll_back(exe: &std::path::Path) -> Result<(), String> {
+    // Real-time protection acts on close/execute, a moment after the rename.
+    for _ in 0..6 {
+        if !exe.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if exe.exists() {
+        return Ok(());
+    }
+    let parked = parked_path(exe);
+    if parked.exists() && std::fs::rename(&parked, exe).is_ok() {
+        return Err(
+            "the new version disappeared right after installing (antivirus?) — \
+             kept the previous one"
+                .to_string(),
+        );
+    }
+    Err(
+        "the new version disappeared right after installing (antivirus?) and the \
+         previous one could not be restored"
+            .to_string(),
+    )
 }
 
 /// Delete the `<name>.old` files the previous in-place update left behind. They
@@ -3635,5 +3680,54 @@ mod update_tests {
             "a traversal entry must never be written outside the install dir",
         );
         assert_eq!(std::fs::read(install.join("kopuz.exe")).unwrap(), b"NEW-BINARY");
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), target_os = "windows"))]
+mod rollback_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kopuz-rollback-test-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    fn a_surviving_binary_is_accepted() {
+        let dir = scratch("ok");
+        let exe = dir.join("kopuz.exe");
+        std::fs::write(&exe, b"NEW").unwrap();
+        assert!(verify_or_roll_back(&exe).is_ok());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"NEW");
+    }
+
+    #[test]
+    fn a_vanished_binary_is_rolled_back_to_the_previous_one() {
+        let dir = scratch("rollback");
+        let exe = dir.join("kopuz.exe");
+        // Exactly the state an antivirus quarantine leaves behind: the parked
+        // copy is there, the freshly installed file is gone.
+        std::fs::write(parked_path(&exe), b"PREVIOUS").unwrap();
+
+        let err = verify_or_roll_back(&exe).expect_err("must report the update as failed");
+
+        assert!(err.contains("kept the previous one"), "unexpected: {err}");
+        assert_eq!(
+            std::fs::read(&exe).unwrap(),
+            b"PREVIOUS",
+            "the user must be left with a working app, not an empty folder",
+        );
+        assert!(!parked_path(&exe).exists(), "the parked copy was moved back");
+    }
+
+    #[test]
+    fn reports_honestly_when_there_is_nothing_to_roll_back_to() {
+        let dir = scratch("nothing");
+        let exe = dir.join("kopuz.exe");
+        let err = verify_or_roll_back(&exe).expect_err("must fail");
+        assert!(err.contains("could not be restored"), "unexpected: {err}");
     }
 }
