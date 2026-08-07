@@ -7,6 +7,7 @@ appearance = Tampilan
 language = Bahasa
 library = Koleksi
 playlists = Playlist
+playlist = Playlist
 album = Album
 artist = Artis
 home = Beranda
@@ -407,7 +408,6 @@ radio_registry_url_placeholder = URL atau jalur lokal ke index.json
 add_radio_registry = Tambah Registri Radio
 radio_default_registry = Registri Default
 
-
 radio_registry_empty_path = Jalur registri tidak boleh kosong
 radio_registry_exists = Registri sudah ada
 radio_registry_import_failed = Gagal mengimpor registri: { $error }
@@ -444,9 +444,7 @@ metadata_edit_warning = Bidang kosong menghapus tag itu. Ditulis langsung ke ber
 
 # Spotify import + sleep timer
 spotify_import_title = Impor dari Spotify
-spotify_tab_url = Lewat URL
-spotify_tab_account = Akun Spotify
-spotify_url_hint = Tempel tautan publik playlist atau album Spotify. Impor lewat tautan mencakup sekitar 100 lagu pertama — hubungkan akunmu untuk playlist lengkap.
+spotify_url_hint = Tempel tautan publik playlist atau album Spotify — seluruh daftar lagu diimpor. Tidak perlu masuk.
 spotify_import_button = Impor ke YouTube Music
 spotify_fetching = Memuat dari Spotify…
 spotify_matching = Mencocokkan di YouTube Music — { $done } / { $total }
@@ -456,23 +454,7 @@ spotify_done = { $matched } dari { $total } lagu berhasil diimpor. Playlist kini
 spotify_unmatched = { $count } lagu tidak dapat dicocokkan
 spotify_bad_url = Itu sepertinya bukan tautan playlist atau album Spotify.
 spotify_needs_yt_login = Masuk dulu ke YouTube Music — playlist hasil kloning dibuat di akun YT Music kamu.
-spotify_connect_hint = Hubungkan aplikasi Spotify milikmu sendiri (gratis) untuk mengimpor playlist privat dan Lagu yang Disukai:
-spotify_connect_step3 = Tempel Client ID aplikasi di bawah lalu hubungkan.
-spotify_connect_button = Hubungkan Spotify
-spotify_waiting_browser = Menunggu login di browser…
-spotify_connected = Spotify terhubung
-spotify_disconnect = Putuskan
-spotify_load_playlists = Muat playlist saya
-spotify_liked_songs = Lagu yang Disukai
-spotify_not_connected = Spotify belum terhubung.
-spotify_client_id_missing = Masukkan dulu Client ID aplikasi Spotify kamu.
 spotify_import_from = Impor dari Spotify
-spotify_search_hint = Ketik di atas untuk mencari di Spotify.
-spotify_searching = Mencari di Spotify…
-spotify_search_needs_account = Pencarian Spotify memerlukan akun Spotify yang terhubung. Buka Playlist → Impor dari Spotify dan hubungkan aplikasi Spotify (gratis) Anda di sana.
-spotify_finding_match = Mencari “{ $title }” di YouTube Music…
-spotify_no_match = Tidak ada yang cocok dengan “{ $title }” di YouTube Music.
-spotify_playback_note = Audio Spotify dilindungi dari penyalinan — kopuz memutar trek yang cocok dari YouTube Music.
 sleep_timer = Timer tidur
 sleep_timer_minutes = { $min } menit
 sleep_timer_off = Matikan
@@ -537,10 +519,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = Pilih…

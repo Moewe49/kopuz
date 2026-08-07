@@ -7,6 +7,7 @@ appearance = 外観
 language = 言語
 library = ライブラリ
 playlists = プレイリスト
+playlist = プレイリスト
 album = アルバム
 artist = アーティスト
 home = ホーム
@@ -414,7 +415,6 @@ radio_registry_url_placeholder = index.json への URL またはローカルパ�
 add_radio_registry = ラジオレジストリを追加
 radio_default_registry = デフォルトレジストリ
 
-
 radio_registry_empty_path = レジストリパスを空にすることはできません
 radio_registry_exists = レジストリは既に存在します
 radio_registry_import_failed = レジストリのインポートに失敗しました: { $error }
@@ -451,9 +451,7 @@ metadata_edit_warning = 空欄にするとそのタグは削除されます。�
 
 # Spotify import + sleep timer
 spotify_import_title = Spotify からインポート
-spotify_tab_url = URL から
-spotify_tab_account = Spotify アカウント
-spotify_url_hint = 公開されている Spotify のプレイリストまたはアルバムのリンクを貼り付けてください。リンクからのインポートは最初の約100曲が対象です。完全なプレイリストにはアカウント連携が必要です。
+spotify_url_hint = 公開されている Spotify のプレイリストまたはアルバムのリンクを貼り付けてください。曲目リスト全体を取り込みます。ログインは不要です。
 spotify_import_button = YouTube Music にインポート
 spotify_fetching = Spotify から読み込み中…
 spotify_matching = YouTube Music で照合中 — { $done } / { $total }
@@ -463,23 +461,7 @@ spotify_done = { $total } 曲中 { $matched } 曲をインポートしました�
 spotify_unmatched = { $count } 曲は照合できませんでした
 spotify_bad_url = Spotify のプレイリストまたはアルバムのリンクではないようです。
 spotify_needs_yt_login = 先に YouTube Music にログインしてください。複製されたプレイリストは YT Music アカウントに作成されます。
-spotify_connect_hint = 非公開プレイリストやお気に入りの曲をインポートするには、自分の Spotify アプリ（無料）を連携してください:
-spotify_connect_step3 = アプリの Client ID を下に貼り付けて連携します。
-spotify_connect_button = Spotify を連携
-spotify_waiting_browser = ブラウザでのログインを待っています…
-spotify_connected = Spotify 連携済み
-spotify_disconnect = 連携を解除
-spotify_load_playlists = プレイリストを読み込む
-spotify_liked_songs = お気に入りの曲
-spotify_not_connected = Spotify が連携されていません。
-spotify_client_id_missing = 先に Spotify アプリの Client ID を入力してください。
 spotify_import_from = Spotify からインポート
-spotify_search_hint = 上に入力して Spotify を検索します。
-spotify_searching = Spotify を検索中…
-spotify_search_needs_account = Spotify 検索には接続済みの Spotify アカウントが必要です。プレイリスト →「Spotify からインポート」を開き、そこで（無料の）Spotify アプリを接続してください。
-spotify_finding_match = 「{ $title }」を YouTube Music で検索中…
-spotify_no_match = 「{ $title }」に一致する曲が YouTube Music に見つかりませんでした。
-spotify_playback_note = Spotify の音声はコピー保護されています。kopuz は一致する曲を YouTube Music から再生します。
 sleep_timer = スリープタイマー
 sleep_timer_minutes = { $min } 分
 sleep_timer_off = オフにする
@@ -544,10 +526,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = 選択…

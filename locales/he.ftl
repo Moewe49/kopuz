@@ -7,6 +7,7 @@ appearance = מראה
 language = שפה
 library = ספרייה
 playlists = רשימות השמעה
+playlist = רשימת השמעה
 album = אלבום
 artist = אמן
 home = בית
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = כתובת URL או נתיב מקומי אל in
 add_radio_registry = הוסף רשם רדיו
 radio_default_registry = רשם ברירת מחדל
 
-
 radio_registry_empty_path = נתיב הרשומה אינו יכול להיות ריק
 radio_registry_exists = הרשומה כבר קיימת
 radio_registry_import_failed = ייבוא הרשומה נכשל: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = שדות ריקים מוחקים את התג. נכתב �
 
 # Spotify import + sleep timer
 spotify_import_title = ייבוא מ-Spotify
-spotify_tab_url = באמצעות קישור
-spotify_tab_account = חשבון Spotify
-spotify_url_hint = הדביקו קישור ציבורי לפלייליסט או אלבום ב-Spotify. ייבוא בקישור מכסה בערך את 100 השירים הראשונים — חברו את החשבון לפלייליסטים מלאים.
+spotify_url_hint = הדביקו קישור ציבורי לרשימת השמעה או אלבום ב-Spotify — כל רשימת הרצועות תיובא. אין צורך בהתחברות.
 spotify_import_button = ייבוא ל-YouTube Music
 spotify_fetching = טוען מ-Spotify…
 spotify_matching = מחפש ב-YouTube Music — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = יובאו { $matched } מתוך { $total } שירים. הפלי�
 spotify_unmatched = { $count } שירים לא נמצאה להם התאמה
 spotify_bad_url = זה לא נראה כמו קישור לפלייליסט או אלבום ב-Spotify.
 spotify_needs_yt_login = התחברו קודם ל-YouTube Music — הפלייליסט המשוכפל נוצר בחשבון YT Music שלכם.
-spotify_connect_hint = חברו אפליקציית Spotify משלכם (בחינם) כדי לייבא פלייליסטים פרטיים ושירים שאהבתם:
-spotify_connect_step3 = הדביקו למטה את ה-Client ID של האפליקציה והתחברו.
-spotify_connect_button = חיבור Spotify
-spotify_waiting_browser = ממתין להתחברות בדפדפן…
-spotify_connected = Spotify מחובר
-spotify_disconnect = ניתוק
-spotify_load_playlists = טעינת הפלייליסטים שלי
-spotify_liked_songs = שירים שאהבתי
-spotify_not_connected = Spotify אינו מחובר.
-spotify_client_id_missing = הזינו קודם את ה-Client ID של אפליקציית Spotify שלכם.
 spotify_import_from = ייבוא מ-Spotify
-spotify_search_hint = הקלידו למעלה כדי לחפש ב-Spotify.
-spotify_searching = מחפש ב-Spotify…
-spotify_search_needs_account = חיפוש ב-Spotify דורש חשבון Spotify מחובר. פתחו רשימות השמעה ← ייבוא מ-Spotify וחברו שם את אפליקציית ה-Spotify (החינמית) שלכם.
-spotify_finding_match = מחפש את „{ $title }” ב-YouTube Music…
-spotify_no_match = לא נמצאה התאמה ל„{ $title }” ב-YouTube Music.
-spotify_playback_note = האודיו של Spotify מוגן מפני העתקה — kopuz מנגן את הרצועה המתאימה מ-YouTube Music.
 sleep_timer = טיימר שינה
 sleep_timer_minutes = { $min } דקות
 sleep_timer_off = כיבוי
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = בחירה…

@@ -1,13 +1,15 @@
-//! Spotify playlist import. Two acquisition paths feed the same
-//! YT Music matcher/cloner:
+//! Spotify playlist import, from a public link only.
 //!
-//! 1. **Public URL** ([`embed`]) — scrapes the `open.spotify.com/embed`
-//!    page for a playlist/album. No login, no API key. The embed ships
-//!    roughly the first 100 tracks; bigger playlists need path 2.
-//! 2. **Account connection** ([`auth`] + [`api`]) — OAuth PKCE with a
-//!    user-supplied client id (free, created in Spotify's developer
-//!    dashboard). Unlocks the user's own (private) playlists and Liked
-//!    Songs, fully paginated.
+//! [`embed`] scrapes the `open.spotify.com/embed` page for the anonymous
+//! web-player token, then reads the full track list through the web player's
+//! own [`pathfinder`] GraphQL endpoint. No login, no API key, no track cap.
+//!
+//! An OAuth account connection used to sit alongside this for private
+//! playlists and Liked Songs. Spotify's February 2026 Web API migration killed
+//! it for an app like this: Development Mode requires the app owner to hold
+//! Premium, caps a new app at five users, and returns playlist contents only
+//! for playlists the user owns or collaborates on — a bare `403 Forbidden` for
+//! everything else. The anonymous path is subject to none of that.
 //!
 //! [`matcher`] resolves each Spotify track to a YT Music video id and
 //! [`matcher::clone_to_ytmusic`] creates the playlist in the signed-in
@@ -15,11 +17,9 @@
 //! playable, editable, syncable like any other YT playlist.
 
 pub mod api;
-pub mod auth;
 pub mod embed;
 pub mod matcher;
 pub mod pathfinder;
-pub mod search;
 
 /// One track as Spotify describes it — the matcher's input.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,35 +47,6 @@ impl SpotifyEntityKind {
             Self::Playlist => "playlist",
             Self::Album => "album",
         }
-    }
-}
-
-/// Fetch a playlist's tracks for import, by whichever route works.
-///
-/// The authenticated read is tried first — it is the only one that can see
-/// private playlists. But Spotify's February 2026 migration limits Development
-/// Mode apps to "playlists the user owns or collaborates on", and everything
-/// else answers a bare `403 Forbidden` with no explanation. That verdict says
-/// nothing about whether the playlist is *readable*: the anonymous web-player
-/// path ([`embed::fetch_public`], which goes through the pathfinder GraphQL
-/// endpoint) reads any PUBLIC playlist in full, with no app registration and no
-/// Dev Mode rules attached.
-///
-/// So a 403 on your own connected account is not the end of the import — it
-/// just means we ask the way the web player asks. Both errors are reported if
-/// neither works, because "which one failed" is the useful part.
-pub async fn fetch_playlist_for_import(
-    token: &str,
-    id: &str,
-) -> Result<SpotifyPlaylist, String> {
-    let authed = match api::fetch_playlist(token, id).await {
-        Ok(playlist) if !playlist.tracks.is_empty() => return Ok(playlist),
-        Ok(_) => "the connected account returned an empty playlist".to_string(),
-        Err(e) => e,
-    };
-    match embed::fetch_public(SpotifyEntityKind::Playlist, id).await {
-        Ok(playlist) => Ok(playlist),
-        Err(anon) => Err(format!("{authed} — and reading it publicly failed too: {anon}")),
     }
 }
 

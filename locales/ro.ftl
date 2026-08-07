@@ -7,6 +7,7 @@ appearance = Aspect
 language = Limbă
 library = Bibliotecă
 playlists = Liste de Redare
+playlist = Playlist
 album = Album
 artist = Artist
 home = Acasă
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = URL sau cale locală către index.json
 add_radio_registry = Adaugă Registru Radio
 radio_default_registry = Registru Implicit
 
-
 radio_registry_empty_path = Calea registrului nu poate fi goală
 radio_registry_exists = Registrul există deja
 radio_registry_import_failed = Importul registrului a eșuat: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = Câmpurile goale elimină eticheta. Se scrie direct în 
 
 # Spotify import + sleep timer
 spotify_import_title = Importă din Spotify
-spotify_tab_url = Prin URL
-spotify_tab_account = Cont Spotify
-spotify_url_hint = Lipește un link public de playlist sau album Spotify. Importul prin link acoperă aproximativ primele 100 de piese — conectează-ți contul pentru playlisturi complete.
+spotify_url_hint = Lipește un link public de playlist sau album Spotify — se importă lista completă de piese. Fără autentificare.
 spotify_import_button = Importă în YouTube Music
 spotify_fetching = Se încarcă din Spotify…
 spotify_matching = Se caută pe YouTube Music — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = { $matched } din { $total } piese importate. Playlistul este acum
 spotify_unmatched = { $count } piese nu au putut fi potrivite
 spotify_bad_url = Nu pare un link de playlist sau album Spotify.
 spotify_needs_yt_login = Autentifică-te mai întâi în YouTube Music — playlistul clonat este creat în contul tău YT Music.
-spotify_connect_hint = Conectează propria aplicație Spotify (gratuită) pentru a importa playlisturi private și piese apreciate:
-spotify_connect_step3 = Lipește mai jos Client ID-ul aplicației și conectează-te.
-spotify_connect_button = Conectează Spotify
-spotify_waiting_browser = Se așteaptă autentificarea în browser…
-spotify_connected = Spotify conectat
-spotify_disconnect = Deconectează
-spotify_load_playlists = Încarcă playlisturile mele
-spotify_liked_songs = Piese apreciate
-spotify_not_connected = Spotify nu este conectat.
-spotify_client_id_missing = Introdu mai întâi Client ID-ul aplicației tale Spotify.
 spotify_import_from = Importă din Spotify
-spotify_search_hint = Scrie mai sus pentru a căuta pe Spotify.
-spotify_searching = Se caută pe Spotify…
-spotify_search_needs_account = Căutarea pe Spotify are nevoie de contul tău Spotify conectat. Deschide Playlisturi → Importă din Spotify și conectează acolo aplicația ta Spotify (gratuită).
-spotify_finding_match = Se caută „{ $title }” pe YouTube Music…
-spotify_no_match = Nicio potrivire pentru „{ $title }” pe YouTube Music.
-spotify_playback_note = Audio-ul Spotify este protejat la copiere — kopuz redă piesa echivalentă de pe YouTube Music.
 sleep_timer = Temporizator de somn
 sleep_timer_minutes = { $min } minute
 sleep_timer_off = Dezactivează
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = Alege…

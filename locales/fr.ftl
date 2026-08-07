@@ -7,6 +7,7 @@ appearance = Apparence
 language = Langage 
 library = Librairie
 playlists = Playlists
+playlist = Playlist
 album = Album
 artist = Artiste
 home = Accueil 
@@ -409,7 +410,6 @@ radio_registry_url_placeholder = URL ou chemin local vers index.json
 add_radio_registry = Ajouter un Registre de Radio
 radio_default_registry = Registre par Défaut
 
-
 radio_registry_empty_path = Le chemin du registre ne peut pas être vide
 radio_registry_exists = Le registre existe déjà
 radio_registry_import_failed = Échec de l"importation du registre : { $error }
@@ -446,9 +446,7 @@ metadata_edit_warning = Les champs vides suppriment l'étiquette. Écrit directe
 
 # Spotify import + sleep timer
 spotify_import_title = Importer depuis Spotify
-spotify_tab_url = Par URL
-spotify_tab_account = Compte Spotify
-spotify_url_hint = Collez un lien public de playlist ou d'album Spotify. L'import par lien couvre environ les 100 premiers titres — connectez votre compte pour des playlists complètes.
+spotify_url_hint = Colle un lien public de playlist ou d'album Spotify — la liste complète des titres est importée. Aucune connexion requise.
 spotify_import_button = Importer vers YouTube Music
 spotify_fetching = Chargement depuis Spotify…
 spotify_matching = Recherche sur YouTube Music — { $done } / { $total }
@@ -458,23 +456,7 @@ spotify_done = { $matched } titres sur { $total } importés. La playlist est mai
 spotify_unmatched = { $count } titres n'ont pas pu être associés
 spotify_bad_url = Cela ne ressemble pas à un lien de playlist ou d'album Spotify.
 spotify_needs_yt_login = Connectez-vous d'abord à YouTube Music — la playlist clonée est créée dans votre compte YT Music.
-spotify_connect_hint = Connectez votre propre application Spotify (gratuite) pour importer les playlists privées et les titres likés :
-spotify_connect_step3 = Collez le Client ID de l'application ci-dessous et connectez-vous.
-spotify_connect_button = Connecter Spotify
-spotify_waiting_browser = En attente de la connexion dans le navigateur…
-spotify_connected = Spotify connecté
-spotify_disconnect = Déconnecter
-spotify_load_playlists = Charger mes playlists
-spotify_liked_songs = Titres likés
-spotify_not_connected = Spotify n'est pas connecté.
-spotify_client_id_missing = Saisissez d'abord le Client ID de votre application Spotify.
 spotify_import_from = Importer depuis Spotify
-spotify_search_hint = Tape ci-dessus pour chercher sur Spotify.
-spotify_searching = Recherche sur Spotify…
-spotify_search_needs_account = La recherche Spotify nécessite ton compte Spotify connecté. Ouvre Playlists → Importer depuis Spotify et connecte-y ton app Spotify (gratuite).
-spotify_finding_match = Recherche de « { $title } » sur YouTube Music…
-spotify_no_match = Aucune correspondance pour « { $title } » sur YouTube Music.
-spotify_playback_note = L'audio Spotify est protégé contre la copie — kopuz lit le titre correspondant depuis YouTube Music.
 sleep_timer = Minuteur de veille
 sleep_timer_minutes = { $min } minutes
 sleep_timer_off = Désactiver
@@ -539,10 +521,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = Choisir…

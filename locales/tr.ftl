@@ -7,6 +7,7 @@ appearance = Görünüm
 language = Dil
 library = Kütüphane
 playlists = Çalma Listeleri
+playlist = Çalma listesi
 album = Albüm
 artist = Sanatçı
 home = Ana Sayfa
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = index.json için URL veya yerel yol
 add_radio_registry = Radyo Kaydı Ekle
 radio_default_registry = Varsayılan Kayıt
 
-
 radio_registry_empty_path = Kayıt defteri yolu boş olamaz
 radio_registry_exists = Kayıt defteri zaten var
 radio_registry_import_failed = Kayıt defteri içe aktarılamadı: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = Boş alanlar o etiketi siler. Doğrudan dosyaya yazılı
 
 # Spotify import + sleep timer
 spotify_import_title = Spotify'dan içe aktar
-spotify_tab_url = URL ile
-spotify_tab_account = Spotify hesabı
-spotify_url_hint = Herkese açık bir Spotify çalma listesi veya albüm bağlantısı yapıştır. Bağlantıyla içe aktarma yaklaşık ilk 100 parçayı kapsar — tam listeler için hesabını bağla.
+spotify_url_hint = Herkese açık bir Spotify çalma listesi veya albüm bağlantısı yapıştırın — parça listesinin tamamı içe aktarılır. Oturum açmak gerekmez.
 spotify_import_button = YouTube Music'e aktar
 spotify_fetching = Spotify'dan yükleniyor…
 spotify_matching = YouTube Music'te eşleştiriliyor — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = { $total } parçadan { $matched } tanesi aktarıldı. Çalma list
 spotify_unmatched = { $count } parça eşleştirilemedi
 spotify_bad_url = Bu bir Spotify çalma listesi veya albüm bağlantısına benzemiyor.
 spotify_needs_yt_login = Önce YouTube Music'te oturum aç — klonlanan liste YT Music hesabında oluşturulur.
-spotify_connect_hint = Özel çalma listelerini ve beğenilen şarkıları aktarmak için kendi (ücretsiz) Spotify uygulamanı bağla:
-spotify_connect_step3 = Uygulamanın Client ID'sini aşağıya yapıştır ve bağlan.
-spotify_connect_button = Spotify'ı bağla
-spotify_waiting_browser = Tarayıcıda oturum açılması bekleniyor…
-spotify_connected = Spotify bağlandı
-spotify_disconnect = Bağlantıyı kes
-spotify_load_playlists = Çalma listelerimi yükle
-spotify_liked_songs = Beğenilen şarkılar
-spotify_not_connected = Spotify bağlı değil.
-spotify_client_id_missing = Önce Spotify uygulamanın Client ID'sini gir.
 spotify_import_from = Spotify'dan içe aktar
-spotify_search_hint = Spotify'da aramak için yukarıya yazın.
-spotify_searching = Spotify'da aranıyor…
-spotify_search_needs_account = Spotify araması bağlı bir Spotify hesabı gerektirir. Çalma Listeleri → Spotify'dan içe aktar bölümünü açın ve (ücretsiz) Spotify uygulamanızı orada bağlayın.
-spotify_finding_match = “{ $title }” YouTube Music'te aranıyor…
-spotify_no_match = “{ $title }” için YouTube Music'te eşleşme bulunamadı.
-spotify_playback_note = Spotify sesi kopya korumalıdır — kopuz eşleşen parçayı YouTube Music'ten çalar.
 sleep_timer = Uyku zamanlayıcısı
 sleep_timer_minutes = { $min } dakika
 sleep_timer_off = Kapat
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = Seç…

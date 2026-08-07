@@ -7,6 +7,7 @@ appearance = Aparência
 language = Idioma
 library = Biblioteca
 playlists = Playlists
+playlist = Playlist
 album = Álbum
 artist = Artista
 home = Início
@@ -407,7 +408,6 @@ radio_registry_url_placeholder = URL ou caminho local para index.json
 add_radio_registry = Adicionar Registro de Rádio
 radio_default_registry = Registro Padrão
 
-
 radio_registry_empty_path = O caminho do registro não pode estar vazio
 radio_registry_exists = O registro já existe
 radio_registry_import_failed = Falha ao importar registro: { $error }
@@ -444,9 +444,7 @@ metadata_edit_warning = Campos vazios removem a tag. Grava diretamente no arquiv
 
 # Spotify import + sleep timer
 spotify_import_title = Importar do Spotify
-spotify_tab_url = Por URL
-spotify_tab_account = Conta do Spotify
-spotify_url_hint = Cole um link público de playlist ou álbum do Spotify. A importação por link cobre aproximadamente as 100 primeiras faixas — conecte sua conta para playlists completas.
+spotify_url_hint = Cole um link público de playlist ou álbum do Spotify — a lista completa de faixas é importada. Não é preciso fazer login.
 spotify_import_button = Importar para o YouTube Music
 spotify_fetching = Carregando do Spotify…
 spotify_matching = Buscando no YouTube Music — { $done } / { $total }
@@ -456,23 +454,7 @@ spotify_done = { $matched } de { $total } faixas importadas. A playlist já est�
 spotify_unmatched = { $count } faixas não puderam ser correspondidas
 spotify_bad_url = Isso não parece um link de playlist ou álbum do Spotify.
 spotify_needs_yt_login = Entre primeiro no YouTube Music — a playlist clonada é criada na sua conta do YT Music.
-spotify_connect_hint = Conecte seu próprio app do Spotify (gratuito) para importar playlists privadas e Músicas Curtidas:
-spotify_connect_step3 = Cole abaixo o Client ID do app e conecte.
-spotify_connect_button = Conectar Spotify
-spotify_waiting_browser = Aguardando login no navegador…
-spotify_connected = Spotify conectado
-spotify_disconnect = Desconectar
-spotify_load_playlists = Carregar minhas playlists
-spotify_liked_songs = Músicas Curtidas
-spotify_not_connected = O Spotify não está conectado.
-spotify_client_id_missing = Informe primeiro o Client ID do seu app do Spotify.
 spotify_import_from = Importar do Spotify
-spotify_search_hint = Digite acima para pesquisar no Spotify.
-spotify_searching = Pesquisando no Spotify…
-spotify_search_needs_account = A busca no Spotify precisa da sua conta do Spotify conectada. Abra Playlists → Importar do Spotify e conecte lá o seu app do Spotify (gratuito).
-spotify_finding_match = Procurando “{ $title }” no YouTube Music…
-spotify_no_match = Nenhuma correspondência de “{ $title }” no YouTube Music.
-spotify_playback_note = O áudio do Spotify é protegido contra cópia — o kopuz toca a faixa equivalente do YouTube Music.
 sleep_timer = Timer de desligamento
 sleep_timer_minutes = { $min } minutos
 sleep_timer_off = Desativar
@@ -537,10 +519,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = Escolher…

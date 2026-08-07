@@ -7,6 +7,7 @@ appearance = Εμφάνιση
 language = Γλώσσα
 library = Βιβλιοθήκη
 playlists = Λίστες Αναπαραγωγής
+playlist = Λίστα αναπαραγωγής
 album = Άλμπουμ
 artist = Καλλιτέχνης
 home = Αρχική
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = Διεύθυνση URL ή τοπική διαδ
 add_radio_registry = Προσθήκη Μητρώου Ραδιοφώνου
 radio_default_registry = Προεπιλεγμένο Μητρώο
 
-
 radio_registry_empty_path = Η διαδρομή μητρώου δεν μπορεί να είναι κενή
 radio_registry_exists = Το μητρώο υπάρχει ήδη
 radio_registry_import_failed = Αποτυχία εισαγωγής μητρώου: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = Τα κενά πεδία αφαιρούν την ετι�
 
 # Spotify import + sleep timer
 spotify_import_title = Εισαγωγή από το Spotify
-spotify_tab_url = Μέσω URL
-spotify_tab_account = Λογαριασμός Spotify
-spotify_url_hint = Επικολλήστε έναν δημόσιο σύνδεσμο playlist ή άλμπουμ του Spotify. Η εισαγωγή μέσω συνδέσμου καλύπτει περίπου τα πρώτα 100 κομμάτια — συνδέστε τον λογαριασμό σας για πλήρεις λίστες.
+spotify_url_hint = Επικολλήστε δημόσιο σύνδεσμο λίστας ή άλμπουμ Spotify — εισάγεται ολόκληρη η λίστα κομματιών. Δεν χρειάζεται σύνδεση.
 spotify_import_button = Εισαγωγή στο YouTube Music
 spotify_fetching = Φόρτωση από το Spotify…
 spotify_matching = Αντιστοίχιση στο YouTube Music — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = Εισήχθησαν { $matched } από { $total } κομμάτ�
 spotify_unmatched = { $count } κομμάτια δεν αντιστοιχίστηκαν
 spotify_bad_url = Αυτό δεν μοιάζει με σύνδεσμο playlist ή άλμπουμ του Spotify.
 spotify_needs_yt_login = Συνδεθείτε πρώτα στο YouTube Music — η κλωνοποιημένη playlist δημιουργείται στον λογαριασμό σας YT Music.
-spotify_connect_hint = Συνδέστε τη δική σας εφαρμογή Spotify (δωρεάν) για εισαγωγή ιδιωτικών playlist και αγαπημένων κομματιών:
-spotify_connect_step3 = Επικολλήστε το Client ID της εφαρμογής παρακάτω και συνδεθείτε.
-spotify_connect_button = Σύνδεση Spotify
-spotify_waiting_browser = Αναμονή σύνδεσης στο πρόγραμμα περιήγησης…
-spotify_connected = Το Spotify συνδέθηκε
-spotify_disconnect = Αποσύνδεση
-spotify_load_playlists = Φόρτωση των playlist μου
-spotify_liked_songs = Αγαπημένα κομμάτια
-spotify_not_connected = Το Spotify δεν είναι συνδεδεμένο.
-spotify_client_id_missing = Εισαγάγετε πρώτα το Client ID της εφαρμογής σας Spotify.
 spotify_import_from = Εισαγωγή από το Spotify
-spotify_search_hint = Πληκτρολογήστε παραπάνω για αναζήτηση στο Spotify.
-spotify_searching = Αναζήτηση στο Spotify…
-spotify_search_needs_account = Η αναζήτηση στο Spotify χρειάζεται συνδεδεμένο λογαριασμό Spotify. Ανοίξτε Λίστες → Εισαγωγή από Spotify και συνδέστε εκεί τη (δωρεάν) εφαρμογή σας Spotify.
-spotify_finding_match = Αναζήτηση του «{ $title }» στο YouTube Music…
-spotify_no_match = Δεν βρέθηκε αντιστοιχία για «{ $title }» στο YouTube Music.
-spotify_playback_note = Ο ήχος του Spotify προστατεύεται από αντιγραφή — το kopuz αναπαράγει το αντίστοιχο κομμάτι από το YouTube Music.
 sleep_timer = Χρονοδιακόπτης ύπνου
 sleep_timer_minutes = { $min } λεπτά
 sleep_timer_off = Απενεργοποίηση
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = Επιλογή…

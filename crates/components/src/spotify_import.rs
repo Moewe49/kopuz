@@ -1,15 +1,21 @@
-//! "Import from Spotify" modal. Two source paths:
+//! "Import from Spotify": paste a public playlist or album link.
 //!
-//! - **URL tab**: paste any public playlist/album link — fetched
-//!   anonymously through the Spotify embed endpoint (≈first 100
-//!   tracks, no login required).
-//! - **Account tab**: OAuth PKCE with the user's own Spotify app
-//!   client id. Lists every playlist (incl. private + Liked Songs)
-//!   and clones the selected one, fully paginated.
+//! The tracks are fetched anonymously through the `open.spotify.com/embed`
+//! page — which hands out a web-player token — and then read in full via the
+//! web player's pathfinder GraphQL endpoint. No login, no API key, no track
+//! cap. They are then matched on YT Music and recreated as a real playlist in
+//! the signed-in YT Music account, so the result shows up in the library:
+//! playable and editable like any other playlist.
 //!
-//! Either way the tracks get matched on YT Music and recreated as a
-//! real playlist in the signed-in YT Music account, so it appears in
-//! the library — playable and editable like any other playlist.
+//! There used to be a second path that connected a Spotify account over OAuth,
+//! to reach private playlists and Liked Songs. It is gone. Spotify's February
+//! 2026 Web API migration made it a dead end for an app like this: Development
+//! Mode now requires the app owner to hold Premium, caps a new app at five
+//! users, returns playlist contents *only* for playlists the user owns or
+//! collaborates on — a bare `403 Forbidden` for everything else — and lists
+//! barely any of them to begin with. The anonymous path has none of those
+//! limits and reads any public playlist completely, so it is the only one
+//! left.
 
 use dioxus::prelude::*;
 use server::spotify::{self, matcher::CloneEvent};
@@ -27,12 +33,6 @@ enum ImportPhase {
     Failed(String),
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum SourceTab {
-    Url,
-    Account,
-}
-
 #[component]
 pub fn SpotifyImportModal(
     config: Signal<config::AppConfig>,
@@ -41,17 +41,8 @@ pub fn SpotifyImportModal(
     /// refresh its YT list.
     on_imported: EventHandler,
 ) -> Element {
-    let mut tab = use_signal(|| SourceTab::Url);
     let mut url_input = use_signal(String::new);
-    let mut client_id_input =
-        use_signal(|| config.peek().spotify_client_id.clone());
     let mut phase = use_signal(|| ImportPhase::Idle);
-    // (access_token, unix_expiry_secs) for the connected account.
-    let access_token = use_signal(|| None::<(String, u64)>);
-    let mut account_playlists =
-        use_signal(|| None::<Vec<server::spotify::api::PlaylistSummary>>);
-    let mut connecting = use_signal(|| false);
-    let mut account_error = use_signal(|| None::<String>);
 
     let yt_cookies = use_memo(move || {
         config
@@ -118,119 +109,14 @@ pub fn SpotifyImportModal(
             // Anonymous fetch through the embed token. For playlists this goes
             // via the web player's pathfinder GraphQL endpoint, which reads ANY
             // public playlist in full — no login, no owning/following, no
-            // ~100-track cap (the old dev-mode REST path 403'd non-owned
-            // playlists and only the anonymous web token works here). Albums
-            // page through the REST API, then the inlined list as a fallback.
+            // ~100-track cap. Albums page through the REST API, then the
+            // inlined list as a fallback.
             match spotify::embed::fetch_public(kind, &id).await {
                 Ok(playlist) => run_import(playlist),
                 Err(e) => phase.set(ImportPhase::Failed(e)),
             }
         });
     };
-
-    // Returns a fresh access token, transparently refreshing through
-    // the stored rotating refresh token.
-    let ensure_token = move || async move {
-        let now = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        if let Some((tok, exp)) = access_token.peek().clone()
-            && exp > now + 30
-        {
-            return Ok::<String, String>(tok);
-        }
-        let (client_id, refresh) = {
-            let c = config.peek();
-            (c.spotify_client_id.clone(), c.spotify_refresh_token.clone())
-        };
-        if client_id.is_empty() || refresh.is_empty() {
-            return Err(i18n::t("spotify_not_connected"));
-        }
-        let tokens = spotify::auth::refresh_token(&client_id, &refresh).await?;
-        let mut access = access_token;
-        access.set(Some((tokens.access_token.clone(), now + tokens.expires_in)));
-        if let Some(new_refresh) = tokens.refresh_token
-            && !new_refresh.is_empty()
-        {
-            config.write().spotify_refresh_token = new_refresh;
-        }
-        Ok(tokens.access_token)
-    };
-
-    let connect_spotify = move |_| {
-        let client_id = client_id_input.peek().trim().to_string();
-        if client_id.is_empty() {
-            account_error.set(Some(i18n::t("spotify_client_id_missing")));
-            return;
-        }
-        connecting.set(true);
-        account_error.set(None);
-        spawn(async move {
-            let result = async {
-                let pending = spotify::auth::begin_pkce(&client_id)?;
-                webbrowser::open(&pending.authorize_url)
-                    .map_err(|e| format!("Browser: {e}"))?;
-                spotify::auth::finish_pkce(pending).await
-            }
-            .await;
-            connecting.set(false);
-            match result {
-                Ok(tokens) => {
-                    let now = web_time::SystemTime::now()
-                        .duration_since(web_time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let mut access = access_token;
-                    access.set(Some((tokens.access_token.clone(), now + tokens.expires_in)));
-                    {
-                        let mut c = config.write();
-                        c.spotify_client_id = client_id;
-                        if let Some(r) = tokens.refresh_token {
-                            c.spotify_refresh_token = r;
-                        }
-                    }
-                }
-                Err(e) => account_error.set(Some(e)),
-            }
-        });
-    };
-
-    let load_account_playlists = move |_| {
-        account_error.set(None);
-        spawn(async move {
-            match ensure_token().await {
-                Ok(token) => match spotify::api::list_user_playlists(&token).await {
-                    Ok(list) => account_playlists.set(Some(list)),
-                    Err(e) => account_error.set(Some(e)),
-                },
-                Err(e) => account_error.set(Some(e)),
-            }
-        });
-    };
-
-    let mut import_account_playlist = move |id: Option<String>| {
-        phase.set(ImportPhase::FetchingSource);
-        spawn(async move {
-            let result = async {
-                let token = ensure_token().await?;
-                match &id {
-                    // Not the plain API read: Spotify's Dev Mode rules 403 any
-                    // playlist the account doesn't own, so this falls back to
-                    // the anonymous web-player path for public ones.
-                    Some(pid) => spotify::fetch_playlist_for_import(&token, pid).await,
-                    None => spotify::api::fetch_liked_songs(&token).await,
-                }
-            }
-            .await;
-            match result {
-                Ok(playlist) => run_import(playlist),
-                Err(e) => phase.set(ImportPhase::Failed(e)),
-            }
-        });
-    };
-
-    let is_connected = !config.read().spotify_refresh_token.is_empty();
 
     rsx! {
         div {
@@ -321,125 +207,19 @@ pub fn SpotifyImportModal(
                         }
                     },
                     ImportPhase::Idle => rsx! {
-                        div { class: "flex gap-1 mb-4 bg-white/5 rounded-lg p-1",
-                            for (t, label_key) in [(SourceTab::Url, "spotify_tab_url"), (SourceTab::Account, "spotify_tab_account")] {
-                                button {
-                                    class: if *tab.read() == t {
-                                        "flex-1 px-3 py-1.5 rounded-md bg-white/10 text-white text-sm font-semibold"
-                                    } else {
-                                        "flex-1 px-3 py-1.5 rounded-md text-white/50 hover:text-white text-sm transition-colors"
-                                    },
-                                    onclick: move |_| tab.set(t),
-                                    {i18n::t(label_key)}
-                                }
-                            }
+                        p { class: "text-slate-400 text-xs mb-2", "{i18n::t(\"spotify_url_hint\")}" }
+                        input {
+                            class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-indigo-400 mb-3",
+                            placeholder: "https://open.spotify.com/playlist/…",
+                            value: "{url_input}",
+                            oninput: move |e| url_input.set(e.value()),
                         }
-
-                        if *tab.read() == SourceTab::Url {
-                            p { class: "text-slate-400 text-xs mb-2", "{i18n::t(\"spotify_url_hint\")}" }
-                            input {
-                                class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-indigo-400 mb-3",
-                                placeholder: "https://open.spotify.com/playlist/…",
-                                value: "{url_input}",
-                                oninput: move |e| url_input.set(e.value()),
-                            }
-                            button {
-                                class: "w-full px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors disabled:opacity-50",
-                                disabled: url_input.read().trim().is_empty() || yt_cookies.read().is_none(),
-                                onclick: import_from_url,
-                                i { class: "fa-solid fa-cloud-arrow-down mr-2" }
-                                "{i18n::t(\"spotify_import_button\")}"
-                            }
-                        } else {
-                            if !is_connected {
-                                p { class: "text-slate-400 text-xs mb-2", "{i18n::t(\"spotify_connect_hint\")}" }
-                                ol { class: "text-slate-400 text-xs mb-3 list-decimal list-inside space-y-1",
-                                    li { "developer.spotify.com → Dashboard → Create app" }
-                                    li {
-                                        "Redirect URI: "
-                                        code { class: "bg-white/10 px-1 rounded text-emerald-300", "http://127.0.0.1:8898/callback" }
-                                    }
-                                    li { "{i18n::t(\"spotify_connect_step3\")}" }
-                                }
-                                input {
-                                    class: "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-indigo-400 mb-3",
-                                    placeholder: "Client ID",
-                                    value: "{client_id_input}",
-                                    oninput: move |e| client_id_input.set(e.value()),
-                                }
-                                button {
-                                    class: "w-full px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors disabled:opacity-50",
-                                    disabled: *connecting.read() || client_id_input.read().trim().is_empty(),
-                                    onclick: connect_spotify,
-                                    if *connecting.read() {
-                                        i { class: "fa-solid fa-arrows-rotate fa-spin mr-2" }
-                                        "{i18n::t(\"spotify_waiting_browser\")}"
-                                    } else {
-                                        i { class: "fa-brands fa-spotify mr-2" }
-                                        "{i18n::t(\"spotify_connect_button\")}"
-                                    }
-                                }
-                            } else {
-                                div { class: "flex items-center justify-between mb-3",
-                                    span { class: "text-emerald-300 text-xs",
-                                        i { class: "fa-solid fa-link mr-1" }
-                                        "{i18n::t(\"spotify_connected\")}"
-                                    }
-                                    button {
-                                        class: "text-xs text-white/40 hover:text-rose-300 transition-colors",
-                                        onclick: move |_| {
-                                            let mut c = config.write();
-                                            c.spotify_refresh_token = String::new();
-                                            account_playlists.set(None);
-                                        },
-                                        "{i18n::t(\"spotify_disconnect\")}"
-                                    }
-                                }
-                                if account_playlists.read().is_none() {
-                                    button {
-                                        class: "w-full px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm font-semibold transition-colors",
-                                        onclick: load_account_playlists,
-                                        i { class: "fa-solid fa-list mr-2" }
-                                        "{i18n::t(\"spotify_load_playlists\")}"
-                                    }
-                                } else {
-                                    div { class: "space-y-1 max-h-72 overflow-y-auto",
-                                        button {
-                                            class: "w-full flex items-center justify-between px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-left transition-colors disabled:opacity-50",
-                                            disabled: yt_cookies.read().is_none(),
-                                            onclick: move |_| import_account_playlist(None),
-                                            span { class: "text-white text-sm",
-                                                i { class: "fa-solid fa-heart text-rose-400 mr-2" }
-                                                "{i18n::t(\"spotify_liked_songs\")}"
-                                            }
-                                            i { class: "fa-solid fa-cloud-arrow-down text-white/40" }
-                                        }
-                                        for pl in account_playlists.read().clone().unwrap_or_default() {
-                                            button {
-                                                key: "{pl.id}",
-                                                class: "w-full flex items-center justify-between px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-left transition-colors disabled:opacity-50",
-                                                disabled: yt_cookies.read().is_none(),
-                                                onclick: {
-                                                    let id = pl.id.clone();
-                                                    move |_| import_account_playlist(Some(id.clone()))
-                                                },
-                                                div { class: "min-w-0",
-                                                    p { class: "text-white text-sm truncate", "{pl.name}" }
-                                                    p { class: "text-white/40 text-xs",
-                                                        {i18n::t_with("track_count", &[("count", pl.track_count.to_string())])}
-                                                    }
-                                                }
-                                                i { class: "fa-solid fa-cloud-arrow-down text-white/40 shrink-0 ml-2" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(err) = account_error.read().clone() {
-                                div { class: "rounded-lg bg-rose-500/10 border border-rose-400/30 text-rose-200 text-xs p-2 mt-3 break-words",
-                                    "{err}"
-                                }
-                            }
+                        button {
+                            class: "w-full px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors disabled:opacity-50",
+                            disabled: url_input.read().trim().is_empty() || yt_cookies.read().is_none(),
+                            onclick: import_from_url,
+                            i { class: "fa-solid fa-cloud-arrow-down mr-2" }
+                            "{i18n::t(\"spotify_import_button\")}"
                         }
                     },
                 }

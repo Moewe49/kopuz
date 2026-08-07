@@ -7,6 +7,7 @@ appearance = Megjelenés
 language = Nyelv
 library = Könyvtár
 playlists = Lejátszási listák
+playlist = Lejátszási lista
 album = Album
 artist = Előadó
 home = Kezdőlap
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = URL vagy helyi útvonal az index.json-hoz
 add_radio_registry = Rádió Regiszter Hozzáadása
 radio_default_registry = Alapértelmezett Regiszter
 
-
 radio_registry_empty_path = A nyilvántartási útvonal nem lehet üres
 radio_registry_exists = A nyilvántartás már létezik
 radio_registry_import_failed = A nyilvántartás importálása sikertelen: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = Az üres mezők eltávolítják az adott címkét. Közv
 
 # Spotify import + sleep timer
 spotify_import_title = Importálás Spotify-ról
-spotify_tab_url = URL alapján
-spotify_tab_account = Spotify-fiók
-spotify_url_hint = Illessz be egy nyilvános Spotify lejátszásilista- vagy albumlinket. A link alapú importálás kb. az első 100 számot fedi le — teljes listákhoz kösd össze a fiókodat.
+spotify_url_hint = Illessz be egy nyilvános Spotify-lejátszási lista vagy album linket — a teljes számlista importálódik. Nem kell bejelentkezni.
 spotify_import_button = Importálás a YouTube Musicba
 spotify_fetching = Betöltés a Spotify-ról…
 spotify_matching = Keresés a YouTube Musicon — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = { $matched } / { $total } szám importálva. A lejátszási lista
 spotify_unmatched = { $count } számot nem sikerült párosítani
 spotify_bad_url = Ez nem tűnik Spotify lejátszásilista- vagy albumlinknek.
 spotify_needs_yt_login = Először jelentkezz be a YouTube Musicba — a klónozott lista a YT Music fiókodban jön létre.
-spotify_connect_hint = Kösd össze a saját (ingyenes) Spotify-alkalmazásodat privát listák és kedvelt számok importálásához:
-spotify_connect_step3 = Illeszd be lent az alkalmazás Client ID-ját, és csatlakozz.
-spotify_connect_button = Spotify összekötése
-spotify_waiting_browser = Várakozás a böngészős bejelentkezésre…
-spotify_connected = Spotify összekötve
-spotify_disconnect = Leválasztás
-spotify_load_playlists = Lejátszási listáim betöltése
-spotify_liked_songs = Kedvelt számok
-spotify_not_connected = A Spotify nincs összekötve.
-spotify_client_id_missing = Először add meg a Spotify-alkalmazásod Client ID-ját.
 spotify_import_from = Importálás Spotify-ról
-spotify_search_hint = Írj fentre a Spotify kereséséhez.
-spotify_searching = Keresés a Spotifyon…
-spotify_search_needs_account = A Spotify-kereséshez csatlakoztatott Spotify-fiók kell. Nyisd meg a Lejátszási listák → Importálás Spotifyból menüt, és csatlakoztasd ott a (ingyenes) Spotify-alkalmazásodat.
-spotify_finding_match = „{ $title }” keresése a YouTube Musicon…
-spotify_no_match = Nincs találat a(z) „{ $title }” számra a YouTube Musicon.
-spotify_playback_note = A Spotify hanganyaga másolásvédett — a kopuz a YouTube Music megfelelő számát játssza le.
 sleep_timer = Elalvásidőzítő
 sleep_timer_minutes = { $min } perc
 sleep_timer_off = Kikapcsolás
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = Kiválasztás…

@@ -37,7 +37,6 @@ pub mod soundcloud_search;
 pub mod toast;
 pub mod cross_source_search;
 pub mod spotify_import;
-pub mod spotify_search;
 pub mod stat_card;
 pub mod titlebar;
 pub mod track_list_view;

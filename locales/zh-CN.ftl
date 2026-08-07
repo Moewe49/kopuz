@@ -7,6 +7,7 @@ appearance = 外观
 language = 语言
 library = 媒体库
 playlists = 播放列表
+playlist = 播放列表
 album = 专辑
 artist = 艺术家
 home = 首页
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = 指向 index.json 的 URL 或本地路径
 add_radio_registry = 添加电台注册表
 radio_default_registry = 默认注册表
 
-
 radio_registry_empty_path = 注册表路径不能为空
 radio_registry_exists = 注册表已存在
 radio_registry_import_failed = 导入注册表失败: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = 留空字段将删除该标签。直接写入文件，�
 
 # Spotify import + sleep timer
 spotify_import_title = 从 Spotify 导入
-spotify_tab_url = 通过链接
-spotify_tab_account = Spotify 账号
-spotify_url_hint = 粘贴公开的 Spotify 歌单或专辑链接。链接导入约涵盖前 100 首歌曲，完整歌单请连接账号。
+spotify_url_hint = 粘贴公开的 Spotify 播放列表或专辑链接 —— 会导入完整曲目列表。无需登录。
 spotify_import_button = 导入到 YouTube Music
 spotify_fetching = 正在从 Spotify 加载…
 spotify_matching = 正在 YouTube Music 上匹配 — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = 已导入 { $matched } / { $total } 首歌曲。歌单已加入�
 spotify_unmatched = { $count } 首歌曲未能匹配
 spotify_bad_url = 这看起来不像 Spotify 歌单或专辑链接。
 spotify_needs_yt_login = 请先登录 YouTube Music — 克隆的歌单将创建在你的 YT Music 账号中。
-spotify_connect_hint = 连接你自己的 Spotify 应用（免费）以导入私密歌单和喜欢的歌曲：
-spotify_connect_step3 = 在下方粘贴应用的 Client ID 并连接。
-spotify_connect_button = 连接 Spotify
-spotify_waiting_browser = 等待浏览器登录…
-spotify_connected = Spotify 已连接
-spotify_disconnect = 断开连接
-spotify_load_playlists = 加载我的歌单
-spotify_liked_songs = 喜欢的歌曲
-spotify_not_connected = Spotify 未连接。
-spotify_client_id_missing = 请先输入你的 Spotify 应用 Client ID。
 spotify_import_from = 从 Spotify 导入
-spotify_search_hint = 在上方输入以搜索 Spotify。
-spotify_searching = 正在搜索 Spotify…
-spotify_search_needs_account = Spotify 搜索需要已连接的 Spotify 账号。打开「播放列表 → 从 Spotify 导入」，并在那里连接你的（免费）Spotify 应用。
-spotify_finding_match = 正在 YouTube Music 上查找“{ $title }”…
-spotify_no_match = 在 YouTube Music 上未找到与“{ $title }”匹配的歌曲。
-spotify_playback_note = Spotify 音频有版权保护 —— kopuz 会播放 YouTube Music 上的对应曲目。
 sleep_timer = 睡眠定时器
 sleep_timer_minutes = { $min } 分钟
 sleep_timer_off = 关闭
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = 选择…

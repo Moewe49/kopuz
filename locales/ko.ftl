@@ -7,6 +7,7 @@ appearance = 모양
 language = 언어
 library = 라이브러리
 playlists = 재생목록
+playlist = 재생목록
 album = 앨범
 artist = 아티스트
 home = 홈
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = index.json의 URL 또는 로컬 경로
 add_radio_registry = 라디오 레지스트리 추가
 radio_default_registry = 기본 레지스트리
 
-
 radio_registry_empty_path = 레지스트리 경로를 비워둘 수 없습니다
 radio_registry_exists = 레지스트리가 이미 존재합니다
 radio_registry_import_failed = 레지스트리 가져오기 실패: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = 빈 필드는 해당 태그를 제거합니다. 파일�
 
 # Spotify import + sleep timer
 spotify_import_title = Spotify에서 가져오기
-spotify_tab_url = URL로
-spotify_tab_account = Spotify 계정
-spotify_url_hint = 공개된 Spotify 재생목록 또는 앨범 링크를 붙여넣으세요. 링크 가져오기는 처음 약 100곡까지 지원합니다. 전체 재생목록은 계정을 연결하세요.
+spotify_url_hint = 공개된 Spotify 재생목록 또는 앨범 링크를 붙여넣으세요. 전체 트랙 목록을 가져옵니다. 로그인은 필요 없습니다.
 spotify_import_button = YouTube Music으로 가져오기
 spotify_fetching = Spotify에서 불러오는 중…
 spotify_matching = YouTube Music에서 검색 중 — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = { $total }곡 중 { $matched }곡을 가져왔습니다. 재생�
 spotify_unmatched = { $count }곡은 일치하는 항목을 찾지 못했습니다
 spotify_bad_url = Spotify 재생목록 또는 앨범 링크가 아닌 것 같습니다.
 spotify_needs_yt_login = 먼저 YouTube Music에 로그인하세요. 복제된 재생목록은 YT Music 계정에 생성됩니다.
-spotify_connect_hint = 비공개 재생목록과 좋아요 표시한 곡을 가져오려면 자신의 Spotify 앱(무료)을 연결하세요:
-spotify_connect_step3 = 앱의 Client ID를 아래에 붙여넣고 연결하세요.
-spotify_connect_button = Spotify 연결
-spotify_waiting_browser = 브라우저 로그인 대기 중…
-spotify_connected = Spotify 연결됨
-spotify_disconnect = 연결 해제
-spotify_load_playlists = 내 재생목록 불러오기
-spotify_liked_songs = 좋아요 표시한 곡
-spotify_not_connected = Spotify가 연결되어 있지 않습니다.
-spotify_client_id_missing = 먼저 Spotify 앱의 Client ID를 입력하세요.
 spotify_import_from = Spotify에서 가져오기
-spotify_search_hint = 위에 입력하여 Spotify를 검색하세요.
-spotify_searching = Spotify 검색 중…
-spotify_search_needs_account = Spotify 검색에는 연결된 Spotify 계정이 필요합니다. 재생목록 → Spotify에서 가져오기를 열고 거기에서 (무료) Spotify 앱을 연결하세요.
-spotify_finding_match = YouTube Music에서 “{ $title }” 찾는 중…
-spotify_no_match = YouTube Music에서 “{ $title }”와 일치하는 곡을 찾지 못했습니다.
-spotify_playback_note = Spotify 오디오는 복사 방지되어 있습니다 — kopuz는 일치하는 곡을 YouTube Music에서 재생합니다.
 sleep_timer = 수면 타이머
 sleep_timer_minutes = { $min }분
 sleep_timer_off = 끄기
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = 선택…

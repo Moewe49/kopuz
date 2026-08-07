@@ -7,6 +7,7 @@ appearance = المظهر
 language = اللغة
 library = المكتبة
 playlists = قوائم التشغيل
+playlist = قائمة تشغيل
 album = الألبوم
 artist = الفنان
 home = الرئيسية
@@ -414,7 +415,6 @@ radio_registry_url_placeholder = مسار محلي أو رابط لـ index.json
 add_radio_registry = إضافة سجل راديو
 radio_default_registry = السجل الافتراضي
 
-
 radio_registry_empty_path = لا يمكن أن يكون مسار السجل فارغًا
 radio_registry_exists = السجل موجود بالفعل
 radio_registry_import_failed = فشل استيراد السجل: { $error }
@@ -451,9 +451,7 @@ metadata_edit_warning = الحقول الفارغة تحذف الوسم. يُك�
 
 # Spotify import + sleep timer
 spotify_import_title = استيراد من Spotify
-spotify_tab_url = عبر الرابط
-spotify_tab_account = حساب Spotify
-spotify_url_hint = الصق رابطًا عامًا لقائمة تشغيل أو ألبوم من Spotify. يشمل الاستيراد عبر الرابط حوالي أول 100 أغنية — اربط حسابك للقوائم الكاملة.
+spotify_url_hint = الصق رابطًا عامًا لقائمة تشغيل أو ألبوم على Spotify — تُستورد قائمة المقاطع كاملة. لا حاجة لتسجيل الدخول.
 spotify_import_button = استيراد إلى YouTube Music
 spotify_fetching = جارٍ التحميل من Spotify…
 spotify_matching = جارٍ المطابقة على YouTube Music — { $done } / { $total }
@@ -463,23 +461,7 @@ spotify_done = تم استيراد { $matched } من أصل { $total } أغني�
 spotify_unmatched = تعذّرت مطابقة { $count } أغنية
 spotify_bad_url = لا يبدو هذا رابط قائمة تشغيل أو ألبوم من Spotify.
 spotify_needs_yt_login = سجّل الدخول إلى YouTube Music أولًا — تُنشأ القائمة المستنسخة في حساب YT Music الخاص بك.
-spotify_connect_hint = اربط تطبيق Spotify الخاص بك (مجاني) لاستيراد القوائم الخاصة والأغاني المفضلة:
-spotify_connect_step3 = الصق Client ID الخاص بالتطبيق أدناه ثم اربط.
-spotify_connect_button = ربط Spotify
-spotify_waiting_browser = في انتظار تسجيل الدخول في المتصفح…
-spotify_connected = تم ربط Spotify
-spotify_disconnect = فصل
-spotify_load_playlists = تحميل قوائم التشغيل الخاصة بي
-spotify_liked_songs = الأغاني المفضلة
-spotify_not_connected = Spotify غير مرتبط.
-spotify_client_id_missing = أدخل أولًا Client ID لتطبيق Spotify الخاص بك.
 spotify_import_from = استيراد من Spotify
-spotify_search_hint = اكتب في الأعلى للبحث في Spotify.
-spotify_searching = جارٍ البحث في Spotify…
-spotify_search_needs_account = يتطلب البحث في Spotify حساب Spotify متصلاً. افتح قوائم التشغيل ← الاستيراد من Spotify واربط هناك تطبيق Spotify (المجاني) الخاص بك.
-spotify_finding_match = جارٍ البحث عن «{ $title }» في YouTube Music…
-spotify_no_match = لم يُعثر على مطابقة لـ «{ $title }» في YouTube Music.
-spotify_playback_note = صوت Spotify محمي من النسخ — يشغّل kopuz المقطع المطابق من YouTube Music.
 sleep_timer = مؤقّت النوم
 sleep_timer_minutes = { $min } دقيقة
 sleep_timer_off = إيقاف
@@ -544,10 +526,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = اختيار…

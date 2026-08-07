@@ -148,15 +148,14 @@ pub enum MusicSource {
 /// from it at first render would always read the default instead.
 ///
 /// `Local`/`Server` mirror [`MusicSource`] (the sidebar toggle and the search
-/// dropdown stay in lockstep); `SoundCloud` and `Spotify` are overlay sources
-/// with no backend of their own.
+/// dropdown stay in lockstep); `SoundCloud` is an overlay source with no
+/// backend of its own.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SearchSource {
     #[default]
     Local,
     Server,
     SoundCloud,
-    Spotify,
 }
 
 impl SearchSource {
@@ -563,13 +562,6 @@ pub struct AppConfig {
     pub lastfm_api_secret: String,
     #[serde(default)]
     pub lastfm_session_key: String,
-    /// Spotify import (OAuth PKCE): the user's own app client id from
-    /// the Spotify developer dashboard. Empty = URL-only import.
-    #[serde(default)]
-    pub spotify_client_id: String,
-    /// Rotating PKCE refresh token for the connected Spotify account.
-    #[serde(default)]
-    pub spotify_refresh_token: String,
     /// Last source picked in the search bar's dropdown. Restored on launch so
     /// the search bar doesn't silently fall back to Local every start.
     #[serde(default)]
@@ -932,8 +924,6 @@ impl Default for AppConfig {
             lastfm_api_key: String::new(),
             lastfm_api_secret: String::new(),
             lastfm_session_key: String::new(),
-            spotify_client_id: String::new(),
-            spotify_refresh_token: String::new(),
             search_source: SearchSource::Local,
             yt_auto_refresh: false,
             yt_oauth_refresh_token: String::new(),

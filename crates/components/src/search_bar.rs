@@ -8,9 +8,7 @@ use std::time::Duration;
 
 /// Which platform the unified search bar queries. `Server` follows the
 /// configured media server (YouTube Music / Jellyfin / Subsonic); `Local`
-/// the on-disk library; `SoundCloud` the native SoundCloud search; `Spotify`
-/// Spotify's catalogue (played back through YouTube Music — Spotify audio
-/// itself is DRM-locked).
+/// the on-disk library; `SoundCloud` the native SoundCloud search.
 ///
 /// Lives in `config` because it is persisted: re-exported here so the rest of
 /// the UI keeps referring to it as `search_bar::SearchSource`.
@@ -76,7 +74,6 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
         SearchSource::Local => "local",
         SearchSource::Server => "server",
         SearchSource::SoundCloud => "soundcloud",
-        SearchSource::Spotify => "spotify",
     };
 
     rsx! {
@@ -91,7 +88,6 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
                         "local" => SearchSource::Local,
                         "server" => SearchSource::Server,
                         "soundcloud" => SearchSource::SoundCloud,
-                        "spotify" => SearchSource::Spotify,
                         _ => return,
                     };
                     source.set(picked);
@@ -116,7 +112,7 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
                         }
                         // Overlay sources render their own view and leave the
                         // configured backend alone.
-                        SearchSource::SoundCloud | SearchSource::Spotify => {}
+                        SearchSource::SoundCloud => {}
                     }
                 },
                 onkeydown: move |e| e.stop_propagation(),
@@ -129,11 +125,6 @@ fn SourceDropdown(source: Signal<SearchSource>, config: Signal<AppConfig>) -> El
                 if soundcloud_ok {
                     option { value: "soundcloud", selected: current == SearchSource::SoundCloud, "SoundCloud" }
                 }
-                // Always listed, unlike SoundCloud: Spotify search needs a
-                // connected account, and hiding the option until then would
-                // make the feature undiscoverable. The view itself explains
-                // how to connect.
-                option { value: "spotify", selected: current == SearchSource::Spotify, "Spotify" }
             }
         }
     }

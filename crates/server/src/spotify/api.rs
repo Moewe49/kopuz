@@ -1,6 +1,6 @@
-//! Thin Spotify Web API client for the PKCE-connected path. Only the
-//! read endpoints the importer needs: the user's playlist list, a
-//! playlist's tracks, and Liked Songs — all fully paginated.
+//! Thin Spotify Web API client used with the ANONYMOUS web-player token that
+//! [`super::embed`] lifts out of the embed page. Only the reads the importer
+//! needs: a playlist's items and an album's tracks, fully paginated.
 
 use std::sync::OnceLock;
 
@@ -14,14 +14,6 @@ const API: &str = "https://api.spotify.com/v1";
 pub fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| reqwest::Client::builder().build().expect("reqwest client"))
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct PlaylistSummary {
-    pub id: String,
-    pub name: String,
-    pub track_count: u64,
-    pub owner: String,
 }
 
 /// Spotify answers every error with a JSON body explaining it. Swallowing that
@@ -71,44 +63,6 @@ async fn get_json(url: &str, token: &str) -> Result<Value, String> {
     resp.json::<Value>()
         .await
         .map_err(|e| format!("Spotify API JSON: {e}"))
-}
-
-/// All playlists in the user's library (owned + followed).
-pub async fn list_user_playlists(token: &str) -> Result<Vec<PlaylistSummary>, String> {
-    let mut out = Vec::new();
-    let mut url = format!("{API}/me/playlists?limit=50");
-    loop {
-        let page = get_json(&url, token).await?;
-        if let Some(items) = page.get("items").and_then(|v| v.as_array()) {
-            for it in items {
-                let Some(id) = it.get("id").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                out.push(PlaylistSummary {
-                    id: id.to_string(),
-                    name: it
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Untitled")
-                        .to_string(),
-                    track_count: it
-                        .pointer("/tracks/total")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    owner: it
-                        .pointer("/owner/display_name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                });
-            }
-        }
-        match page.get("next").and_then(|v| v.as_str()) {
-            Some(next) => url = next.to_string(),
-            None => break,
-        }
-    }
-    Ok(out)
 }
 
 /// Every track of one album, paginated. Album track objects are simplified
@@ -189,24 +143,6 @@ pub async fn fetch_playlist(token: &str, id: &str) -> Result<SpotifyPlaylist, St
         }
     }
     Err(last_err)
-}
-
-/// The user's Liked Songs, newest first (Spotify's order).
-pub async fn fetch_liked_songs(token: &str) -> Result<SpotifyPlaylist, String> {
-    let mut tracks = Vec::new();
-    let mut url = format!("{API}/me/tracks?limit=50");
-    loop {
-        let page = get_json(&url, token).await?;
-        collect_track_items(&page, &mut tracks);
-        match page.get("next").and_then(|v| v.as_str()) {
-            Some(next) => url = next.to_string(),
-            None => break,
-        }
-    }
-    Ok(SpotifyPlaylist {
-        name: "Liked Songs".to_string(),
-        tracks,
-    })
 }
 
 fn collect_track_items(page: &Value, out: &mut Vec<SpotifyTrack>) {

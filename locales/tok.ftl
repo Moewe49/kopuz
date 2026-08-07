@@ -7,6 +7,7 @@ appearance = lukin
 language = toki
 library = poki kalama
 playlists = kulupu kalama
+playlist = kulupu kalama
 album = kulupu pi kalama sama
 artist = jan pali
 home = tomo
@@ -408,7 +409,6 @@ radio_registry_url_placeholder = URL anu nasin tawa lipu index.json
 add_radio_registry = o pana e lipu kalama ilo
 radio_default_registry = lipu pi nanpa wan
 
-
 radio_registry_empty_path = nasin pi lipu ijo li ken ala ala
 radio_registry_exists = lipu ijo li lon pini
 radio_registry_import_failed = kama jo e lipu ijo li pakala: { $error }
@@ -445,9 +445,7 @@ metadata_edit_warning = nimi ala li weka e nimi nanpa. ni li ante e lipu. sina k
 
 # Spotify import + sleep timer
 spotify_import_title = o kama jo tan ilo Spotify
-spotify_tab_url = kepeken nimi URL
-spotify_tab_account = sijelo Spotify
-spotify_url_hint = o pana e nimi URL pi kulupu kalama Spotify. kama jo kepeken nimi URL li ken e kalama 100 taso — o wan e sijelo sina tawa kulupu ale.
+spotify_url_hint = o pana e nimi URL pi kulupu kalama Spotify anu pi lipu kalama. kalama ale li kama. sina wile ala kama insa.
 spotify_import_button = o pana tawa ilo YouTube Music
 spotify_fetching = ilo li kama jo tan Spotify…
 spotify_matching = ilo li alasa lon YouTube Music — { $done } / { $total }
@@ -457,23 +455,7 @@ spotify_done = kalama { $matched } tan { $total } li kama. kulupu kalama li lon 
 spotify_unmatched = kalama { $count } li ken ala kama
 spotify_bad_url = ni li sama ala nimi URL pi kulupu kalama Spotify.
 spotify_needs_yt_login = o open lon YouTube Music. kulupu kalama sin li kama lon sijelo YT Music sina.
-spotify_connect_hint = o wan e ilo Spotify sina (mani ala) tawa kama jo pi kulupu len en kalama pona:
-spotify_connect_step3 = o pana e Client ID pi ilo sina lon anpa. o wan.
-spotify_connect_button = o wan e Spotify
-spotify_waiting_browser = ilo li awen tawa open lon ilo lukin…
-spotify_connected = Spotify li wan
-spotify_disconnect = o weka
-spotify_load_playlists = o kama jo e kulupu kalama mi
-spotify_liked_songs = kalama pona
-spotify_not_connected = Spotify li wan ala.
-spotify_client_id_missing = o pana e Client ID pi ilo Spotify sina.
 spotify_import_from = o kama jo tan Spotify
-spotify_search_hint = o sitelen lon sewi tawa alasa Spotify.
-spotify_searching = alasa Spotify…
-spotify_search_needs_account = alasa Spotify li wile e ilo Spotify sina. o open e lipu kalama, o open e “kama jo tan Spotify”, o wan e ilo Spotify sina lon ni.
-spotify_finding_match = mi alasa e “{ $title }” lon YouTube Music…
-spotify_no_match = mi lukin ala e kalama sama “{ $title }” lon YouTube Music.
-spotify_playback_note = kalama Spotify li awen tan pali sin. ni la kopuz li kalama e kalama sama tan YouTube Music.
 sleep_timer = ilo tenpo lape
 sleep_timer_minutes = tenpo lili { $min }
 sleep_timer_off = o pini
@@ -538,10 +520,6 @@ yt_login_done = Done — I have signed in
 yt_login_not_done = Not signed in yet — please finish signing in in the browser window, then click Done again.
 
 autoradio_setting = Autoplay radio when the queue ends
-
-spotify_403_follow = Spotify only lets the app import playlists you OWN or FOLLOW. Open this playlist in Spotify, tap Follow (the heart), then import again — or use “Your playlists” after following. (A Spotify restriction for personal apps, not a kopuz bug.)
-spotify_reconnect_follow = Could not follow the playlist — your Spotify connection is missing the follow permission. Click Disconnect, then Connect Spotify again (re-authorize in the browser), and retry. Kopuz will then auto-follow and import the whole playlist.
-spotify_follow_no_help = Followed the playlist, but Spotify still blocks reading its full track list for personal apps. This looks like a hard Spotify limit — only playlists you own import in full.
 
 # Added to close the parity gap with en.ftl (see scripts/check_locales.nu).
 choose_folder = o wile e ni…
