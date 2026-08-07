@@ -404,7 +404,9 @@ fn launch_update(path: &std::path::Path) {
         {
             match apply_zip_update(path) {
                 Ok(exe) => {
-                    let _ = std::process::Command::new(exe).spawn();
+                    if !relaunch_detached(&exe) {
+                        tracing::error!("updated, but could not start the new version");
+                    }
                     std::process::exit(0);
                 }
                 Err(e) => {
@@ -552,6 +554,45 @@ fn apply_zip_update_into(
     let exe = install_dir.join("kopuz.exe");
     verify_or_roll_back(&exe)?;
     Ok(exe)
+}
+
+/// Start the freshly installed binary so it outlives this process.
+///
+/// A plain `spawn` is not enough: kopuz runs inside WebView2's Windows job
+/// object, a child inherits it, and the job is torn down — killing the child —
+/// the moment we exit. That is why the update applied correctly but the app
+/// never came back on its own.
+///
+/// `CREATE_BREAKAWAY_FROM_JOB` lifts the child out of that job. Some contexts
+/// refuse the flag with "access denied" (a job that forbids breakaway, or no
+/// job at all), so fall back to a detached process and finally to a plain
+/// spawn — the same ladder `ytmusic::cdp` already uses to launch a browser.
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+fn relaunch_detached(exe: &std::path::Path) -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+
+    for flags in [
+        CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP,
+        DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+        0,
+    ] {
+        let mut cmd = std::process::Command::new(exe);
+        // Start in the install directory so the app resolves its assets the
+        // same way the launcher shortcut does.
+        if let Some(dir) = exe.parent() {
+            cmd.current_dir(dir);
+        }
+        if flags != 0 {
+            cmd.creation_flags(flags);
+        }
+        if cmd.spawn().is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Where a file about to be replaced is parked so the update can be undone.
