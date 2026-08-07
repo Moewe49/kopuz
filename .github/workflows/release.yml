@@ -48,16 +48,17 @@ jobs:
           if (Test-Path $app) {
             Compress-Archive -Path "$app/*" -DestinationPath dist/Kopuz-windows-portable.zip -Force
           }
-      # MSI/NSIS installer is best-effort: WiX packaging occasionally flakes on
-      # the runner, and the portable zip already guarantees a Windows download.
-      - name: Bundle Windows installer
-        continue-on-error: true
-        run: dx bundle --release --platform desktop --package kopuz
-      - name: Collect installers
-        shell: pwsh
-        run: |
-          Get-ChildItem -Recurse target/dx -Include *.msi,*setup*.exe -ErrorAction SilentlyContinue |
-            ForEach-Object { Copy-Item $_.FullName dist/ }
+      # The NSIS installer is deliberately NOT published any more.
+      #
+      # Running it over an existing installation cost a user their entire setup:
+      # the upgrade runs the previous uninstaller first, and %APPDATA%\temidaradev
+      # — config.json with the YouTube session, playlists.json, favorites.json —
+      # was gone afterwards. Until that is understood and fixed, shipping the
+      # installer means shipping a way to wipe people's libraries.
+      #
+      # The portable zip is the supported Windows download and the one the
+      # in-app updater applies: it only ever replaces files inside the program
+      # folder and never touches user data.
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:

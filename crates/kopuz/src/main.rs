@@ -241,16 +241,18 @@ fn pick_installer_asset(assets: &[GithubReleaseAsset]) -> Option<String> {
     }
     #[cfg(target_os = "windows")]
     {
-        // Prefer the portable .zip. It carries exactly the installed layout
-        // (kopuz.exe + assets/), so the updater can apply it over the install
+        // ONLY the portable .zip. It carries exactly the installed layout
+        // (kopuz.exe + assets/), so the updater applies it over the install
         // directory itself: no setup wizard, no path prompts, no elevation (the
-        // app installs per-user under %LOCALAPPDATA%\Programs) — and no
-        // unsigned NSIS installer for Defender's ML heuristics to flag as
-        // Trojan:Win32/Wacatac.B!ml, which is what blocked the download.
-        // The installers stay as fallbacks for installs that predate the zip.
+        // app installs per-user under %LOCALAPPDATA%\Programs).
+        //
+        // There is deliberately no installer fallback. Running the NSIS setup
+        // over an existing installation destroyed a user's %APPDATA% config —
+        // session, playlists, favourites — because the upgrade runs the old
+        // uninstaller first. An updater that can do that to someone is worse
+        // than an updater that finds nothing to do, so a release without a
+        // portable zip simply offers the release page instead.
         pick(&|n| n.contains("portable") && n.ends_with(".zip"))
-            .or_else(|| pick(&|n| n.ends_with("setup.exe")))
-            .or_else(|| pick(&|n| n.ends_with(".msi")))
     }
     #[cfg(target_os = "linux")]
     {

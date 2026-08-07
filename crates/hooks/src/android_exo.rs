@@ -238,7 +238,7 @@ fn engine_tx() -> &'static Sender<Cmd> {
                     while let Ok(cmd) = rx.try_recv() {
                         rt.block_on(handle_cmd(cmd));
                     }
-                    for ev in systemint::take_exo_events() {
+                    for ev in coalesce_events(systemint::take_exo_events()) {
                         rt.block_on(handle_event(ev));
                     }
                     // Playback stalled because nothing would resolve (almost
@@ -255,6 +255,49 @@ fn engine_tx() -> &'static Sender<Cmd> {
             });
         tx
     })
+}
+
+/// Reduce a batch of buffered ExoPlayer events to the ones that still describe
+/// reality.
+///
+/// While the app is backgrounded Android throttles this engine thread, so
+/// ExoPlayer's callbacks pile up unread — a dozen songs' worth of transitions
+/// after a long screen-off stretch. Replaying them one by one made the UI race
+/// visibly through every track that had already finished ("the old songs skip
+/// past when you come back"), and worse, ran a full look-ahead refill per stale
+/// event: a dozen pointless resolve storms before the engine caught up.
+///
+/// Only the LAST transition describes where playback actually is. Anything
+/// before it is history. An `Ended` or `Error` that arrived *before* that
+/// transition is history too — playback demonstrably moved on past it — while
+/// one that arrived *after* is still live and must be handled. `State` is pure
+/// position/duration, so only the newest matters.
+fn coalesce_events(events: Vec<ExoEvent>) -> Vec<ExoEvent> {
+    let last_transition = events
+        .iter()
+        .rposition(|e| matches!(e, ExoEvent::Transition { .. }));
+    let mut out = Vec::new();
+    let mut newest_state = None;
+    for (i, ev) in events.into_iter().enumerate() {
+        match ev {
+            ExoEvent::State { .. } => newest_state = Some(ev),
+            ExoEvent::Transition { .. } => {
+                if Some(i) == last_transition {
+                    out.push(ev);
+                }
+            }
+            // Superseded by a later transition → drop; otherwise still current.
+            ExoEvent::Ended | ExoEvent::Error { .. } => {
+                if last_transition.is_none_or(|t| i > t) {
+                    out.push(ev);
+                }
+            }
+        }
+    }
+    // State last: it only writes atomics the driver reads, and applying it after
+    // a transition keeps the freshest position/duration.
+    out.extend(newest_state);
+    out
 }
 
 fn video_id(track: &Track) -> Option<String> {
