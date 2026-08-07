@@ -24,6 +24,25 @@ pub struct PlaylistSummary {
     pub owner: String,
 }
 
+/// Spotify answers every error with a JSON body explaining it. Swallowing that
+/// and reporting only the status turned "limit=24 is above the new maximum of
+/// 10" into a bare "400 Bad Request" that took a web search to decode.
+pub(super) fn describe_error(status: reqwest::StatusCode, body: &str) -> String {
+    let detail = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.pointer("/error/message")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| body.chars().take(200).collect());
+    if detail.trim().is_empty() {
+        format!("Spotify API {status}")
+    } else {
+        format!("Spotify API {status}: {detail}")
+    }
+}
+
 async fn get_json(url: &str, token: &str) -> Result<Value, String> {
     let resp = http_client()
         .get(url)
@@ -36,31 +55,12 @@ async fn get_json(url: &str, token: &str) -> Result<Value, String> {
         return Err("Spotify token expired".into());
     }
     if !status.is_success() {
-        return Err(format!("Spotify API {status} for {url}"));
+        let body = resp.text().await.unwrap_or_default();
+        return Err(describe_error(status, &body));
     }
     resp.json::<Value>()
         .await
         .map_err(|e| format!("Spotify API JSON: {e}"))
-}
-
-/// Follow (save) a playlist into the user's library. A dev-mode app can only
-/// read the full track list of playlists the user owns or follows, so we follow
-/// first to lift the 403 on other people's public playlists. Best-effort: a
-/// failure here just means the later read may be capped.
-pub async fn follow_playlist(token: &str, id: &str) -> Result<(), String> {
-    let resp = http_client()
-        .put(format!("{API}/playlists/{id}/followers"))
-        .bearer_auth(token)
-        .header("Content-Type", "application/json")
-        .body("{\"public\":false}")
-        .send()
-        .await
-        .map_err(|e| format!("Spotify follow HTTP: {e}"))?;
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("Spotify follow {}", resp.status()))
-    }
 }
 
 /// All playlists in the user's library (owned + followed).
@@ -129,6 +129,13 @@ pub async fn fetch_album(token: &str, id: &str) -> Result<SpotifyPlaylist, Strin
 }
 
 /// Every track of one playlist, paginated 100 at a time.
+///
+/// Spotify's February/March 2026 Dev Mode migration renamed
+/// `/playlists/{id}/tracks` to `/playlists/{id}/items` and, with it, the entry
+/// key inside each page from `track` to `item`. Development Mode apps get 403
+/// on the old path — that was the "Spotify API 403 Forbidden" on import. The
+/// legacy path is still tried as a fallback because the anonymous web-player
+/// token used for public imports is not a Dev Mode app and may still serve it.
 pub async fn fetch_playlist(token: &str, id: &str) -> Result<SpotifyPlaylist, String> {
     let meta = get_json(&format!("{API}/playlists/{id}?fields=name"), token).await?;
     let name = meta
@@ -137,19 +144,41 @@ pub async fn fetch_playlist(token: &str, id: &str) -> Result<SpotifyPlaylist, St
         .unwrap_or("Spotify import")
         .to_string();
 
-    let mut tracks = Vec::new();
-    let mut url = format!(
-        "{API}/playlists/{id}/tracks?limit=100&fields=next,items(track(name,duration_ms,artists(name)))"
-    );
-    loop {
-        let page = get_json(&url, token).await?;
-        collect_track_items(&page, &mut tracks);
-        match page.get("next").and_then(|v| v.as_str()) {
-            Some(next) => url = next.to_string(),
-            None => break,
+    // (path, per-entry field) — current shape first.
+    const SHAPES: [(&str, &str); 2] = [("items", "item"), ("tracks", "track")];
+    let mut last_err = String::new();
+    for (path, field) in SHAPES {
+        let mut tracks = Vec::new();
+        let mut url = format!(
+            "{API}/playlists/{id}/{path}?limit=100&fields=next,items({field}(name,duration_ms,artists(name)))"
+        );
+        let mut ok = true;
+        loop {
+            match get_json(&url, token).await {
+                Ok(page) => {
+                    collect_track_items(&page, &mut tracks);
+                    match page.get("next").and_then(|v| v.as_str()) {
+                        Some(next) => url = next.to_string(),
+                        None => break,
+                    }
+                }
+                Err(e) => {
+                    last_err = e;
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok && !tracks.is_empty() {
+            return Ok(SpotifyPlaylist { name, tracks });
+        }
+        if ok {
+            // Reached the end with nothing in it — an empty playlist reads the
+            // same as a shape mismatch, so try the other shape before giving up.
+            last_err = "Spotify returned no tracks for this playlist".to_string();
         }
     }
-    Ok(SpotifyPlaylist { name, tracks })
+    Err(last_err)
 }
 
 /// The user's Liked Songs, newest first (Spotify's order).
@@ -175,8 +204,15 @@ fn collect_track_items(page: &Value, out: &mut Vec<SpotifyTrack>) {
         return;
     };
     for it in items {
-        // Playlist items wrap the track; local/removed entries are null.
-        let Some(track) = it.get("track").filter(|t| !t.is_null()) else {
+        // Each entry wraps the track; local/removed entries are null. The
+        // February 2026 migration renamed that wrapper from `track` to `item` —
+        // reading only the old name is what made Liked Songs come back empty
+        // and report "no tracks could be matched".
+        let Some(track) = it
+            .get("item")
+            .or_else(|| it.get("track"))
+            .filter(|t| !t.is_null())
+        else {
             continue;
         };
         push_track(track, out);
@@ -212,4 +248,69 @@ fn push_track(track: &Value, out: &mut Vec<SpotifyTrack>) {
         artists,
         duration_secs,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reads_both_the_old_and_the_new_entry_wrapper() {
+        // February 2026 renamed the per-entry wrapper from `track` to `item`.
+        // Reading only `track` is what made Liked Songs come back empty.
+        let new_shape = json!({ "items": [
+            { "item": { "name": "New", "duration_ms": 60000, "artists": [{ "name": "A" }] } }
+        ]});
+        let old_shape = json!({ "items": [
+            { "track": { "name": "Old", "duration_ms": 60000, "artists": [{ "name": "A" }] } }
+        ]});
+
+        let mut out = Vec::new();
+        collect_track_items(&new_shape, &mut out);
+        collect_track_items(&old_shape, &mut out);
+
+        let titles: Vec<&str> = out.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, vec!["New", "Old"]);
+    }
+
+    #[test]
+    fn skips_null_and_unnamed_entries_in_either_shape() {
+        let page = json!({ "items": [
+            { "item": null },
+            { "track": null },
+            {},
+            { "item": { "duration_ms": 1000 } },
+            { "item": { "name": "Kept", "duration_ms": 90000, "artists": [] } }
+        ]});
+        let mut out = Vec::new();
+        collect_track_items(&page, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].title, "Kept");
+        assert_eq!(out[0].duration_secs, 90);
+    }
+
+    #[test]
+    fn surfaces_spotifys_own_explanation_instead_of_a_bare_status() {
+        let status = reqwest::StatusCode::BAD_REQUEST;
+        let body = r#"{"error":{"status":400,"message":"Invalid limit: max 10"}}"#;
+        let msg = describe_error(status, body);
+        assert!(
+            msg.contains("Invalid limit: max 10"),
+            "the reason must reach the user, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_raw_body_when_it_is_not_the_usual_json() {
+        let msg = describe_error(reqwest::StatusCode::FORBIDDEN, "<html>nope</html>");
+        assert!(msg.contains("403"), "got: {msg}");
+        assert!(msg.contains("nope"), "got: {msg}");
+    }
+
+    #[test]
+    fn an_empty_body_still_names_the_status() {
+        let msg = describe_error(reqwest::StatusCode::FORBIDDEN, "");
+        assert!(msg.contains("403"), "got: {msg}");
+    }
 }

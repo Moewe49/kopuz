@@ -24,9 +24,12 @@ use server::spotify::{
 use crate::add_to_playlist::request_add_to_playlist;
 use crate::toast::show_toast;
 
-/// Results per type. Spotify caps this at 50; 24 keeps three full card rows
-/// without making the songs list endless.
-const SEARCH_LIMIT: u32 = 24;
+/// Results per type.
+///
+/// Spotify's February 2026 Dev Mode migration dropped `/v1/search`'s maximum
+/// `limit` from 50 to 10 (default 20 → 5). Anything above 10 comes back as a
+/// bare `400 Bad Request` — which is what made Spotify search fail outright.
+const SEARCH_LIMIT: u32 = 10;
 
 /// True when the account connection Spotify search needs is in place.
 pub fn is_connected(config: &config::AppConfig) -> bool {

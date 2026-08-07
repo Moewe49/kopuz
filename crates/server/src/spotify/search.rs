@@ -85,8 +85,12 @@ impl SearchResults {
     }
 }
 
-/// Search Spotify for `query`. `limit` applies per result type (Spotify caps
-/// it at 50).
+/// Maximum `limit` `/v1/search` accepts. Was 50 until Spotify's February 2026
+/// Dev Mode migration cut it to 10; sending more is a flat `400 Bad Request`.
+const MAX_SEARCH_LIMIT: u32 = 10;
+
+/// Search Spotify for `query`. `limit` applies per result type and is clamped
+/// to [`MAX_SEARCH_LIMIT`].
 pub async fn search(token: &str, query: &str, limit: u32) -> Result<SearchResults, String> {
     let query = query.trim();
     if query.is_empty() {
@@ -95,7 +99,7 @@ pub async fn search(token: &str, query: &str, limit: u32) -> Result<SearchResult
     let url = format!(
         "{API}/search?q={}&type=track,playlist,album&limit={}",
         urlenc(query),
-        limit.clamp(1, 50),
+        limit.clamp(1, MAX_SEARCH_LIMIT),
     );
     let resp = http_client()
         .get(&url)
@@ -110,7 +114,10 @@ pub async fn search(token: &str, query: &str, limit: u32) -> Result<SearchResult
         return Err("Spotify token expired".into());
     }
     if !status.is_success() {
-        return Err(format!("Spotify search {status}"));
+        // Spotify explains itself in the body; reporting only the status is how
+        // "limit above the maximum" reached the user as a bare 400.
+        let body = resp.text().await.unwrap_or_default();
+        return Err(super::api::describe_error(status, &body));
     }
     let json: Value = resp
         .json()
