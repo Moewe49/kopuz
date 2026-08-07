@@ -13,9 +13,19 @@ permissions:
   contents: write
 
 jobs:
-  # ---- Windows: .msi installer + portable .exe ---------------------------
+  # ---- Windows: portable .zip -------------------------------------------
   windows:
     runs-on: windows-latest
+    # Mapped to env so the signing step can test for their presence — `secrets`
+    # is not available in a step-level `if`. Empty when unconfigured, which is
+    # exactly how the signing step decides to skip itself.
+    env:
+      SIGN_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      SIGN_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      SIGN_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      SIGN_ENDPOINT: ${{ vars.SIGN_ENDPOINT }}
+      SIGN_ACCOUNT: ${{ vars.SIGN_ACCOUNT }}
+      SIGN_CERT_PROFILE: ${{ vars.SIGN_CERT_PROFILE }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -40,6 +50,35 @@ jobs:
       # produces a runnable app dir we zip as a guaranteed portable download.
       - name: Build app
         run: dx build --release --platform desktop --package kopuz
+      # Sign BEFORE zipping, so the archive carries the signed binary — that is
+      # the file the in-app updater installs and the one antivirus judges.
+      #
+      # Why this exists: Defender's ML heuristic quarantines the CI-built
+      # kopuz.exe as Trojan:Win32/Wacatac.B!ml, the documented generic false
+      # positive for unsigned Rust binaries (rust-lang/rust#88297). Locally
+      # built binaries pass; the released one does not, which made every release
+      # unusable on Windows. A signature is what earns the reputation that stops
+      # it — no code change can.
+      #
+      # Skips itself until the credentials exist, so releases keep working
+      # unsigned in the meantime. Set the three secrets (AZURE_TENANT_ID,
+      # AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) and the three repository variables
+      # (SIGN_ENDPOINT, SIGN_ACCOUNT, SIGN_CERT_PROFILE) to switch it on.
+      - name: Sign the binary
+        if: env.SIGN_CLIENT_ID != '' && env.SIGN_ACCOUNT != ''
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ env.SIGN_TENANT_ID }}
+          azure-client-id: ${{ env.SIGN_CLIENT_ID }}
+          azure-client-secret: ${{ env.SIGN_CLIENT_SECRET }}
+          endpoint: ${{ env.SIGN_ENDPOINT }}
+          trusted-signing-account-name: ${{ env.SIGN_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGN_CERT_PROFILE }}
+          files-folder: target/dx/kopuz/release/windows/app
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
       - name: Portable zip
         shell: pwsh
         run: |
