@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+tracing = "0.1"
 dioxus = { workspace = true }
 reader = { workspace = true }
 utils = { workspace = true }

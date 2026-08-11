@@ -7,6 +7,15 @@ use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use discord_presence::Presence;
+
+/// A position change larger than this between two 250ms ticks is a seek, not
+/// playback advancing.
+#[cfg(not(target_arch = "wasm32"))]
+const SEEK_JUMP_SECS: u64 = 3;
+/// Minimum seconds between seek-triggered presence pushes. Discord rate-limits
+/// activity updates; dragging the scrubber must not burn that budget.
+#[cfg(not(target_arch = "wasm32"))]
+const SEEK_RESEND_COOLDOWN: u64 = 3;
 #[cfg(not(target_arch = "wasm32"))]
 use discord_presence::cover_art;
 
@@ -96,6 +105,16 @@ pub fn use_player_task(ctrl: PlayerController) {
     let mut discord_cover_resolving_for = use_signal(String::new);
     #[cfg(not(target_arch = "wasm32"))]
     let mut discord_cover_sent = use_signal(|| false);
+    /// Playback position seen on the previous tick. A jump between two ticks
+    /// (which are 250ms apart) is a seek — Discord derives its progress bar
+    /// from the start timestamp we sent once, so without noticing the jump the
+    /// bar just keeps running from where the track *would* have been.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut last_tick_progress: Signal<u64> = use_signal(|| 0);
+    /// When the last activity was pushed. Discord rate-limits activity updates,
+    /// and dragging the scrubber would otherwise fire one per tick.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut last_presence_send: Signal<Option<web_time::Instant>> = use_signal(|| None);
     // True while the last presence update failed (Discord closed / not yet
     // started). Keeps retrying on later ticks — Presence itself throttles
     // reconnect attempts to one per 15s, so this is cheap.
@@ -635,12 +654,27 @@ pub fn use_player_task(ctrl: PlayerController) {
                             // status appears as soon as Discord launches —
                             // not only on the next song change.
                             let retry_pending = *discord_send_pending.peek();
+                            // Scrubbing inside a track changed nothing on
+                            // Discord before: the position is only ever sent as
+                            // a start timestamp, and nothing re-sent it.
+                            // Throttled because Discord rate-limits activity
+                            // updates and a drag moves the position every tick.
+                            // Compared on the RAW position, not `progress`:
+                            // for a radio stream `progress` is pinned to 0
+                            // while the clock keeps running, so comparing the
+                            // two would read every tick as a jump.
+                            let seeked = pos.as_secs().abs_diff(*last_tick_progress.peek())
+                                > SEEK_JUMP_SECS
+                                && last_presence_send
+                                    .peek()
+                                    .is_none_or(|t| t.elapsed().as_secs() >= SEEK_RESEND_COOLDOWN);
 
                             if song_changed
                                 || resumed
                                 || toggled_on
                                 || cover_just_resolved
                                 || retry_pending
+                                || seeked
                             {
                                 last_title.set(title.clone());
 
@@ -651,11 +685,18 @@ pub fn use_player_task(ctrl: PlayerController) {
                                     None
                                 };
 
-                                let sent = p
-                                    .set_now_playing(
-                                        &title, &artist, &album, progress, duration, cover_ref,
-                                    )
-                                    .is_ok();
+                                let result = p.set_now_playing(
+                                    &title, &artist, &album, progress, duration, cover_ref,
+                                );
+                                let sent = result.is_ok();
+                                if let Err(ref e) = result {
+                                    tracing::warn!("[discord] playing update failed: {e}");
+                                } else {
+                                    tracing::info!(
+                                        "[discord] playing sent at {progress}s/{duration}s (seek={seeked})"
+                                    );
+                                }
+                                last_presence_send.set(Some(web_time::Instant::now()));
                                 discord_send_pending.set(!sent);
 
                                 if sent && resolved.is_some() {
@@ -759,10 +800,14 @@ pub fn use_player_task(ctrl: PlayerController) {
                                 let album = ctrl.current_song_album.read().clone();
                                 let resolved = discord_cover_url.read().clone();
                                 match p.set_paused(&title, &artist, &album, resolved.as_deref()) {
-                                    Ok(()) => discord_send_pending.set(false),
+                                    Ok(()) => {
+                                        tracing::info!("[discord] paused sent for \"{title}\"");
+                                        last_presence_send.set(Some(web_time::Instant::now()));
+                                        discord_send_pending.set(false);
+                                    }
                                     Err(e) => {
                                         // Kept pending so the next tick retries.
-                                        eprintln!("[discord] paused update failed: {e}");
+                                        tracing::warn!("[discord] paused update failed: {e}");
                                         discord_send_pending.set(true);
                                     }
                                 }
@@ -781,6 +826,10 @@ pub fn use_player_task(ctrl: PlayerController) {
                 {
                     was_playing.set(is_playing);
                     last_discord_enabled = discord_enabled;
+                    // Every tick, so the seek check compares against the last
+                    // TICK — comparing against the last *send* would read a
+                    // minute of normal playback as a jump.
+                    last_tick_progress.set(pos.as_secs());
                 }
             }
         }
