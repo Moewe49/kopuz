@@ -98,9 +98,11 @@ jobs:
       # The portable zip is the supported Windows download and the one the
       # in-app updater applies: it only ever replaces files inside the program
       # folder and never touches user data.
+      # Draft until every platform has uploaded — see the `publish` job.
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: dist/*
           fail_on_unmatched_files: false
 
@@ -170,9 +172,11 @@ jobs:
             --output appimage
           built=$(ls -1 *.AppImage | grep -iv linuxdeploy | head -n1)
           cp "$built" dist/Kopuz-x86_64.AppImage
+      # Draft until every platform has uploaded — see the `publish` job.
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             dist/*
             scripts/install-linux.sh
@@ -212,9 +216,11 @@ jobs:
         run: |
           mkdir -p dist
           find target/dx/kopuz/release/android -name "*.apk" -exec cp {} dist/Kopuz-android.apk \;
+      # Draft until every platform has uploaded — see the `publish` job.
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: dist/Kopuz-android.apk
           fail_on_unmatched_files: false
 
@@ -224,3 +230,21 @@ jobs:
   # dialogs don't build for iOS. Producing a working .ipa needs a dedicated
   # iOS port. The `just ios-ipa-*` recipes remain for anyone who wants to
   # take that on.
+
+  # Flip the release visible only once all three platforms have uploaded.
+  #
+  # softprops/action-gh-release publishes as soon as the FIRST job uploads, and
+  # android always finishes first. For the several minutes until the Windows zip
+  # landed, the release was public as "latest" carrying only the APK — so a
+  # Windows client checking for updates in that window found no matching asset
+  # and hid its Update button entirely, offering just the release link. Keeping
+  # it a draft until the end removes that window.
+  publish:
+    needs: [windows, linux, android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
