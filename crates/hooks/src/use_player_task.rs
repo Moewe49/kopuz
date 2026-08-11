@@ -735,29 +735,43 @@ pub fn use_player_task(ctrl: PlayerController) {
                     }
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
-                    if *was_playing.peek() {
-                        if let Some(ref p) = presence {
+                    if let Some(ref p) = presence {
+                        // Send on the play→pause edge, when Discord was just
+                        // switched on while paused, AND while a previous send is
+                        // still pending.
+                        //
+                        // That last case is the fix: the *playing* path already
+                        // retried a failed send via `discord_send_pending`, the
+                        // paused path fired exactly once and swallowed the
+                        // result. One lost send — Discord restarting, the pipe
+                        // reconnecting — left the PLAYING activity sitting on the
+                        // profile, so the track never showed as paused and its
+                        // timer kept counting up. Nothing ever corrected it,
+                        // because the edge had already passed.
+                        let just_paused = *was_playing.peek();
+                        let toggled_on = discord_enabled && !last_discord_enabled;
+                        let retry_pending = *discord_send_pending.peek();
+
+                        if discord_enabled && discord_paused_enabled {
                             let title = ctrl.current_song_title.read().clone();
-                            let artist = ctrl.current_song_artist.read().clone();
-                            let album = ctrl.current_song_album.read().clone();
-                            if discord_enabled && discord_paused_enabled {
-                                let resolved = discord_cover_url.read().clone();
-                                let _ = p.set_paused(&title, &artist, &album, resolved.as_deref());
-                            } else if last_discord_enabled || !discord_paused_enabled {
-                                let _ = p.clear_activity();
-                            }
-                        }
-                    } else if let Some(ref p) = presence {
-                        if !discord_enabled && last_discord_enabled {
-                            let _ = p.clear_activity();
-                        } else if discord_enabled && !last_discord_enabled {
-                            let title = ctrl.current_song_title.read().clone();
-                            if !title.is_empty() {
+                            if (just_paused || toggled_on || retry_pending) && !title.is_empty() {
                                 let artist = ctrl.current_song_artist.read().clone();
                                 let album = ctrl.current_song_album.read().clone();
                                 let resolved = discord_cover_url.read().clone();
-                                let _ = p.set_paused(&title, &artist, &album, resolved.as_deref());
+                                match p.set_paused(&title, &artist, &album, resolved.as_deref()) {
+                                    Ok(()) => discord_send_pending.set(false),
+                                    Err(e) => {
+                                        // Kept pending so the next tick retries.
+                                        eprintln!("[discord] paused update failed: {e}");
+                                        discord_send_pending.set(true);
+                                    }
+                                }
                             }
+                        } else if just_paused || (!discord_enabled && last_discord_enabled) {
+                            // Presence off, or "show while paused" off — take the
+                            // playing activity down rather than leaving it running.
+                            let _ = p.clear_activity();
+                            discord_send_pending.set(false);
                         }
                     }
                 }

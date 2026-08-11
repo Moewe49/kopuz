@@ -15,6 +15,7 @@ use reader::PlaylistStore;
 use reader::models::Track;
 
 use crate::playlist_modal::PlaylistModal;
+use crate::toast::show_toast;
 
 /// Drop a [`Track`] here to open the add-to-playlist picker for it.
 #[derive(Clone, Copy)]
@@ -202,8 +203,14 @@ pub fn AddToPlaylistHost(
             }
         });
     };
+    // Unlike `server_add`, this used to throw the result away AND never touch
+    // the local store — so a successful create showed up nowhere until the next
+    // full resync, and a failed one said nothing at all. Both read as "creating
+    // a playlist doesn't work". Now the new playlist is inserted on success and
+    // the backend's own error is surfaced on failure.
     let mut server_create = move |name: String, track: Track| {
         let Some(item_id) = server_track_id(&track) else {
+            show_toast(i18n::t("playlist_create_unsupported"));
             return;
         };
         spawn(async move {
@@ -214,7 +221,7 @@ pub fn AddToPlaylistHost(
             let Some(token) = server.access_token.as_ref() else {
                 return;
             };
-            match server.service {
+            let created = match server.service {
                 MusicService::Jellyfin => {
                     let Some(user_id) = server.user_id.as_ref() else {
                         return;
@@ -225,7 +232,7 @@ pub fn AddToPlaylistHost(
                         &conf.device_id,
                         Some(user_id),
                     );
-                    let _ = remote.create_playlist(&name, &[item_id.as_str()]).await;
+                    remote.create_playlist(&name, &[item_id.as_str()]).await
                 }
                 MusicService::Subsonic | MusicService::Custom => {
                     let Some(user_id) = server.user_id.as_ref() else {
@@ -233,12 +240,29 @@ pub fn AddToPlaylistHost(
                     };
                     let remote =
                         server::subsonic::SubsonicClient::new(&server.url, user_id, token);
-                    let _ = remote.create_playlist(&name, &[item_id.as_str()]).await;
+                    remote.create_playlist(&name, &[item_id.as_str()]).await
                 }
                 MusicService::YtMusic => {
                     let yt = server::ytmusic::YouTubeMusicClient::with_cookies(token.clone());
-                    let _ = yt.create_playlist(&name, "", &[item_id.as_str()]).await;
+                    yt.create_playlist(&name, "", &[item_id.as_str()]).await
                 }
+            };
+            match created {
+                Ok(id) => {
+                    // Show it straight away, the way `server_add` reflects an
+                    // add — waiting for a resync looks like nothing happened.
+                    let mut store = playlist_store;
+                    store.write().jellyfin_playlists.push(
+                        reader::models::JellyfinPlaylist {
+                            id,
+                            name,
+                            tracks: vec![item_id],
+                            image_tag: None,
+                            cover_path: None,
+                        },
+                    );
+                }
+                Err(e) => show_toast(i18n::t_with("playlist_create_failed", &[("error", e)])),
             }
         });
     };
@@ -281,7 +305,7 @@ pub fn AddToPlaylistHost(
                 } else {
                     add_local(playlist_id, track_for_add.clone());
                 }
-                crate::toast::show_toast(i18n::t_with(
+                show_toast(i18n::t_with(
                     "added_to_playlist_toast",
                     &[("name", pl_name)],
                 ));
@@ -297,7 +321,7 @@ pub fn AddToPlaylistHost(
                 } else {
                     create_local(name.clone(), track_for_create.clone());
                 }
-                crate::toast::show_toast(i18n::t_with(
+                show_toast(i18n::t_with(
                     "added_to_playlist_toast",
                     &[("name", name)],
                 ));
