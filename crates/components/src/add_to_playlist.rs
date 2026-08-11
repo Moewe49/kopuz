@@ -243,8 +243,29 @@ pub fn AddToPlaylistHost(
                     remote.create_playlist(&name, &[item_id.as_str()]).await
                 }
                 MusicService::YtMusic => {
+                    // Create EMPTY, then add — deliberately two calls.
+                    //
+                    // Passing the video inline via `videoIds` creates the
+                    // playlist but silently drops the track: the playlist shows
+                    // up and is empty. (The Spotify import gets away with inline
+                    // ids because it only ever passes tracks it matched to real
+                    // YT Music *songs*; an arbitrary right-clicked track can be
+                    // a UGC video, which `playlist/create` appears to ignore.)
+                    // `edit_playlist` is the endpoint the import already relies
+                    // on for everything past its first batch, so it is the
+                    // proven one. Starting empty means no risk of duplicates.
                     let yt = server::ytmusic::YouTubeMusicClient::with_cookies(token.clone());
-                    yt.create_playlist(&name, "", &[item_id.as_str()]).await
+                    match yt.create_playlist(&name, "", &[]).await {
+                        Ok(id) => match yt.add_to_playlist(&id, &item_id).await {
+                            Ok(()) => Ok(id),
+                            // The playlist exists but is empty — say so rather
+                            // than reporting success over a half-done job.
+                            Err(e) => Err(format!(
+                                "playlist created, but the track could not be added: {e}"
+                            )),
+                        },
+                        Err(e) => Err(e),
+                    }
                 }
             };
             match created {
