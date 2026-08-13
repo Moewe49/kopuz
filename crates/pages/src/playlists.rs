@@ -22,6 +22,7 @@ pub fn PlaylistsPage(
 
     let mut selected_folder = use_signal(|| Option::<String>::None);
     let mut show_add_playlist = use_signal(|| false);
+    let mut show_share = use_signal(|| false);
     let mut playlist_name = use_signal(|| String::new());
     let mut error = use_signal(|| Option::<String>::None);
     let mut saving = use_signal(|| false);
@@ -422,6 +423,16 @@ pub fn PlaylistsPage(
                                 i { class: "fa-solid fa-folder-plus" }
                             }
                         }
+                        // Sharing is deliberately next to "new playlist": both
+                        // directions of the share dialog end in a playlist
+                        // appearing here, so this is where people look for it.
+                        button {
+                            class: "text-white/60 flex items-center hover:text-white transition-colors p-3 rounded-full hover:bg-white/10",
+                            title: "Share playlists",
+                            aria_label: "Share playlists",
+                            onclick: move |_| show_share.set(true),
+                            i { class: "fa-solid fa-share-nodes" }
+                        }
                         button {
                             class: "text-white/60 flex items-center hover:text-white transition-colors p-3 rounded-full hover:bg-white/10",
                             title: i18n::t("add_playlist").to_string(),
@@ -432,6 +443,20 @@ pub fn PlaylistsPage(
                             },
                             i { class: "fa-solid fa-add" }
                         }
+                    }
+                }
+                if show_share() {
+                    components::playlist_share::PlaylistShareModal {
+                        config,
+                        playlist_store,
+                        library,
+                        on_close: move |_| show_share.set(false),
+                        on_imported: move |_| {
+                            // An imported server playlist only exists remotely
+                            // until the list is re-fetched.
+                            let next = playlist_refresh_trigger() + 1;
+                            playlist_refresh_trigger.set(next);
+                        },
                     }
                 }
                 if show_add_playlist() {
