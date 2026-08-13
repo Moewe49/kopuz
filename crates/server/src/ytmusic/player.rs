@@ -97,17 +97,23 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     if let Some(c) = cookies {
         let uid = super::derive_user_id(c);
         // Skip the Premium decipher attempt for accounts already known to be
-        // non-Premium — but ONLY once the minter has actually produced a token.
+        // non-Premium — but ONLY while the pot path is actually delivering
+        // streams. It is a latency optimisation, and it may never cost us the
+        // one path that still works.
         //
-        // This used to test `botguard::is_available()`, which merely says a
-        // minter registered. With YouTube's BotGuard path broken the minter
-        // registers and then fails every mint, so after the first track taught
-        // us "non-Premium" this skipped the decipher attempt for the next five
-        // minutes — and ANDROID_VR (needs the pot), TVHTML5 (now SABR-only) and
-        // the bare clients all fail, so resolve ended in "ALL stream paths
-        // failed" and the track just sat at 0:00. The decipher stream that
-        // would have played was never even attempted.
-        let skip = uid.as_deref().is_some_and(known_non_premium) && botguard::has_minted();
+        // Two earlier guards were both wrong about what they proved.
+        // `is_available()` only says a minter registered. `has_minted()` only
+        // says a token came back — and a token does come back: the live log
+        // shows "ANDROID_VR+pot playability LOGIN_REQUIRED", which is the
+        // branch reached *after* a successful mint. YouTube accepts the token
+        // and bot-checks the request anyway. With TVHTML5 now SABR-only and the
+        // bare clients bot-checked too, resolve ended in "ALL stream paths
+        // failed" and tracks sat at 0:00 — while the decipher stream that would
+        // have played was skipped unattempted.
+        //
+        // So the only honest signal is whether ANDROID_VR+pot recently produced
+        // a playable stream.
+        let skip = uid.as_deref().is_some_and(known_non_premium) && pot_path_recently_worked();
         if !skip {
             match try_native_decipher(video_id, cookies).await {
                 Ok(info) if is_premium_itag(info.itag) => {
@@ -126,15 +132,16 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
                     );
                     decipher_fallback = Some(info);
                 }
-                Err(e) => tracing::warn!("[yt-player] {video_id} decipher failed ({e}) — falling back"),
+                Err(e) => {
+                    tracing::warn!("[yt-player] {video_id} decipher failed ({e}) — falling back")
+                }
             }
         }
     }
 
     // Anonymous: ANDROID_VR + content_pot. Mint + visitor_data in parallel.
     let mut last_err = {
-        let (pot, visitor) =
-            tokio::join!(botguard::mint_content_pot(video_id), visitor_data(None));
+        let (pot, visitor) = tokio::join!(botguard::mint_content_pot(video_id), visitor_data(None));
         match (pot, visitor) {
             (Ok(pot), Ok(visitor)) => {
                 let extras = PlayerExtras {
@@ -147,6 +154,7 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
                         let status = PlayabilityStatus::from_response(&json);
                         if status == PlayabilityStatus::Ok {
                             if let Some(info) = pick_plain_format(&json, ANDROID_VR_1_61_48) {
+                                remember_pot_path_worked();
                                 return Ok(info);
                             }
                             "ANDROID_VR+pot: no plain audio format".to_string()
@@ -174,17 +182,25 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     // the webview minter. Tried before the bare clients (which still 403 deep).
     match try_tv_decipher(video_id, cookies).await {
         Ok(info) => {
-            tracing::info!("[yt-player] {video_id} resolved via TVHTML5 (pot-free, deep-range safe)");
+            tracing::info!(
+                "[yt-player] {video_id} resolved via TVHTML5 (pot-free, deep-range safe)"
+            );
             return Ok(info);
         }
         Err(e) => {
             last_err = format!("TVHTML5: {e}");
-            tracing::warn!("[yt-player] {video_id} TVHTML5 fallback failed ({e}) — trying bare clients");
+            tracing::warn!(
+                "[yt-player] {video_id} TVHTML5 fallback failed ({e}) — trying bare clients"
+            );
         }
     }
 
     for client in STREAM_FALLBACK_CLIENTS {
-        let cookies_for = if client.login_supported { cookies } else { None };
+        let cookies_for = if client.login_supported {
+            cookies
+        } else {
+            None
+        };
         match innertube::player(*client, video_id, cookies_for, PlayerExtras::default()).await {
             Ok(json) => {
                 let status = PlayabilityStatus::from_response(&json);
@@ -213,6 +229,28 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     }
     tracing::error!("[yt-player] {video_id} ALL stream paths failed; last error: {last_err}");
     Err(format!("all stream paths failed; last error: {last_err}"))
+}
+
+/// When ANDROID_VR + content pot last returned a playable stream. `None` = not
+/// in this session, so the decipher attempt must never be skipped.
+static POT_PATH_OK_AT: Mutex<Option<Instant>> = Mutex::new(None);
+/// How long a working pot path is trusted before it has to prove itself again.
+const POT_PATH_TTL: Duration = Duration::from_secs(10 * 60);
+
+fn remember_pot_path_worked() {
+    if let Ok(mut at) = POT_PATH_OK_AT.lock() {
+        *at = Some(Instant::now());
+    }
+}
+
+/// Whether the pot path has produced a stream recently enough to be worth
+/// betting a track's playback on.
+fn pot_path_recently_worked() -> bool {
+    POT_PATH_OK_AT
+        .lock()
+        .ok()
+        .and_then(|at| *at)
+        .is_some_and(|at| at.elapsed() < POT_PATH_TTL)
 }
 
 /// A Premium *subscription* yields 774-class Opus and is PO-token-exempt. Any
@@ -432,7 +470,10 @@ fn stream_info_from(
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(|ms| (ms + 500) / 1000)
         });
-    let bitrate = fmt.get("bitrate").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let bitrate = fmt
+        .get("bitrate")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
     let itag = fmt.get("itag").and_then(|v| v.as_u64()).map(|v| v as u32);
     let vid = json
         .pointer("/videoDetails/videoId")
@@ -513,8 +554,8 @@ async fn try_tv_decipher(video_id: &str, cookies: Option<&str>) -> Result<YtStre
             playability_reason(&json)
         ));
     }
-    let fmt = pick_best_fetchable_audio(&json)
-        .ok_or("TVHTML5 returned only SABR-only audio formats")?;
+    let fmt =
+        pick_best_fetchable_audio(&json).ok_or("TVHTML5 returned only SABR-only audio formats")?;
     let url = decipher::deciphered_url(&player.0, fmt).await?;
     stream_info_from(&json, fmt, url, TVHTML5)
         .ok_or_else(|| "deciphered TV format missing fields".to_string())
@@ -524,6 +565,32 @@ async fn try_tv_decipher(video_id: &str, cookies: Option<&str>) -> Result<YtStre
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The guard that decides whether the decipher attempt may be skipped.
+    /// Getting this wrong costs playback entirely, which is exactly what
+    /// happened twice: tracks sat at 0:00 because the only working path was
+    /// skipped on the strength of a signal that proved something else.
+    #[test]
+    fn the_decipher_attempt_is_only_skippable_once_the_pot_path_has_delivered() {
+        // Fresh process: nothing has proven itself, so never skip.
+        assert!(
+            !pot_path_recently_worked(),
+            "with no successful pot resolve yet, decipher must always be tried",
+        );
+
+        remember_pot_path_worked();
+        assert!(pot_path_recently_worked());
+
+        // Expiry is what forces the pot path to prove itself again rather than
+        // coasting on one success from an hour ago.
+        if let Ok(mut at) = POT_PATH_OK_AT.lock() {
+            *at = Some(Instant::now() - POT_PATH_TTL - Duration::from_secs(1));
+        }
+        assert!(
+            !pot_path_recently_worked(),
+            "a stale success must stop authorising the skip",
+        );
+    }
 
     #[test]
     fn pick_plain_format_carries_bitrate_and_itag() {
@@ -559,7 +626,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "hits live YouTube + needs a system JS runtime"]
     async fn resolve_populates_bitrate_itag_duration() {
-        let info = resolve("dQw4w9WgXcQ", None).await.expect("resolve should succeed");
+        let info = resolve("dQw4w9WgXcQ", None)
+            .await
+            .expect("resolve should succeed");
         eprintln!(
             "[test] resolved itag={:?} bitrate={:?} kbps duration={:?}s",
             info.itag,
