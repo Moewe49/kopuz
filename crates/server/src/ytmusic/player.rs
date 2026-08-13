@@ -97,10 +97,17 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     if let Some(c) = cookies {
         let uid = super::derive_user_id(c);
         // Skip the Premium decipher attempt for accounts already known to be
-        // non-Premium — but only when a pot can actually be minted (the decipher
-        // stream is our fallback when it can't). Saves a /player round-trip per
-        // track once the account's tier is learned.
-        let skip = uid.as_deref().is_some_and(known_non_premium) && botguard::is_available();
+        // non-Premium — but ONLY once the minter has actually produced a token.
+        //
+        // This used to test `botguard::is_available()`, which merely says a
+        // minter registered. With YouTube's BotGuard path broken the minter
+        // registers and then fails every mint, so after the first track taught
+        // us "non-Premium" this skipped the decipher attempt for the next five
+        // minutes — and ANDROID_VR (needs the pot), TVHTML5 (now SABR-only) and
+        // the bare clients all fail, so resolve ended in "ALL stream paths
+        // failed" and the track just sat at 0:00. The decipher stream that
+        // would have played was never even attempted.
+        let skip = uid.as_deref().is_some_and(known_non_premium) && botguard::has_minted();
         if !skip {
             match try_native_decipher(video_id, cookies).await {
                 Ok(info) if is_premium_itag(info.itag) => {

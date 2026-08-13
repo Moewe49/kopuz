@@ -60,6 +60,16 @@ pub fn is_available() -> bool {
     MINTER.get().is_some()
 }
 
+/// Whether the minter has ever actually produced a token.
+///
+/// Very different from [`is_available`], which only says a minter *registered*.
+/// A registered-but-failing minter is the normal state when YouTube has broken
+/// the BotGuard path again, and treating "registered" as "works" made
+/// `player::resolve` throw away the one stream path that still resolved.
+pub fn has_minted() -> bool {
+    MINT_PROVEN.load(Ordering::Relaxed)
+}
+
 /// Mint a content-bound PO token for `video_id`. Sub-ms in steady state: the
 /// WebView negotiates the BotGuard integrity token once (pre-warmed at startup,
 /// refreshed near its TTL) and mints each content pot from it locally. Errors if
