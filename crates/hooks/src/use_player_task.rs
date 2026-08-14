@@ -345,9 +345,7 @@ pub fn use_player_task(ctrl: PlayerController) {
                                 .get(p)
                                 .map(|t| t.duration == 0)
                                 .unwrap_or(false);
-                            if needs_backfill
-                                && let Some(t) = ctrl.queue.write().get_mut(p)
-                            {
+                            if needs_backfill && let Some(t) = ctrl.queue.write().get_mut(p) {
                                 t.duration = dur_secs;
                             }
                         }
@@ -390,8 +388,11 @@ pub fn use_player_task(ctrl: PlayerController) {
                         && last_stream_prefetch_track.as_ref() != Some(&next_path)
                     {
                         last_stream_prefetch_track = Some(next_path.clone());
-                        if let Some(vid) =
-                            next_path.split(':').nth(1).filter(|s| !s.is_empty()).map(str::to_string)
+                        if let Some(vid) = next_path
+                            .split(':')
+                            .nth(1)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
                         {
                             let token = config
                                 .read()
@@ -400,8 +401,7 @@ pub fn use_player_task(ctrl: PlayerController) {
                                 .and_then(|s| s.access_token.clone())
                                 .unwrap_or_default();
                             spawn(async move {
-                                let yt =
-                                    ::server::ytmusic::YouTubeMusicClient::with_cookies(token);
+                                let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(token);
                                 yt.prewarm_stream(&vid).await;
                             });
                         }
@@ -714,65 +714,66 @@ pub fn use_player_task(ctrl: PlayerController) {
                     // otherwise report "complete" and spam play_next).
                     #[cfg(not(target_os = "android"))]
                     {
-                    let remaining_secs = duration.saturating_sub(pos_secs);
-                    let should_crossfade = duration > 0
-                        && pos_secs < duration
-                        && ctrl.should_crossfade()
-                        && ctrl.has_next_track()
-                        && remaining_secs <= config.read().crossfade_seconds as u64
-                        && crossfade_triggered_for_gen != Some(current_gen);
+                        let remaining_secs = duration.saturating_sub(pos_secs);
+                        let should_crossfade = duration > 0
+                            && pos_secs < duration
+                            && ctrl.should_crossfade()
+                            && ctrl.has_next_track()
+                            && remaining_secs <= config.read().crossfade_seconds as u64
+                            && crossfade_triggered_for_gen != Some(current_gen);
 
-                    if should_crossfade
-                        && !*ctrl.is_loading.read()
-                        && !*ctrl.skip_in_progress.read()
-                    {
-                        crossfade_triggered_for_gen = Some(current_gen);
-                        ctrl.skip_in_progress.set(true);
+                        if should_crossfade
+                            && !*ctrl.is_loading.read()
+                            && !*ctrl.skip_in_progress.read()
                         {
-                            let mut config_write = config.write();
-                            let idx = *ctrl.current_queue_index.peek();
-                            if let Some(track) = ctrl.get_track_at(idx) {
-                                let track_id = track.path.to_string_lossy().to_string();
-                                *config_write.listen_counts.entry(track_id).or_insert(0) += 1;
+                            crossfade_triggered_for_gen = Some(current_gen);
+                            ctrl.skip_in_progress.set(true);
+                            {
+                                let mut config_write = config.write();
+                                let idx = *ctrl.current_queue_index.peek();
+                                if let Some(track) = ctrl.get_track_at(idx) {
+                                    let track_id = track.path.to_string_lossy().to_string();
+                                    *config_write.listen_counts.entry(track_id).or_insert(0) += 1;
+                                }
                             }
-                        }
-                        ctrl.play_next_with_crossfade();
-                        nudge_event_loop();
-                        prev_playing = is_playing;
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            was_playing.set(is_playing);
-                            last_discord_enabled = discord_enabled;
-                        }
-                        continue;
-                    }
-
-                    let is_radio = duration == u64::MAX;
-                    let should_skip = if is_radio {
-                        false
-                    } else {
-                        ctrl.player.read().is_playback_complete()
-                            || (duration > 0 && pos.as_secs() >= duration.saturating_add(5))
-                    };
-
-                    if should_skip && !*ctrl.is_loading.read() && !*ctrl.skip_in_progress.read() {
-                        ctrl.skip_in_progress.set(true);
-                        if !is_radio && duration > 0 && last_progress_secs != duration {
-                            last_progress_secs = duration;
-                            ctrl.current_song_progress.set(duration);
-                        }
-                        {
-                            let mut config_write = config.write();
-                            let _q = ctrl.queue.peek();
-                            let idx = *ctrl.current_queue_index.peek();
-                            if let Some(track) = ctrl.get_track_at(idx) {
-                                let track_id = track.path.to_string_lossy().to_string();
-                                *config_write.listen_counts.entry(track_id).or_insert(0) += 1;
+                            ctrl.play_next_with_crossfade();
+                            nudge_event_loop();
+                            prev_playing = is_playing;
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                was_playing.set(is_playing);
+                                last_discord_enabled = discord_enabled;
                             }
+                            continue;
                         }
-                        ctrl.play_next();
-                        nudge_event_loop();
-                    }
+
+                        let is_radio = duration == u64::MAX;
+                        let should_skip = if is_radio {
+                            false
+                        } else {
+                            ctrl.player.read().is_playback_complete()
+                                || (duration > 0 && pos.as_secs() >= duration.saturating_add(5))
+                        };
+
+                        if should_skip && !*ctrl.is_loading.read() && !*ctrl.skip_in_progress.read()
+                        {
+                            ctrl.skip_in_progress.set(true);
+                            if !is_radio && duration > 0 && last_progress_secs != duration {
+                                last_progress_secs = duration;
+                                ctrl.current_song_progress.set(duration);
+                            }
+                            {
+                                let mut config_write = config.write();
+                                let _q = ctrl.queue.peek();
+                                let idx = *ctrl.current_queue_index.peek();
+                                if let Some(track) = ctrl.get_track_at(idx) {
+                                    let track_id = track.path.to_string_lossy().to_string();
+                                    *config_write.listen_counts.entry(track_id).or_insert(0) += 1;
+                                }
+                            }
+                            ctrl.play_next();
+                            nudge_event_loop();
+                        }
                     }
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
@@ -799,7 +800,16 @@ pub fn use_player_task(ctrl: PlayerController) {
                                 let artist = ctrl.current_song_artist.read().clone();
                                 let album = ctrl.current_song_album.read().clone();
                                 let resolved = discord_cover_url.read().clone();
-                                match p.set_paused(&title, &artist, &album, resolved.as_deref()) {
+                                // The position is frozen into the text, so it
+                                // has to be the position at the moment of the
+                                // pause — `pos`, read this tick.
+                                match p.set_paused(
+                                    &title,
+                                    &artist,
+                                    &album,
+                                    pos.as_secs(),
+                                    resolved.as_deref(),
+                                ) {
                                     Ok(()) => {
                                         tracing::info!("[discord] paused sent for \"{title}\"");
                                         last_presence_send.set(Some(web_time::Instant::now()));

@@ -109,6 +109,21 @@ impl Presence {
         Ok(())
     }
 
+    /// `m:ss`, or `h:mm:ss` past the hour — the shape a player shows, so a
+    /// paused position reads as a position and not as a raw number.
+    fn format_clock(total_secs: u64) -> String {
+        let (h, m, s) = (
+            total_secs / 3600,
+            (total_secs % 3600) / 60,
+            total_secs % 60,
+        );
+        if h > 0 {
+            format!("{h}:{m:02}:{s:02}")
+        } else {
+            format!("{m}:{s:02}")
+        }
+    }
+
     pub fn set_now_playing(
         &self,
         title: &str,
@@ -151,13 +166,33 @@ impl Presence {
         title: &str,
         artist: &str,
         album: &str,
+        elapsed_secs: u64,
         cover_url: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let state = format!("{artist} • Paused");
+        // Discord has no paused state, so the position goes in the TEXT.
+        //
+        // A bar that stands still is not expressible: Discord derives it from a
+        // start timestamp and renders it live against the wall clock, so any
+        // timestamp counts. Dropping the timestamps doesn't stop it either —
+        // measured behaviour is that Discord then falls back to counting from
+        // the moment the activity was set, which is why a track paused at 3:00
+        // showed a bar restarting near zero. Strictly worse than the truth.
+        //
+        // Text is the one part of an activity that holds still, so the frozen
+        // position is written there. The timestamps are sent explicitly empty
+        // rather than omitted — an omitted key can only ever mean "unchanged",
+        // and this needs to mean "there is no position to animate".
+        //
+        // Note when debugging this: the IPC client writes the frame and returns
+        // Ok without reading Discord's reply, so a rejected activity logs
+        // exactly like an accepted one. The log line proves the write, nothing
+        // more.
+        let state = format!("{artist} • Paused {}", Self::format_clock(elapsed_secs));
         let mut activity = activity::Activity::new()
             .details(title)
             .state(&state)
             .status_display_type(activity::StatusDisplayType::State)
+            .timestamps(Timestamps::new())
             .activity_type(activity::ActivityType::Listening);
 
         if let Some(url) = cover_url {
@@ -269,6 +304,7 @@ impl Presence {
         _title: &str,
         _artist: &str,
         _album: &str,
+        _elapsed_secs: u64,
         _cover_url: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
@@ -284,5 +320,26 @@ impl Presence {
 
     pub fn is_connected(&self) -> bool {
         false
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
+mod tests {
+    use super::*;
+
+    /// The paused position is the one number Discord will hold still, so it has
+    /// to read as a position rather than as a raw second count.
+    #[test]
+    fn a_paused_position_is_formatted_the_way_a_player_shows_it() {
+        assert_eq!(Presence::format_clock(0), "0:00");
+        assert_eq!(Presence::format_clock(9), "0:09");
+        assert_eq!(Presence::format_clock(184), "3:04");
+        // Seconds must stay zero-padded past the minute boundary — "3:4" would
+        // read as three minutes four seconds to nobody.
+        assert_eq!(Presence::format_clock(3 * 60 + 4), "3:04");
+        // Long mixes and audiobook chapters run past an hour.
+        assert_eq!(Presence::format_clock(3600), "1:00:00");
+        assert_eq!(Presence::format_clock(3661), "1:01:01");
+        assert_eq!(Presence::format_clock(7384), "2:03:04");
     }
 }
