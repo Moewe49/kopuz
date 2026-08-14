@@ -18,6 +18,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -56,6 +57,29 @@ class PlaybackService : MediaSessionService() {
                 /* handleAudioFocus = */ true
             )
             .setHandleAudioBecomingNoisy(true)
+            // Start playing again quickly after a seek.
+            //
+            // Media3's defaults are written for video: 2500ms of buffer before
+            // playback starts, and 5000ms before it RESUMES after a rebuffer.
+            // A seek empties the buffer, so it counts as a rebuffer — which is
+            // why skipping forward sat silent for five to six seconds. Measured
+            // on device, the decoder was back in RUNNING four milliseconds after
+            // the seek; the rest was ExoPlayer deliberately waiting.
+            //
+            // Opus at ~150 kbps needs a fraction of what a video stream does, so
+            // these come down to something a listener won't sit through. The
+            // min/max stay large: a deep buffer is what carries playback through
+            // Doze and a screen that has been off for a while.
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                        /* bufferForPlaybackMs = */ 1_000,
+                        /* bufferForPlaybackAfterRebufferMs = */ 1_500,
+                    )
+                    .build()
+            )
             // Hold a partial CPU wake lock + WiFi lock WHILE PLAYING so Doze
             // (screen off for a while) can't throttle the network/CPU — without
             // this, streaming + the look-ahead refills stalled after the screen
