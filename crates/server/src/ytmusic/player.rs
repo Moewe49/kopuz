@@ -222,8 +222,17 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
         }
     }
     if let Some(info) = decipher_fallback {
+        // Report the error that actually ended the chain.
+        //
+        // This used to guess — "no content pot available (minter not running?)"
+        // — and the guess was wrong in the case that matters. On Android the
+        // minter runs and mints fine; YouTube takes the token and bot-checks
+        // the request anyway. Reading that line cost real debugging time,
+        // because it sent the search after a minter that was never broken.
         tracing::warn!(
-            "[yt-player] {video_id} no content pot available (minter not running?) — using the non-Premium decipher stream; deep seeks may 403"
+            "[yt-player] {video_id} falling back to the non-Premium decipher stream \
+             (last error: {last_err}) — this URL is bound to the requesting session, \
+             so a fetcher without our cookies/UA will 403"
         );
         return Ok(info);
     }

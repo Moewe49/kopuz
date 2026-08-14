@@ -47,6 +47,28 @@ const FLUSH_EVERY: usize = 3;
 /// unplayable (region-locked / removed) and skipped for good.
 const MAX_RESOLVE_ATTEMPTS: u32 = 3;
 
+/// How many slots a refill may resolve back-to-back before it starts pacing.
+///
+/// Enough to get audio out and a couple of tracks queued behind it; everything
+/// past that can afford to wait. See [`RESOLVE_SPACING`].
+const BURST_FREE: usize = 3;
+
+/// Gap between resolves once a refill is past [`BURST_FREE`].
+///
+/// A cold start filled the whole look-ahead window as fast as it could — 20
+/// tracks, each trying a PO-token mint, ANDROID_VR, TVHTML5 and the bare
+/// clients before settling. That is on the order of a hundred requests to
+/// YouTube inside five seconds, which reads as exactly what it looks like:
+/// YouTube answered "Sign in to confirm you're not a bot" for every single
+/// track, and a freshly started app played nothing at all. An instance that had
+/// been running for a few minutes was fine on the same account, because tapping
+/// a song there costs *one* resolve.
+///
+/// The window is a latency optimisation. Spending eight seconds on it instead
+/// of five costs nothing anyone can hear; tripping the bot check costs
+/// playback entirely.
+const RESOLVE_SPACING: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// Canonical queue mirror — plain data, owned by the engine thread. Never a Signal.
 struct Mirror {
     tracks: Vec<Track>,
@@ -359,8 +381,9 @@ async fn resolve_item(
     let url = if let Some(local) = downloaded {
         format!("file://{local}")
     } else if let Some(vid) = video_id(track) {
-        let yt =
-            ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.clone().unwrap_or_default());
+        let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(
+            cookies.clone().unwrap_or_default(),
+        );
         match yt.get_stream(&vid).await {
             Ok(info) => info.url,
             Err(e) => {
@@ -428,7 +451,14 @@ async fn refill_window(from: usize, to: usize, cookies: &Option<String>, flush: 
     let mut pending: Vec<serde_json::Value> = Vec::new();
     let mut replace_pending = flush == Flush::Replace;
     let mut i = from;
+    let mut resolved_in_pass = 0usize;
     while i <= to && i < len {
+        // Pace everything past the first few — see [`RESOLVE_SPACING`]. The
+        // generation check below then doubles as the post-sleep re-check, since
+        // the queue can be replaced while this pass is waiting.
+        if resolved_in_pass >= BURST_FREE {
+            tokio::time::sleep(RESOLVE_SPACING).await;
+        }
         if QUEUE_GEN.load(Ordering::Acquire) != gen_at_start {
             eprintln!("[exo] refill {from}..={to} abandoned — queue changed");
             return;
@@ -464,6 +494,7 @@ async fn refill_window(from: usize, to: usize, cookies: &Option<String>, flush: 
         if pending.len() >= FLUSH_EVERY {
             send_items(std::mem::take(&mut pending), &mut replace_pending);
         }
+        resolved_in_pass += 1;
         i += 1;
     }
     if !pending.is_empty() || replace_pending {
@@ -497,7 +528,11 @@ async fn handle_cmd(cmd: Cmd) {
     // resolves (~6-40s) before ANY audio — the old song kept playing and the
     // timer didn't reset. Play track 1 after a single resolve, then fill the
     // window in the background.
-    let len = mirror().lock().unwrap_or_else(|e| e.into_inner()).tracks.len();
+    let len = mirror()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .tracks
+        .len();
     let mut first_item = None;
     let mut i = start;
     // Bounded scan: a run this long of unresolvable tracks is a *systemic*
@@ -532,7 +567,9 @@ async fn handle_cmd(cmd: Cmd) {
             clear_stall_retry();
             ENDED_DIRTY.store(true, Ordering::Release);
         } else {
-            eprintln!("[exo] nothing resolvable from {start}; retry {attempt} in {STALL_RETRY_SECS}s");
+            eprintln!(
+                "[exo] nothing resolvable from {start}; retry {attempt} in {STALL_RETRY_SECS}s"
+            );
         }
         return;
     };
@@ -554,7 +591,11 @@ async fn handle_cmd(cmd: Cmd) {
     // pre-resolve that carries a backgrounded session, so it runs to the full
     // WINDOW_AHEAD; it flushes in batches, so ExoPlayer gets its next tracks
     // within seconds rather than at the end of the whole fill.
-    eprintln!("[exo] filling window {}..={}", first + 1, first + WINDOW_AHEAD);
+    eprintln!(
+        "[exo] filling window {}..={}",
+        first + 1,
+        first + WINDOW_AHEAD
+    );
     refill_window(first + 1, first + WINDOW_AHEAD, &cookies, Flush::Append).await;
 }
 
@@ -594,8 +635,7 @@ async fn seed_autoradio() -> bool {
         let exclude: std::collections::HashSet<String> = played.into_iter().collect();
         (seeds, exclude, m.cookies.clone())
     };
-    let yt =
-        ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.unwrap_or_default());
+    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.unwrap_or_default());
     let mut radio = match yt.start_mix_multi(&seeds).await {
         Ok(t) if !t.is_empty() => t,
         _ => return false,
@@ -627,7 +667,10 @@ async fn handle_event(ev: ExoEvent) {
             let (qidx, refill_from, refill_to, cookies) = {
                 let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
                 // mediaId IS the mirror index (unique, unlike a duplicate path).
-                let qidx = media_id.parse::<usize>().ok().filter(|&q| q < m.tracks.len());
+                let qidx = media_id
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|&q| q < m.tracks.len());
                 if let Some(q) = qidx {
                     m.index = q;
                 }
@@ -643,11 +686,26 @@ async fn handle_event(ev: ExoEvent) {
             if let Some(q) = qidx {
                 set_current_index(q);
             }
-            // A clean transition means the previous failure run is over — the
-            // error counter tracks *consecutive* failures, so a track that
-            // errored once and then played fine must not be skipped outright the
-            // next time it hiccups.
-            *err_tracker().lock().unwrap_or_else(|e| e.into_inner()) = (String::new(), 0);
+            // Clear the failure run only when we actually landed somewhere ELSE.
+            //
+            // The intent — a track that hiccuped once and then played fine
+            // shouldn't be skipped later — is right, but "a transition happened"
+            // does not mean "it played fine". A re-resolve produces a transition
+            // of its own, back into the very item that just failed, and clearing
+            // here reset the counter between every failure: the retry-once guard
+            // never reached two, so a track whose URL 403s immediately looped
+            // forever at roughly one attempt every five seconds, showing the user
+            // nothing but a player that refuses to start.
+            //
+            // Landing on a different item is the honest signal that the previous
+            // run is over.
+            {
+                let mut t = err_tracker().lock().unwrap_or_else(|e| e.into_inner());
+                let landed_on = qidx.map(|q| q.to_string()).unwrap_or_default();
+                if t.0 != landed_on {
+                    *t = (String::new(), 0);
+                }
+            }
             eprintln!("[exo] transition -> qidx {qidx:?}, refill [{refill_from}..={refill_to}]");
             if refill_to >= refill_from {
                 refill_window(refill_from, refill_to, &cookies, Flush::Append).await;
