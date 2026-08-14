@@ -26,25 +26,74 @@ pub struct Presence {
     client_id: String,
     client: Mutex<Option<DiscordIpcClient>>,
     last_attempt: Mutex<Option<Instant>>,
+    /// When the pipe last carried a successful write. Drives [`Presence::drop_if_stale`].
+    last_used: Mutex<Option<Instant>>,
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 const RECONNECT_THROTTLE: Duration = Duration::from_secs(5);
+
+/// How long a connection may sit unused before it is thrown away rather than
+/// trusted. See [`Presence::drop_if_stale`] for why an unused connection is the
+/// dangerous kind.
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+const IDLE_RECONNECT: Duration = Duration::from_secs(60);
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 impl Presence {
     /// Never fails on desktop — the actual connect happens lazily on the
     /// first activity update (and is retried while Discord is closed).
     pub fn new(client_id: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let presence = Self {
+        // Deliberately does NOT connect here.
+        //
+        // It used to, "so presence shows immediately when Discord is already
+        // running" — which bought nothing (there is no activity to show until
+        // something plays) and cost the whole feature. That connection then sat
+        // unused from app start until the first song, and a connection nobody
+        // writes to is exactly the one that dies quietly. See
+        // [`Presence::drop_if_stale`].
+        //
+        // It also produced the tell-tale asymmetry: starting Discord AFTER
+        // Kopuz worked, because then the connect happened right before the
+        // first send. Starting Kopuz second showed nothing at all.
+        Ok(Self {
             client_id: client_id.to_string(),
             client: Mutex::new(None),
             last_attempt: Mutex::new(None),
+            last_used: Mutex::new(None),
+        })
+    }
+
+    /// Throw away a connection that has been idle too long, so the next call
+    /// builds a fresh one.
+    ///
+    /// Necessary because nothing here can tell a live pipe from a dead one:
+    /// this IPC client never reads Discord's replies and never answers its
+    /// PING frames, and on Windows the first write to a pipe whose far end has
+    /// gone away is buffered and reports success. A dead connection therefore
+    /// swallows updates while reporting `Ok`, which suppresses the retry that
+    /// would have healed it — silence, permanently.
+    ///
+    /// Age is the only signal available, so age is what's used.
+    fn drop_if_stale(&self) {
+        let stale = {
+            let last = self.last_used.lock().unwrap();
+            last.is_none_or(|t| t.elapsed() > IDLE_RECONNECT)
         };
-        // Best-effort eager connect so presence shows immediately when
-        // Discord is already running.
-        presence.ensure_connected();
-        Ok(presence)
+        if !stale {
+            return;
+        }
+        let mut guard = self.client.lock().unwrap();
+        if guard.is_none() {
+            return;
+        }
+        if let Some(client) = guard.as_mut() {
+            let _ = client.close();
+        }
+        *guard = None;
+        // Reconnect now rather than sitting out the throttle: this is a
+        // deliberate refresh, not a failed attempt.
+        *self.last_attempt.lock().unwrap() = None;
     }
 
     /// (Re)connect if needed. Attempts are throttled so a closed Discord
@@ -84,6 +133,7 @@ impl Presence {
         &self,
         f: impl FnOnce(&mut DiscordIpcClient) -> Result<(), Box<dyn std::error::Error>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        self.drop_if_stale();
         if !self.ensure_connected() {
             return Err("Discord is not running".into());
         }
@@ -92,7 +142,10 @@ impl Presence {
             return Err("Discord is not running".into());
         };
         match f(client) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                *self.last_used.lock().unwrap() = Some(Instant::now());
+                Ok(())
+            }
             Err(e) => {
                 eprintln!("[discord] set_activity failed (pipe likely closed): {e}");
                 let _ = client.close();
