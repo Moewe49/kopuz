@@ -44,11 +44,7 @@ impl StreamBuffer {
         Self::with_user_agent(url, is_radio, None)
     }
 
-    pub fn with_user_agent(
-        url: String,
-        is_radio: bool,
-        user_agent: Option<String>,
-    ) -> Self {
+    pub fn with_user_agent(url: String, is_radio: bool, user_agent: Option<String>) -> Self {
         let prebuffer_size = if is_radio {
             16 * 1024
         } else {
@@ -84,7 +80,13 @@ impl StreamBuffer {
 
             match client.get(&url).send().await {
                 Ok(mut response) => {
-                    eprintln!(
+                    // Via `tracing`, not `eprintln!`. On Windows the app is a
+                    // windows-subsystem binary with no console attached, so
+                    // everything written to stderr is discarded — which meant
+                    // the one line that names the HTTP status was invisible in
+                    // exactly the situation it exists for. The URL is
+                    // deliberately not logged: it carries a signature.
+                    tracing::info!(
                         "[streambuf] HTTP {} content-length={:?} content-type={:?}",
                         response.status(),
                         response.content_length(),
@@ -94,6 +96,10 @@ impl StreamBuffer {
                             .and_then(|v| v.to_str().ok())
                     );
                     if !response.status().is_success() {
+                        tracing::warn!(
+                            "[streambuf] refused with HTTP {} — nothing will play from this URL",
+                            response.status()
+                        );
                         let (lock, notify) = &*state_clone;
                         let mut state = lock.lock().await;
                         state.error = Some(format!("HTTP {}", response.status()));
@@ -113,7 +119,32 @@ impl StreamBuffer {
 
                     let mut total_buffered = 0usize;
 
-                    while let Ok(Some(chunk)) = response.chunk().await {
+                    // A mid-stream failure must not look like a finished track.
+                    //
+                    // This was `while let Ok(Some(chunk))`, which treats an
+                    // `Err` from the body exactly like the end of the stream:
+                    // the loop fell out, the block below set `done = true`, and
+                    // `error` stayed `None`. A download that died after ten
+                    // seconds — googlevideo dropping a deep range, the
+                    // connection breaking — was therefore indistinguishable
+                    // from a complete one, so the player believed the song had
+                    // ended and skipped to the next. Every track in a row.
+                    loop {
+                        let chunk = match response.chunk().await {
+                            Ok(Some(chunk)) => chunk,
+                            // Genuine end of body.
+                            Ok(None) => break,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[streambuf] stream broke after {total_buffered} bytes: {e}"
+                                );
+                                let (lock, notify) = &*state_clone;
+                                let mut state = lock.lock().await;
+                                state.error = Some(format!("stream interrupted: {e}"));
+                                notify.notify_waiters();
+                                break;
+                            }
+                        };
                         if Arc::strong_count(&state_clone) == 1 {
                             break;
                         }

@@ -52,8 +52,8 @@ impl RangeStreamSource {
         user_agent: Option<String>,
         reresolve: Option<ReResolver>,
     ) -> IoResult<Self> {
-        let ua = user_agent
-            .unwrap_or_else(|| concat!("Kopuz/", env!("CARGO_PKG_VERSION")).to_string());
+        let ua =
+            user_agent.unwrap_or_else(|| concat!("Kopuz/", env!("CARGO_PKG_VERSION")).to_string());
         let client = reqwest::blocking::Client::builder()
             .tcp_nodelay(true)
             .user_agent(ua)
@@ -70,13 +70,14 @@ impl RangeStreamSource {
             .map_err(IoError::other)?;
         let status = resp.status();
         if !status.is_success() {
-            return Err(IoError::other(format!(
-                "range probe HTTP {status}"
-            )));
+            // The very first request for a track. If this fails, nothing about
+            // the track plays — worth saying out loud rather than only handing
+            // an io::Error upward into silence.
+            tracing::warn!("[range] opening probe refused with HTTP {status} — track cannot start");
+            return Err(IoError::other(format!("range probe HTTP {status}")));
         }
-        let total_size = parse_total_size(&resp).ok_or_else(|| {
-            IoError::other("server didn't expose total size on range probe")
-        })?;
+        let total_size = parse_total_size(&resp)
+            .ok_or_else(|| IoError::other("server didn't expose total size on range probe"))?;
 
         Ok(Self {
             url,
@@ -111,6 +112,16 @@ impl RangeStreamSource {
                     return Ok(());
                 }
                 other => {
+                    // This whole path used to be silent. The errors are
+                    // descriptive and they propagate correctly, but nothing ever
+                    // wrote them anywhere: on Windows the app has no console, so
+                    // a track that refused to play left no trace at all and the
+                    // log showed only the resolver happily handing out URLs. Two
+                    // separate investigations stalled here.
+                    let desc = match &other {
+                        Ok(resp) => format!("HTTP {}", resp.status()),
+                        Err(e) => e.to_string(),
+                    };
                     // First failure (commonly a 403 from an expired googlevideo
                     // URL): try to re-resolve a fresh URL once and retry, so a
                     // mid-track URL expiry recovers instead of killing playback.
@@ -120,14 +131,24 @@ impl RangeStreamSource {
                         None
                     };
                     if let Some(new_url) = fresh {
+                        tracing::warn!(
+                            "[range] {start}-{end} {desc} — re-resolving once and retrying"
+                        );
                         self.url = new_url;
                         reresolved = true;
                         continue;
                     }
-                    let desc = match other {
-                        Ok(resp) => format!("HTTP {}", resp.status()),
-                        Err(e) => e.to_string(),
-                    };
+                    // Distinguish "never had a second chance" from "the second
+                    // chance failed too" — they point at different causes.
+                    if reresolved {
+                        tracing::warn!(
+                            "[range] {start}-{end} {desc} — failed again after re-resolve, giving up"
+                        );
+                    } else {
+                        tracing::warn!(
+                            "[range] {start}-{end} {desc} — no re-resolver available, giving up"
+                        );
+                    }
                     return Err(IoError::other(format!("range fetch {start}-{end} {desc}")));
                 }
             }
