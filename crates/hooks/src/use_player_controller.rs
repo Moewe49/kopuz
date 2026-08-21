@@ -602,16 +602,15 @@ impl PlayerController {
                         // synchronously for instant artwork. The sentinel
                         // carries the whole path; the async spawn hands it to
                         // server::soundcloud::resolve_path.
-                        let cover_url =
-                            utils::jellyfin_image::track_cover_url_with_album_fallback(
-                                &path_str,
-                                &track.album_id,
-                                "",
-                                None,
-                                800,
-                                90,
-                            )
-                            .unwrap_or_default();
+                        let cover_url = utils::jellyfin_image::track_cover_url_with_album_fallback(
+                            &path_str,
+                            &track.album_id,
+                            "",
+                            None,
+                            800,
+                            90,
+                        )
+                        .unwrap_or_default();
                         Some((format!("__SC_PENDING:{path_str}"), cover_url))
                     } else {
                         let conf = self.config.read();
@@ -746,7 +745,7 @@ impl PlayerController {
                         // bug). The queue Track + UI signal were already backfilled; meta
                         // was the missing piece.
                         let mut resolved_duration_secs = track.duration;
-                        let (stream_url, yt_format, yt_user_agent, yt_reresolve) = if let Some(
+                        let (stream_url, yt_format, yt_user_agent, yt_reresolve, yt_deep_range_safe) = if let Some(
                             video_id,
                         ) =
                             stream_url.strip_prefix("__YT_PENDING:")
@@ -818,15 +817,22 @@ impl PlayerController {
                                         let cookies = rr_cookies.clone();
                                         let handle = rr_handle.clone();
                                         Box::new(move || {
-                                            let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(
-                                                cookies.clone(),
-                                            );
+                                            let yt =
+                                                ::server::ytmusic::YouTubeMusicClient::with_cookies(
+                                                    cookies.clone(),
+                                                );
                                             handle.block_on(async {
                                                 yt.get_stream_fresh(&vid).await.ok().map(|i| i.url)
                                             })
                                         })
                                     };
-                                    (info.url, Some(info.format), Some(info.user_agent), Some(reresolve))
+                                    (
+                                        info.url,
+                                        Some(info.format),
+                                        Some(info.user_agent),
+                                        Some(reresolve),
+                                        info.deep_range_safe,
+                                    )
                                 }
                                 Err(e) => {
                                     // Same guard: a stale error must NOT post a banner
@@ -862,7 +868,7 @@ impl PlayerController {
                                             current_song_duration_for_yt.set(secs);
                                         }
                                     }
-                                    (info.url, Some(info.format), Some(info.user_agent), None)
+                                    (info.url, Some(info.format), Some(info.user_agent), None, true)
                                 }
                                 Err(e) => {
                                     if *play_generation.read() != current_gen {
@@ -878,9 +884,10 @@ impl PlayerController {
                                 }
                             }
                         } else {
-                            (stream_url, None, None, None)
+                            (stream_url, None, None, None, true)
                         };
                         let yt_format_for_blocking = yt_format;
+                        let deep_range_safe_for_blocking = yt_deep_range_safe;
                         let stream_url_for_blocking = stream_url.clone();
                         let yt_ua_for_blocking = yt_user_agent.clone();
                         let yt_reresolve_for_blocking = yt_reresolve;
@@ -891,22 +898,29 @@ impl PlayerController {
                                     true,
                                     yt_ua_for_blocking,
                                 );
-                                let (source, hint) =
-                                    decoder::from_stream_with_hint(stream, "ogg");
+                                let (source, hint) = decoder::from_stream_with_hint(stream, "ogg");
                                 Ok::<_, std::io::Error>((source, hint))
-                            } else if let Some(fmt) = yt_format_for_blocking {
+                            } else if let Some(fmt) = yt_format_for_blocking
+                                .filter(|_| deep_range_safe_for_blocking)
+                            {
                                 // YT: HTTP Range-backed source. Symphonia
                                 // can seek freely (Matroska Cues at the
                                 // end, scrub anywhere) and startup probes
                                 // only fetch the ~512 KiB they need.
+                                //
+                                // Only for URLs that actually answer deep
+                                // ranges. On the pot-less fallback the very
+                                // first thing this does — read the Cues at the
+                                // end of the file — comes back 403, so the
+                                // track never starts. Those fall through to the
+                                // linear reader below: no scrubbing, but sound.
                                 let range = utils::range_source::RangeStreamSource::new(
                                     stream_url_for_blocking,
                                     yt_ua_for_blocking,
                                     yt_reresolve_for_blocking,
                                 )?;
                                 let len = Some(range.total_size());
-                                let (source, mut hint) =
-                                    decoder::from_stream_with_len(range, len);
+                                let (source, mut hint) = decoder::from_stream_with_len(range, len);
                                 hint.with_extension(fmt.extension());
                                 Ok::<_, std::io::Error>((source, hint))
                             } else {
@@ -917,8 +931,7 @@ impl PlayerController {
                                 );
                                 stream.wait_for_total_size();
                                 let len = stream.known_total_size();
-                                let (source, hint) =
-                                    decoder::from_stream_with_len(stream, len);
+                                let (source, hint) = decoder::from_stream_with_len(stream, len);
                                 Ok::<_, std::io::Error>((source, hint))
                             }
                         })

@@ -99,16 +99,16 @@ fn resolve_blocking(
         cmd.creation_flags(0x0800_0000);
     }
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("yt-dlp spawn: {e}"))?;
+    let output = cmd.output().map_err(|e| format!("yt-dlp spawn: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stdout);
         let err = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "yt-dlp exited {}: {}",
             output.status,
-            first_line(&err).or_else(|| first_line(&stderr)).unwrap_or("no output")
+            first_line(&err)
+                .or_else(|| first_line(&stderr))
+                .unwrap_or("no output")
         ));
     }
 
@@ -140,9 +140,7 @@ fn resolve_blocking(
         ua.to_string()
     };
 
-    eprintln!(
-        "[yt-dlp] resolved {url} (format_id={format_id} ext={ext} abr={abr:?})"
-    );
+    eprintln!("[yt-dlp] resolved {url} (format_id={format_id} ext={ext} abr={abr:?})");
 
     Ok(YtStreamInfo {
         url,
@@ -152,6 +150,7 @@ fn resolve_blocking(
         duration_secs: duration.map(|d| d as u64),
         bitrate: abr.map(|kbps| (kbps * 1000.0) as u32),
         itag: format_id.parse::<u32>().ok(),
+        deep_range_safe: true,
     })
 }
 
@@ -285,7 +284,9 @@ fn download_blocking(
         return Err(format!(
             "yt-dlp download exited {}: {}",
             output.status,
-            first_line(&stderr).or_else(|| first_line(&stdout)).unwrap_or("no output")
+            first_line(&stderr)
+                .or_else(|| first_line(&stdout))
+                .unwrap_or("no output")
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -370,8 +371,7 @@ fn write_cookie_file(header: &str) -> Result<CookieFile, String> {
             continue;
         }
         // domain  include_subdomains  path  secure  expiry  name  value
-        writeln!(f, ".youtube.com\tTRUE\t/\tTRUE\t0\t{k}\t{v}")
-            .map_err(|e| e.to_string())?;
+        writeln!(f, ".youtube.com\tTRUE\t/\tTRUE\t0\t{k}\t{v}").map_err(|e| e.to_string())?;
     }
     Ok(CookieFile { path })
 }
@@ -402,9 +402,7 @@ pub fn ffmpeg_available() -> bool {
         "ffmpeg"
     };
     std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path).any(|dir| dir.join(exe).is_file())
-        })
+        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(exe).is_file()))
         .unwrap_or(false)
 }
 

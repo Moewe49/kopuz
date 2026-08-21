@@ -175,9 +175,8 @@ async fn transcode_to_stream(
         .and_then(|v| v.as_array())
         .ok_or("sc: no transcodings (track may be private/geoblocked)")?;
 
-    let is_progressive = |t: &Value| {
-        t.pointer("/format/protocol").and_then(|v| v.as_str()) == Some("progressive")
-    };
+    let is_progressive =
+        |t: &Value| t.pointer("/format/protocol").and_then(|v| v.as_str()) == Some("progressive");
     let is_mp3 = |t: &Value| {
         t.pointer("/format/mime_type")
             .and_then(|v| v.as_str())
@@ -189,9 +188,13 @@ async fn transcode_to_stream(
         .find(|t| is_progressive(t) && is_mp3(t))
         .or_else(|| transcodings.iter().find(|t| is_progressive(t)))
         .or_else(|| {
-            allow_hls.then(|| transcodings.iter().find(|t| {
-                t.pointer("/format/protocol").and_then(|v| v.as_str()) == Some("hls")
-            })).flatten()
+            allow_hls
+                .then(|| {
+                    transcodings.iter().find(|t| {
+                        t.pointer("/format/protocol").and_then(|v| v.as_str()) == Some("hls")
+                    })
+                })
+                .flatten()
         })
         .ok_or("sc: no playable transcoding (HLS-only)")?;
 
@@ -238,12 +241,17 @@ async fn transcode_to_stream(
 
     Ok(YtStreamInfo {
         url: stream_url,
-        format: if hls { AudioFormat::M4a } else { AudioFormat::Mp3 },
+        format: if hls {
+            AudioFormat::M4a
+        } else {
+            AudioFormat::Mp3
+        },
         user_agent: UA.to_string(),
         content_length,
         duration_secs,
         bitrate: None,
         itag: None,
+        deep_range_safe: true,
     })
 }
 
@@ -276,7 +284,11 @@ pub async fn native_search(query: &str, limit: usize) -> Result<Vec<Track>, Stri
         let cid = client_id().await?;
         let resp = http()
             .get(format!("{API}/search/tracks"))
-            .query(&[("q", query), ("limit", limit.as_str()), ("client_id", cid.as_str())])
+            .query(&[
+                ("q", query),
+                ("limit", limit.as_str()),
+                ("client_id", cid.as_str()),
+            ])
             .header(reqwest::header::USER_AGENT, UA)
             .send()
             .await
@@ -328,7 +340,13 @@ fn tracks_from_collection(val: &Value) -> Vec<Track> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(upgrade_artwork);
-        out.push(super::build_track(permalink, title, user, duration, artwork.as_deref()));
+        out.push(super::build_track(
+            permalink,
+            title,
+            user,
+            duration,
+            artwork.as_deref(),
+        ));
     }
     out
 }

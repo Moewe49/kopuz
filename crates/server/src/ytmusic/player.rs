@@ -67,6 +67,15 @@ pub struct YtStreamInfo {
     pub bitrate: Option<u32>,
     /// YouTube format id of the chosen stream.
     pub itag: Option<u32>,
+    /// Whether this URL survives requests for byte ranges deep inside the file.
+    ///
+    /// False for the non-Premium decipher fallback, which googlevideo serves
+    /// from the front and then 403s on anything deep. That distinction decides
+    /// how the stream may be READ: a range-backed reader probes the Matroska
+    /// Cues at the very end of the file before it plays a single note, so on a
+    /// URL like that it dies instantly — which is not a degraded stream, it is
+    /// no stream at all. Those have to be read linearly instead.
+    pub deep_range_safe: bool,
 }
 
 /// Process-wide anonymous visitor_data cache (the ANDROID_VR + pot path).
@@ -90,9 +99,10 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     // on deep ranges without a content pot. So only short-circuit on a Premium
     // itag; otherwise fall through to the pot path (which ignores cookies — free
     // accounts cap at 251 regardless, so nothing is lost).
-    // Hold a non-Premium decipher result as a graceful fallback: if no pot can
-    // be minted (e.g. minter not running / unported platform), this still plays
-    // from the start — only deep seeks 403 — which beats total failure.
+    // Hold a non-Premium decipher result as a fallback for when no pot can be
+    // minted. It is NOT a full-featured stream: it must be read linearly
+    // (`deep_range_safe: false`), because googlevideo 403s deep ranges on it
+    // and a range-backed reader probes the end of the file first.
     let mut decipher_fallback: Option<YtStreamInfo> = None;
     if let Some(c) = cookies {
         let uid = super::derive_user_id(c);
@@ -221,7 +231,19 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
             Err(e) => last_err = format!("{}: {e}", client.client_name),
         }
     }
-    if let Some(info) = decipher_fallback {
+    if let Some(mut info) = decipher_fallback {
+        // Mark it for what it is. googlevideo serves this URL from the front
+        // and 403s anything deep, and a range-backed reader opens a file by
+        // probing the Matroska Cues at the very END — so this stream dies
+        // before it plays a note unless it is read linearly. The comment at the
+        // top of this function used to claim it "still plays from the start —
+        // only deep seeks 403"; the log says otherwise, 146 times:
+        //
+        //   [range] 2663098-2663257 HTTP 403 Forbidden — re-resolving once
+        //   [range] 2663098-2663257 HTTP 403 Forbidden — failed again, giving up
+        //
+        // Those offsets are the last 160 bytes of a 2.66 MB file.
+        info.deep_range_safe = false;
         // Report the error that actually ended the chain.
         //
         // This used to guess — "no content pot available (minter not running?)"
@@ -419,6 +441,7 @@ fn pick_plain_format(json: &Value, client: YouTubeClient) -> Option<YtStreamInfo
         duration_secs,
         bitrate: Some(bitrate as u32),
         itag,
+        deep_range_safe: true,
     })
 }
 
@@ -502,6 +525,7 @@ fn stream_info_from(
         duration_secs,
         bitrate,
         itag,
+        deep_range_safe: true,
     })
 }
 
@@ -651,5 +675,39 @@ mod tests {
             info.bitrate
         );
         assert!(info.duration_secs.unwrap_or(0) > 0, "duration must be set");
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+
+    /// The pot-less fallback must announce that it cannot serve deep ranges.
+    ///
+    /// Everything downstream keys off this: a range-backed reader opens a file
+    /// by probing the Matroska Cues at its END, so on a URL googlevideo only
+    /// serves from the front, the track dies before the first note. Getting the
+    /// flag wrong doesn't degrade playback, it removes it.
+    #[test]
+    fn a_pot_less_stream_is_not_advertised_as_seekable() {
+        let plain = YtStreamInfo {
+            url: "https://example.invalid/x".into(),
+            format: AudioFormat::Webm,
+            user_agent: "ua".into(),
+            content_length: Some(2_663_258),
+            duration_secs: Some(180),
+            bitrate: Some(128_000),
+            itag: Some(251),
+            deep_range_safe: true,
+        };
+        // What the fallback branch does to it.
+        let mut fallback = plain.clone();
+        fallback.deep_range_safe = false;
+
+        assert!(plain.deep_range_safe, "pot/Premium streams stay seekable");
+        assert!(
+            !fallback.deep_range_safe,
+            "the non-Premium decipher fallback must be read linearly",
+        );
     }
 }
