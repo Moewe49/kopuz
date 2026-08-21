@@ -38,7 +38,7 @@ object PotMinter {
 
     // Implemented in Rust (player::systemint::android). reqId echoes the request;
     // a non-empty pot is success, otherwise err carries the JS error/stack.
-    @JvmStatic external fun nativeOnPot(reqId: Long, pot: String, err: String)
+    @JvmStatic external fun nativeOnPot(reqId: Long, pot: String, vd: String, err: String)
 
     private const val DESKTOP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -180,8 +180,11 @@ object PotMinter {
                 val id = o.optLong("id", -1L)
                 if (id < 0) return
                 val pot = o.optString("pot", "")
+                // Session the token was minted under; the player request must
+                // present the same one or the token is rejected as a bot.
+                val vd = o.optString("vd", "")
                 val err = o.optString("err", "")
-                nativeOnPot(id, pot, err)
+                nativeOnPot(id, pot, vd, err)
             } catch (e: Exception) {
                 // Malformed message — ignore.
             }

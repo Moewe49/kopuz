@@ -114,7 +114,13 @@ window.__kopuzMint = async function(videoId, reqId) {{
   try {{
     var minter = await window.__kopuzEnsureMinter();
     var pot = await minter.mintAsWebsafeString(videoId);
-    send({{pot: (pot || '') + ''}});
+    // Report the visitor_data of the session that produced the integrity
+    // token. The player request has to present THIS one: a pot minted under
+    // one anonymous session and presented under another is not a valid pot,
+    // and YouTube answers that with "Sign in to confirm you're not a bot".
+    var vd = '';
+    try {{ vd = (window.ytcfg && window.ytcfg.get && window.ytcfg.get('VISITOR_DATA')) || ''; }} catch (e) {{}}
+    send({{pot: (pot || '') + '', vd: vd + ''}});
   }} catch (e) {{
     window.__kopuzMinter = null; window.__kopuzMinterExp = 0;
     send({{err: (e && e.stack) ? e.stack : ('' + e)}});

@@ -153,9 +153,19 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     let mut last_err = {
         let (pot, visitor) = tokio::join!(botguard::mint_content_pot(video_id), visitor_data(None));
         match (pot, visitor) {
-            (Ok(pot), Ok(visitor)) => {
+            (Ok(minted), Ok(visitor)) => {
+                // Present the session the pot was minted under, not our own.
+                //
+                // Both the minter WebView and this request are anonymous, which
+                // made them look interchangeable — they are not. The WebView has
+                // its own visitor_data, and `visitor_data(None)` fetches a
+                // SECOND, unrelated anonymous identity. So the token said one
+                // session and the request said another, and YouTube called that
+                // what it looks like: a bot. Falling back to ours when the page
+                // exposed none keeps the old behaviour rather than failing.
+                let visitor = minted.visitor_data.as_deref().unwrap_or(visitor);
                 let extras = PlayerExtras {
-                    content_pot: Some(&pot),
+                    content_pot: Some(&minted.pot),
                     visitor_data: Some(visitor),
                     signature_timestamp: None,
                 };

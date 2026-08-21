@@ -14,11 +14,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::{mpsc, oneshot};
 
+/// A minted token together with the session it was minted under.
+///
+/// The pair matters more than either half: a content pot is only valid to the
+/// session that produced the integrity token behind it. Handing back the pot
+/// alone let the caller pick its own `visitor_data`, and a mismatched pair is
+/// indistinguishable from a forged one — which is exactly what YouTube says
+/// when it answers "Sign in to confirm you're not a bot".
+#[derive(Debug, Clone)]
+pub struct MintedPot {
+    pub pot: String,
+    /// `None` when the page didn't expose one; the caller then falls back to
+    /// its own, accepting the mismatch rather than failing outright.
+    pub visitor_data: Option<String>,
+}
+
 /// One mint job: a `video_id` to bind the content pot to, and a one-shot for
-/// the result (the base64url pot, or an error string).
+/// the result (the minted pot plus its session, or an error string).
 pub struct MintRequest {
     pub video_id: String,
-    pub reply: oneshot::Sender<Result<String, String>>,
+    pub reply: oneshot::Sender<Result<MintedPot, String>>,
 }
 
 static MINTER: OnceLock<mpsc::UnboundedSender<MintRequest>> = OnceLock::new();
@@ -74,7 +89,7 @@ pub fn has_minted() -> bool {
 /// WebView negotiates the BotGuard integrity token once (pre-warmed at startup,
 /// refreshed near its TTL) and mints each content pot from it locally. Errors if
 /// no minter is registered (anon YT Music not selected) or the WebView failed.
-pub async fn mint_content_pot(video_id: &str) -> Result<String, String> {
+pub async fn mint_content_pot(video_id: &str) -> Result<MintedPot, String> {
     let tx = MINTER
         .get()
         .ok_or_else(|| "PO token minter not running — select a YouTube Music server".to_string())?;

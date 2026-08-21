@@ -45,7 +45,8 @@ pub fn request() {
     WANT.store(true, Ordering::Relaxed);
 }
 
-type Pending = Rc<RefCell<HashMap<u64, tokio::sync::oneshot::Sender<Result<String, String>>>>>;
+type PotReply = tokio::sync::oneshot::Sender<Result<server::ytmusic::botguard::MintedPot, String>>;
+type Pending = Rc<RefCell<HashMap<u64, PotReply>>>;
 
 /// The live minter, kept on the main thread for the app's lifetime.
 struct Minter {
@@ -64,7 +65,6 @@ thread_local! {
     static INSTALLED: Cell<bool> = const { Cell::new(false) };
     static STATE: RefCell<Option<Minter>> = const { RefCell::new(None) };
 }
-
 
 /// Create the minter WebView once an anon YT Music server is active and register
 /// its channel with `botguard`. Called every event-loop tick from
@@ -120,7 +120,14 @@ pub fn install_if_wanted<T: 'static>(target: &EventLoopWindowTarget<T>) {
                 return;
             };
             let result = match v.get("pot").and_then(|p| p.as_str()) {
-                Some(pot) => Ok(pot.to_string()),
+                Some(pot) => Ok(server::ytmusic::botguard::MintedPot {
+                    pot: pot.to_string(),
+                    visitor_data: v
+                        .get("vd")
+                        .and_then(|d| d.as_str())
+                        .filter(|d| !d.is_empty())
+                        .map(|d| d.to_string()),
+                }),
                 None => Err(v
                     .get("err")
                     .and_then(|e| e.as_str())

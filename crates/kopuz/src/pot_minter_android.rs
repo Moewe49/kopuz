@@ -61,7 +61,14 @@ pub fn start(cookies: String) {
             };
             rt.block_on(async move {
                 while let Some(req) = rx.recv().await {
-                    let result = player::systemint::mint_pot(&req.video_id).await;
+                    let result = player::systemint::mint_pot(&req.video_id).await.map(
+                        |(pot, visitor_data)| botguard::MintedPot {
+                            pot,
+                            // Empty means the page exposed none; the resolver
+                            // then keeps its own and accepts the mismatch.
+                            visitor_data: (!visitor_data.is_empty()).then_some(visitor_data),
+                        },
+                    );
                     let _ = req.reply.send(result);
                 }
             });

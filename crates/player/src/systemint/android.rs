@@ -379,10 +379,8 @@ fn hex_val(b: u8) -> u8 {
 // mirrors the macOS CFRunLoopTimer heartbeat; it runs on its own OS thread, so
 // it's independent of the suspended event loop (the foreground MusicService
 // keeps the process — and this thread — alive). Costs nothing when paused.
-static HEARTBEAT_PLAYING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-static HEARTBEAT_STARTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static HEARTBEAT_PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HEARTBEAT_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn ensure_heartbeat() {
     use std::sync::atomic::Ordering;
@@ -706,10 +704,10 @@ static POT_INIT_DONE: AtomicBool = AtomicBool::new(false);
 static POT_REQ_ID: AtomicU64 = AtomicU64::new(1);
 /// Set once the WebView has actually returned a token — widens the mint bound.
 static POT_PROVEN: AtomicBool = AtomicBool::new(false);
-static POT_PENDING: OnceLock<Mutex<HashMap<u64, oneshot::Sender<Result<String, String>>>>> =
-    OnceLock::new();
+type PotReply = oneshot::Sender<Result<(String, String), String>>;
+static POT_PENDING: OnceLock<Mutex<HashMap<u64, PotReply>>> = OnceLock::new();
 
-fn pot_pending() -> &'static Mutex<HashMap<u64, oneshot::Sender<Result<String, String>>>> {
+fn pot_pending() -> &'static Mutex<HashMap<u64, PotReply>> {
     POT_PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -762,7 +760,7 @@ pub fn pot_minter_init(script: &str, cookies: &str) {
 }
 
 /// Mint a content PO token for `video_id` via the WebView; awaits the reply.
-pub async fn mint_pot(video_id: &str) -> Result<String, String> {
+pub async fn mint_pot(video_id: &str) -> Result<(String, String), String> {
     let id = POT_REQ_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = oneshot::channel();
     if let Ok(mut m) = pot_pending().lock() {
@@ -834,20 +832,27 @@ fn pot_minter_mint_jni(video_id: &str, req_id: u64) {
     }
 }
 
-// Called from Kotlin: PotMinter.nativeOnPot(reqId, pot, err) — a non-empty pot is
-// success; otherwise `err` carries the JS error/stack.
+// Called from Kotlin: PotMinter.nativeOnPot(reqId, pot, vd, err) — a non-empty
+// pot is success; otherwise `err` carries the JS error/stack.
+//
+// `vd` is the visitor_data of the WebView session the token was minted under.
+// It travels WITH the pot because the two are only valid together: presenting a
+// token from one anonymous session under another is what YouTube rejects as
+// "Sign in to confirm you're not a bot". Empty when the page exposed none.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_temidaradev_kopuz_PotMinter_nativeOnPot(
     mut env: JNIEnv,
     _class: JClass,
     req_id: jni::sys::jlong,
     pot: JString,
+    vd: JString,
     err: JString,
 ) {
     let pot_s: String = env.get_string(&pot).map(|s| s.into()).unwrap_or_default();
+    let vd_s: String = env.get_string(&vd).map(|s| s.into()).unwrap_or_default();
     let err_s: String = env.get_string(&err).map(|s| s.into()).unwrap_or_default();
     let result = if !pot_s.is_empty() {
-        Ok(pot_s)
+        Ok((pot_s, vd_s))
     } else if !err_s.is_empty() {
         Err(err_s)
     } else {
@@ -1037,7 +1042,9 @@ pub fn exo_stop() {
 pub fn exo_position() -> i64 {
     let mut out = -1i64;
     call_playback_service(|env, class| {
-        out = env.call_static_method(class, "cmdPosition", "()J", &[])?.j()?;
+        out = env
+            .call_static_method(class, "cmdPosition", "()J", &[])?
+            .j()?;
         Ok(())
     });
     out
@@ -1052,7 +1059,10 @@ pub extern "system" fn Java_com_temidaradev_kopuz_PlaybackService_nativeOnTransi
     media_id: JString,
     index: jni::sys::jint,
 ) {
-    let media_id: String = env.get_string(&media_id).map(|s| s.into()).unwrap_or_default();
+    let media_id: String = env
+        .get_string(&media_id)
+        .map(|s| s.into())
+        .unwrap_or_default();
     push_exo_event(ExoEvent::Transition { media_id, index });
 }
 
@@ -1086,6 +1096,9 @@ pub extern "system" fn Java_com_temidaradev_kopuz_PlaybackService_nativeOnError(
     media_id: JString,
     code: jni::sys::jint,
 ) {
-    let media_id: String = env.get_string(&media_id).map(|s| s.into()).unwrap_or_default();
+    let media_id: String = env
+        .get_string(&media_id)
+        .map(|s| s.into())
+        .unwrap_or_default();
     push_exo_event(ExoEvent::Error { media_id, code });
 }
