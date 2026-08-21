@@ -3,11 +3,15 @@
 //! - **Premium (cookies):** WEB_REMIX + native sig/n decipher → Premium itags
 //!   (~270 kbps), no PO token — an authenticated session is its own
 //!   proof-of-origin.
-//! - **Anonymous:** ANDROID_VR + a content-bound PO token minted by the in-app
-//!   WebView (`botguard`). Anon googlevideo URLs 403 on deep/seek ranges
-//!   without it; ANDROID_VR's plain URLs + the pot sustain full tracks.
-//! - **Last resort:** ANDROID_VR bare (no pot — won't survive deep ranges, but
-//!   better than nothing if the minter is down).
+//! - **Everyone else:** VISIONOS. No PO token, no JS player, no cookies, and it
+//!   returns plain URLs that serve every byte range including the tail.
+//! - **Legacy:** ANDROID_VR + a webview-minted content pot. Kept only because
+//!   it costs nothing to try after VISIONOS has already failed. YouTube began
+//!   decommissioning ANDROID_VR on 2026-08-17 (yt-dlp #17461) and by 08-21 it
+//!   answered "Sign in to confirm you're not a bot" for ~99% of requests.
+//!   A Web BotGuard token was never valid for it in the first place — it is
+//!   absent from yt-dlp's WEBPO_CLIENTS — so the pot on that path was decoration.
+//!   Do not spend time reviving this; see Wissen/YT-ANDROID-VR-Ende-2026.
 //!
 //! No yt-dlp, no external binary (issue #349).
 
@@ -20,7 +24,7 @@ use tokio::sync::OnceCell;
 
 use super::botguard;
 use super::clients::{
-    ANDROID_VR_1_61_48, STREAM_FALLBACK_CLIENTS, TVHTML5, WEB_REMIX, YouTubeClient,
+    ANDROID_VR_1_61_48, STREAM_FALLBACK_CLIENTS, TVHTML5, VISIONOS, WEB_REMIX, YouTubeClient,
 };
 use super::decipher;
 use super::innertube::{self, PlayerExtras};
@@ -149,7 +153,45 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
         }
     }
 
-    // Anonymous: ANDROID_VR + content_pot. Mint + visitor_data in parallel.
+    // VISIONOS first. Cheapest thing that works, and the only one measured to
+    // work: no token to mint, no JS to run, no cookies to carry.
+    //
+    // Measured 2026-08-21 across six videos, on the same session and second
+    // that ANDROID_VR was being bot-checked on: 6/6 playable, and every byte
+    // range served — start, middle, last 600 KB, and the 160-byte Matroska
+    // Cues tail that the decoder reads before it plays a note. That last one
+    // is what the pot-less decipher fallback could never serve.
+    //
+    // The same run also settled the open question. A session- or IP-level
+    // reputation gate cannot admit one client and refuse another in the same
+    // instant, so the failure was the client, not us.
+    match innertube::player(
+        VISIONOS,
+        video_id,
+        None,
+        PlayerExtras {
+            content_pot: None,
+            visitor_data: None,
+            signature_timestamp: None,
+        },
+    )
+    .await
+    {
+        Ok(json) if PlayabilityStatus::from_response(&json) == PlayabilityStatus::Ok => {
+            if let Some(info) = pick_plain_format(&json, VISIONOS) {
+                return Ok(info);
+            }
+            tracing::warn!("[yt-player] {video_id} VISIONOS: no plain audio format");
+        }
+        Ok(json) => tracing::warn!(
+            "[yt-player] {video_id} VISIONOS playability {}: {}",
+            PlayabilityStatus::from_response(&json).as_str(),
+            playability_reason(&json)
+        ),
+        Err(e) => tracing::warn!("[yt-player] {video_id} VISIONOS failed ({e})"),
+    }
+
+    // Legacy: ANDROID_VR + content_pot. Mint + visitor_data in parallel.
     let mut last_err = {
         let (pot, visitor) = tokio::join!(botguard::mint_content_pot(video_id), visitor_data(None));
         match (pot, visitor) {
@@ -416,6 +458,18 @@ fn pick_plain_format(json: &Value, client: YouTubeClient) -> Option<YtStreamInfo
             continue;
         }
         if f.get("url").and_then(|v| v.as_str()).is_none() {
+            continue;
+        }
+        // Skip dubbed audio tracks.
+        //
+        // VISIONOS returns one entry per dubbed language, and a dub can carry a
+        // higher bitrate than the original — so picking purely on bitrate plays
+        // a translation with no error anywhere. A format with no `audioTrack`
+        // at all is a video without dubs, which is the common case.
+        let dubbed = f
+            .get("audioTrack")
+            .is_some_and(|t| !t.get("audioIsDefault").and_then(|v| v.as_bool()).unwrap_or(false));
+        if dubbed {
             continue;
         }
         let bitrate = f.get("bitrate").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -736,5 +790,57 @@ mod fallback_tests {
             !fallback.deep_range_safe,
             "the non-Premium decipher fallback must be read linearly",
         );
+    }
+}
+
+#[cfg(test)]
+mod visionos_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// VISIONOS returns one audio entry per dubbed language. Picking purely on
+    /// bitrate therefore plays a translation, silently — a dub can out-bitrate
+    /// the original and nothing anywhere reports an error.
+    #[test]
+    fn a_dubbed_track_never_wins_over_the_original() {
+        let json = json!({
+            "streamingData": { "adaptiveFormats": [
+                {
+                    "itag": 251, "mimeType": "audio/webm; codecs=\"opus\"",
+                    "url": "https://example.invalid/original", "bitrate": 130000,
+                    "audioTrack": { "displayName": "English original", "audioIsDefault": true }
+                },
+                {
+                    "itag": 251, "mimeType": "audio/webm; codecs=\"opus\"",
+                    "url": "https://example.invalid/german-dub", "bitrate": 999000,
+                    "audioTrack": { "displayName": "German", "audioIsDefault": false }
+                },
+            ]},
+            "videoDetails": { "videoId": "x", "lengthSeconds": "100" }
+        });
+        let info = pick_plain_format(&json, VISIONOS).expect("should pick a format");
+        assert!(
+            info.url.ends_with("original"),
+            "picked the dub at {} bps instead of the original: {}",
+            info.bitrate.unwrap_or(0),
+            info.url,
+        );
+    }
+
+    /// The common case: no dubs at all, so no `audioTrack` field. Those must
+    /// still be selectable — an over-eager filter would reject every ordinary
+    /// video.
+    #[test]
+    fn a_track_without_dub_metadata_is_still_playable() {
+        let json = json!({
+            "streamingData": { "adaptiveFormats": [
+                {
+                    "itag": 251, "mimeType": "audio/webm; codecs=\"opus\"",
+                    "url": "https://example.invalid/plain", "bitrate": 130000
+                },
+            ]},
+            "videoDetails": { "videoId": "x", "lengthSeconds": "100" }
+        });
+        assert!(pick_plain_format(&json, VISIONOS).is_some());
     }
 }
