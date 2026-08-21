@@ -195,6 +195,67 @@ fn is_newer_version(current: &str, candidate: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 const UPDATE_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
 
+/// The asset this platform installs, by exact filename. Used by the API-free
+/// fallback, which has no asset list to search.
+#[cfg(not(target_arch = "wasm32"))]
+fn platform_asset_name() -> Option<&'static str> {
+    #[cfg(target_os = "android")]
+    {
+        Some("Kopuz-android.apk")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Some("Kopuz-windows-portable.zip")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Some("Kopuz-linux-x86_64.tar.gz")
+    }
+    #[cfg(not(any(target_os = "android", target_os = "windows", target_os = "linux")))]
+    {
+        None
+    }
+}
+
+/// Find the latest release WITHOUT the REST API.
+///
+/// `github.com/<repo>/releases/latest` is an ordinary web redirect to the
+/// tag page, and it carries no rate limit — unlike `api.github.com`, which
+/// allows 60 unauthenticated requests per hour per IP and then answers 403 for
+/// the rest of the hour. That limit is shared with every other unauthenticated
+/// call the app makes (yt-dlp and ffmpeg both check their own releases), so a
+/// few restarts can exhaust it and the update check goes dark through no fault
+/// of the release.
+///
+/// The download URL is predictable from the tag, so nothing else is needed.
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_available_update_via_redirect() -> Option<AvailableUpdate> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("kopuz/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .ok()?;
+    let resp = client
+        .get("https://github.com/Moewe49/kopuz/releases/latest")
+        .send()
+        .await
+        .ok()?;
+    let location = resp.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
+    let tag = location.rsplit('/').next()?.to_string();
+    if !is_newer_version(env!("CARGO_PKG_VERSION"), &tag) {
+        return None;
+    }
+    tracing::info!("[update] found {tag} via the redirect path (API unavailable)");
+    Some(AvailableUpdate {
+        version: tag.trim_start_matches(['v', 'V']).to_string(),
+        release_url: format!("https://github.com/Moewe49/kopuz/releases/tag/{tag}"),
+        installer_url: platform_asset_name().map(|name| {
+            format!("https://github.com/Moewe49/kopuz/releases/download/{tag}/{name}")
+        }),
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 async fn fetch_available_update() -> Option<AvailableUpdate> {
     let client = reqwest::Client::builder()
@@ -205,17 +266,34 @@ async fn fetch_available_update() -> Option<AvailableUpdate> {
     // This fork's own releases (Moewe49/kopuz), not the upstream Kopuz-org repo —
     // otherwise the in-app updater would offer upstream builds that don't carry
     // this fork's Android work.
-    let release = client
+    // Every failure here used to end as `None`, indistinguishable from "you are
+    // up to date" — no log line, no button, nothing to look at. A 403 from the
+    // rate limit looked exactly like a release that was never published.
+    let release = match client
         .get("https://api.github.com/repos/Moewe49/kopuz/releases/latest")
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
         .await
-        .ok()?
-        .error_for_status()
-        .ok()?
-        .json::<GithubRelease>()
-        .await
-        .ok()?;
+    {
+        Ok(resp) if resp.status().is_success() => match resp.json::<GithubRelease>().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("[update] release JSON unreadable: {e}");
+                return fetch_available_update_via_redirect().await;
+            }
+        },
+        Ok(resp) => {
+            tracing::warn!(
+                "[update] GitHub API said {} — trying the redirect path instead",
+                resp.status()
+            );
+            return fetch_available_update_via_redirect().await;
+        }
+        Err(e) => {
+            tracing::warn!("[update] check failed: {e}");
+            return fetch_available_update_via_redirect().await;
+        }
+    };
 
     if is_newer_version(env!("CARGO_PKG_VERSION"), &release.tag_name) {
         Some(AvailableUpdate {
