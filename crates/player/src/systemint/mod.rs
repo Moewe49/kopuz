@@ -26,9 +26,9 @@ mod android;
 pub use android::{
     ExoEvent, SystemEvent, exo_clear, exo_next, exo_pause, exo_play, exo_position, exo_prev,
     exo_replace_upcoming, exo_resume, exo_seek, exo_set_upcoming, exo_set_volume, exo_stop,
-    get_android_music_dir, get_files_dir,
-    init, install_apk, move_task_to_back, request_permissions, set_background_handler,
-    stop_session, take_back_pressed, take_exo_events, update_now_playing, wake_run_loop,
+    get_android_music_dir, get_files_dir, init, install_apk, move_task_to_back,
+    request_permissions, set_background_handler, stop_session, take_back_pressed, take_exo_events,
+    update_now_playing, wake_run_loop,
 };
 
 #[cfg(not(target_os = "android"))]
@@ -91,9 +91,10 @@ pub fn pot_minter_init(script: &str, cookies: &str) {
     }
 }
 
-/// Mint a content PO token for `video_id` via the Android WebView minter. Errors
-/// off Android.
-pub async fn mint_pot(video_id: &str) -> Result<String, String> {
+/// Mint a content PO token for `video_id` via the Android WebView minter, and
+/// return it together with the `visitor_data` of the session that minted it —
+/// the two are only valid as a pair. Errors off Android.
+pub async fn mint_pot(video_id: &str) -> Result<(String, String), String> {
     #[cfg(target_os = "android")]
     return android::mint_pot(video_id).await;
     #[cfg(not(target_os = "android"))]
