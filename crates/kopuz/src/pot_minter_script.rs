@@ -118,8 +118,25 @@ window.__kopuzMint = async function(videoId, reqId) {{
     // token. The player request has to present THIS one: a pot minted under
     // one anonymous session and presented under another is not a valid pot,
     // and YouTube answers that with "Sign in to confirm you're not a bot".
+    // Read it from INNERTUBE_CONTEXT, not the 'VISITOR_DATA' key.
+    //
+    // Measured on a live www.youtube.com page:
+    //   ytcfg.get('VISITOR_DATA')                        -> undefined
+    //   ytcfg.data_.VISITOR_DATA                         -> undefined
+    //   ytcfg.get('INNERTUBE_CONTEXT').client.visitorData -> 518 chars
+    //
+    // The first is what this used to read, so it always came back empty, the
+    // caller silently kept its own identity, and the session binding this
+    // exists for never happened. The others stay as fallbacks in case the page
+    // shape changes again.
     var vd = '';
-    try {{ vd = (window.ytcfg && window.ytcfg.get && window.ytcfg.get('VISITOR_DATA')) || ''; }} catch (e) {{}}
+    try {{
+      var ic = window.ytcfg && window.ytcfg.get && window.ytcfg.get('INNERTUBE_CONTEXT');
+      vd = (ic && ic.client && ic.client.visitorData)
+        || (window.ytcfg && window.ytcfg.get && window.ytcfg.get('VISITOR_DATA'))
+        || (window.ytcfg && window.ytcfg.data_ && window.ytcfg.data_.VISITOR_DATA)
+        || '';
+    }} catch (e) {{}}
     send({{pot: (pot || '') + '', vd: vd + ''}});
   }} catch (e) {{
     window.__kopuzMinter = null; window.__kopuzMinterExp = 0;
