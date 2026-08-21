@@ -165,13 +165,24 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
     // The same run also settled the open question. A session- or IP-level
     // reputation gate cannot admit one client and refuse another in the same
     // instant, so the failure was the client, not us.
+    //
+    // visitor_data is NOT optional here, however anonymous the client is.
+    // Measured 2×2 — visitor_data present/absent × burst/paced:
+    //
+    //   burst / no vd   0/4      paced / no vd   0/4
+    //   burst / vd      4/4      paced / vd      4/4
+    //
+    // Without it every request comes back LOGIN_REQUIRED regardless of rate;
+    // with it, even back-to-back requests pass. Wiring this up without one is
+    // what made a client that measured 6/6 in isolation fail 45/45 in the app.
+    let visitor = visitor_data(None).await.ok();
     match innertube::player(
         VISIONOS,
         video_id,
         None,
         PlayerExtras {
             content_pot: None,
-            visitor_data: None,
+            visitor_data: visitor,
             signature_timestamp: None,
         },
     )
