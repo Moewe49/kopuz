@@ -141,7 +141,7 @@ object PotMinter {
         Handler(Looper.getMainLooper()).post {
             val web = webView
             if (web == null) {
-                nativeOnPot(reqId, "", "minter webview not initialized")
+                nativeOnPot(reqId, "", "", "minter webview not initialized")
                 return@post
             }
             // Un-freeze the renderer before asking it to do work. Android (and
@@ -166,7 +166,7 @@ object PotMinter {
                 "(window.__kopuzMint ? (window.__kopuzMint('$videoId', $reqId), 'ok') : 'notready')",
             ) { result ->
                 if (result != null && result.contains("notready")) {
-                    nativeOnPot(reqId, "", "minter not ready")
+                    nativeOnPot(reqId, "", "", "minter not ready")
                 }
             }
         }
