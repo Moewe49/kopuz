@@ -887,7 +887,6 @@ impl PlayerController {
                             (stream_url, None, None, None, true)
                         };
                         let yt_format_for_blocking = yt_format;
-                        let deep_range_safe_for_blocking = yt_deep_range_safe;
                         let stream_url_for_blocking = stream_url.clone();
                         let yt_ua_for_blocking = yt_user_agent.clone();
                         let yt_reresolve_for_blocking = yt_reresolve;
@@ -900,20 +899,26 @@ impl PlayerController {
                                 );
                                 let (source, hint) = decoder::from_stream_with_hint(stream, "ogg");
                                 Ok::<_, std::io::Error>((source, hint))
-                            } else if let Some(fmt) = yt_format_for_blocking
-                                .filter(|_| deep_range_safe_for_blocking)
-                            {
+                            } else if let Some(fmt) = yt_format_for_blocking {
                                 // YT: HTTP Range-backed source. Symphonia
                                 // can seek freely (Matroska Cues at the
                                 // end, scrub anywhere) and startup probes
                                 // only fetch the ~512 KiB they need.
                                 //
-                                // Only for URLs that actually answer deep
-                                // ranges. On the pot-less fallback the very
-                                // first thing this does — read the Cues at the
-                                // end of the file — comes back 403, so the
-                                // track never starts. Those fall through to the
-                                // linear reader below: no scrubbing, but sound.
+                                // Used for EVERY YouTube stream, including the
+                                // pot-less fallback. Routing that fallback to
+                                // the linear reader instead was a mistake and
+                                // made things strictly worse — measured against
+                                // a live URL:
+                                //
+                                //   plain GET              -> 403
+                                //   Range bytes=0-524287   -> 206
+                                //   Range mid-file / tail  -> 403
+                                //
+                                // googlevideo refuses an open-ended GET, so the
+                                // linear reader got nothing at all, on every
+                                // track. The range reader at least receives the
+                                // opening 512 KB.
                                 let range = utils::range_source::RangeStreamSource::new(
                                     stream_url_for_blocking,
                                     yt_ua_for_blocking,

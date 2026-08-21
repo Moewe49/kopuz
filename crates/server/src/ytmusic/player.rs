@@ -163,7 +163,24 @@ pub async fn resolve(video_id: &str, cookies: Option<&str>) -> Result<YtStreamIn
                 // session and the request said another, and YouTube called that
                 // what it looks like: a bot. Falling back to ours when the page
                 // exposed none keeps the old behaviour rather than failing.
-                let visitor = minted.visitor_data.as_deref().unwrap_or(visitor);
+                let visitor = match minted.visitor_data.as_deref() {
+                    Some(v) => {
+                        tracing::info!(
+                            "[yt-player] {video_id} using the minter's own visitor_data ({} chars)",
+                            v.len()
+                        );
+                        v
+                    }
+                    None => {
+                        // Without this the session-binding fix silently does
+                        // nothing, and the request goes out under an identity
+                        // the token was never minted for.
+                        tracing::warn!(
+                            "[yt-player] {video_id} minter reported NO visitor_data — falling back to our own; the pot and the request are from different sessions"
+                        );
+                        visitor
+                    }
+                };
                 let extras = PlayerExtras {
                     content_pot: Some(&minted.pot),
                     visitor_data: Some(visitor),
