@@ -191,6 +191,10 @@ fn is_newer_version(current: &str, candidate: &str) -> bool {
     false
 }
 
+/// How often a running app re-checks for a new release.
+#[cfg(not(target_arch = "wasm32"))]
+const UPDATE_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
 #[cfg(not(target_arch = "wasm32"))]
 async fn fetch_available_update() -> Option<AvailableUpdate> {
     let client = reqwest::Client::builder()
@@ -446,10 +450,7 @@ fn launch_update(path: &std::path::Path) {
         if let Ok(current) = std::env::var("APPIMAGE") {
             use std::os::unix::fs::PermissionsExt;
             if std::fs::copy(path, &current).is_ok() {
-                let _ = std::fs::set_permissions(
-                    &current,
-                    std::fs::Permissions::from_mode(0o755),
-                );
+                let _ = std::fs::set_permissions(&current, std::fs::Permissions::from_mode(0o755));
                 let _ = std::process::Command::new(&current).spawn();
                 std::process::exit(0);
             }
@@ -517,8 +518,8 @@ fn apply_zip_update_into(
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("staging dir: {e}"))?;
         }
-        let mut dest = std::fs::File::create(&out)
-            .map_err(|e| format!("staging {}: {e}", rel.display()))?;
+        let mut dest =
+            std::fs::File::create(&out).map_err(|e| format!("staging {}: {e}", rel.display()))?;
         std::io::copy(&mut entry, &mut dest)
             .map_err(|e| format!("extracting {}: {e}", rel.display()))?;
         staged.push(rel);
@@ -680,7 +681,10 @@ fn update_button(
     update_status: Signal<Option<String>>,
 ) -> Element {
     let status_now = update_status.read().clone();
-    if matches!(status_now.as_deref(), Some("downloading") | Some("installing")) {
+    if matches!(
+        status_now.as_deref(),
+        Some("downloading") | Some("installing")
+    ) {
         return rsx! {
             span { class: "ml-2 text-xs opacity-80", "Update…" }
         };
@@ -811,9 +815,13 @@ async fn run_browser_refresh(mut config: Signal<config::AppConfig>) {
     let (browser, server_id) = {
         let c = config.peek();
         let srv = c.server.as_ref();
-        let is_yt = srv.map(|s| s.service == config::MusicService::YtMusic).unwrap_or(false);
+        let is_yt = srv
+            .map(|s| s.service == config::MusicService::YtMusic)
+            .unwrap_or(false);
         // Only browser-login servers (yt_browser set, not manual paste).
-        let browser = srv.filter(|_| is_yt).and_then(|s| (!s.yt_manual).then_some(()).and(s.yt_browser));
+        let browser = srv
+            .filter(|_| is_yt)
+            .and_then(|s| (!s.yt_manual).then_some(()).and(s.yt_browser));
         (browser, srv.and_then(|s| s.id.clone()).unwrap_or_default())
     };
     let Some(browser) = browser else { return };
@@ -1693,14 +1701,18 @@ fn App() -> Element {
         spawn(async move {
             match ::server::deps::ensure_ytdlp_fresh().await {
                 Ok(p) => tracing::info!("Managed yt-dlp ready: {}", p.display()),
-                Err(e) => tracing::warn!("yt-dlp auto-update skipped (using system if present): {e}"),
+                Err(e) => {
+                    tracing::warn!("yt-dlp auto-update skipped (using system if present): {e}")
+                }
             }
             // ffmpeg gives downloads opus extraction + embedded cover art. Fetch
             // a static build once on first run so the user never installs it by
             // hand — this is what replaces the old install-windows.ps1 step.
             match ::server::deps::ensure_ffmpeg().await {
                 Ok(p) => tracing::info!("Managed ffmpeg ready: {}", p.display()),
-                Err(e) => tracing::warn!("ffmpeg auto-setup skipped (using system if present): {e}"),
+                Err(e) => {
+                    tracing::warn!("ffmpeg auto-setup skipped (using system if present): {e}")
+                }
             }
         });
     });
@@ -1952,9 +1964,21 @@ fn App() -> Element {
         }
 
         did_check_updates.set(true);
+        // Keep looking, don't check once and stop.
+        //
+        // The guard above makes this effect fire a single time per run, so a
+        // release published while the app was already open was never noticed —
+        // the update button simply stayed hidden until the next restart, which
+        // looks exactly like a broken updater from the outside.
+        //
+        // Six hours is far longer than the check costs and far shorter than a
+        // session that stays open all day.
         spawn(async move {
-            if let Some(update) = fetch_available_update().await {
-                update_banner.set(Some(update));
+            loop {
+                if let Some(update) = fetch_available_update().await {
+                    update_banner.set(Some(update));
+                }
+                tokio::time::sleep(UPDATE_RECHECK_INTERVAL).await;
             }
         });
     });
@@ -2168,11 +2192,7 @@ fn App() -> Element {
                 // before they go stale, which is the main lever on how long a
                 // pasted session survives.
                 tokio::time::sleep(std::time::Duration::from_secs(180)).await;
-                if yt_keepalive_identity
-                    .peek()
-                    .as_deref()
-                    != Some(my_identity.as_str())
-                {
+                if yt_keepalive_identity.peek().as_deref() != Some(my_identity.as_str()) {
                     return;
                 }
                 run_rotation(config).await;
@@ -3629,7 +3649,10 @@ mod update_tests {
         let exe = apply_zip_update_into(&zip, &install).expect("update should apply");
 
         assert_eq!(exe, install.join("kopuz.exe"));
-        assert_eq!(std::fs::read(install.join("kopuz.exe")).unwrap(), b"NEW-BINARY");
+        assert_eq!(
+            std::fs::read(install.join("kopuz.exe")).unwrap(),
+            b"NEW-BINARY"
+        );
         assert_eq!(
             std::fs::read(install.join("assets/app.css")).unwrap(),
             b"new-css"
@@ -3720,7 +3743,10 @@ mod update_tests {
             !root.join("pwned.txt").exists() && !root.parent().unwrap().join("pwned.txt").exists(),
             "a traversal entry must never be written outside the install dir",
         );
-        assert_eq!(std::fs::read(install.join("kopuz.exe")).unwrap(), b"NEW-BINARY");
+        assert_eq!(
+            std::fs::read(install.join("kopuz.exe")).unwrap(),
+            b"NEW-BINARY"
+        );
     }
 }
 
@@ -3761,7 +3787,10 @@ mod rollback_tests {
             b"PREVIOUS",
             "the user must be left with a working app, not an empty folder",
         );
-        assert!(!parked_path(&exe).exists(), "the parked copy was moved back");
+        assert!(
+            !parked_path(&exe).exists(),
+            "the parked copy was moved back"
+        );
     }
 
     #[test]
