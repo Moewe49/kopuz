@@ -16,6 +16,19 @@ const SEEK_JUMP_SECS: u64 = 3;
 /// activity updates; dragging the scrubber must not burn that budget.
 #[cfg(not(target_arch = "wasm32"))]
 const SEEK_RESEND_COOLDOWN: u64 = 3;
+/// How often the paused activity is re-sent to keep Discord's progress bar
+/// sitting on the paused position.
+///
+/// Discord animates that bar from `start` against the wall clock and offers no
+/// way to pin it to a time — the reference implementation for this exact
+/// problem documents the same limitation (ungive/discord-music-presence 2.2.5:
+/// "'frozen' means stuck at 0:00 since Discord doesn't offer a way to pin it to
+/// a specific time"). Re-anchoring is the only way to hold it still: the bar
+/// creeps forward between sends and snaps back on each one, so this interval IS
+/// the visible drift. Discord rate-limits activity updates to roughly five per
+/// twenty seconds, so it cannot go much below this.
+#[cfg(not(target_arch = "wasm32"))]
+const PAUSED_REANCHOR: u64 = 8;
 #[cfg(not(target_arch = "wasm32"))]
 use discord_presence::cover_art;
 
@@ -793,25 +806,40 @@ pub fn use_player_task(ctrl: PlayerController) {
                         let just_paused = *was_playing.peek();
                         let toggled_on = discord_enabled && !last_discord_enabled;
                         let retry_pending = *discord_send_pending.peek();
+                        // Re-anchor the frozen bar. See [`PAUSED_REANCHOR`] —
+                        // without this the bar drifts away from the paused
+                        // position for as long as the pause lasts.
+                        let reanchor = last_presence_send
+                            .peek()
+                            .is_none_or(|t| t.elapsed().as_secs() >= PAUSED_REANCHOR);
 
                         if discord_enabled && discord_paused_enabled {
                             let title = ctrl.current_song_title.read().clone();
-                            if (just_paused || toggled_on || retry_pending) && !title.is_empty() {
+                            if (just_paused || toggled_on || retry_pending || reanchor)
+                                && !title.is_empty()
+                            {
                                 let artist = ctrl.current_song_artist.read().clone();
                                 let album = ctrl.current_song_album.read().clone();
                                 let resolved = discord_cover_url.read().clone();
                                 // The position is frozen into the text, so it
                                 // has to be the position at the moment of the
                                 // pause — `pos`, read this tick.
+                                let dur = *ctrl.current_song_duration.read();
                                 match p.set_paused(
                                     &title,
                                     &artist,
                                     &album,
                                     pos.as_secs(),
+                                    dur,
                                     resolved.as_deref(),
                                 ) {
                                     Ok(()) => {
-                                        tracing::info!("[discord] paused sent for \"{title}\"");
+                                        if !reanchor || just_paused {
+                                            tracing::info!(
+                                                "[discord] paused sent for \"{title}\" at {}s",
+                                                pos.as_secs()
+                                            );
+                                        }
                                         last_presence_send.set(Some(web_time::Instant::now()));
                                         discord_send_pending.set(false);
                                     }

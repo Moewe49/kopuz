@@ -220,6 +220,7 @@ impl Presence {
         artist: &str,
         album: &str,
         elapsed_secs: u64,
+        duration_secs: u64,
         cover_url: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Discord has no paused state, so the position goes in the TEXT.
@@ -240,12 +241,41 @@ impl Presence {
         // Ok without reading Discord's reply, so a rejected activity logs
         // exactly like an accepted one. The log line proves the write, nothing
         // more.
+        // Anchor the bar to the paused position, and re-anchor periodically.
+        //
+        // Discord has no way to pin the bar to a time — the reference
+        // implementation for this exact problem says so in its own changelog
+        // (ungive/discord-music-presence 2.2.5: "'frozen' means stuck at 0:00
+        // since Discord doesn't offer a way to pin it to a specific time").
+        // The bar is always derived from `start` and animated against the wall
+        // clock; there is no static mode.
+        //
+        // But `start` can be BACKDATED. Sending `now - elapsed` puts the bar
+        // exactly on the paused position at the moment it is sent. It then
+        // creeps forward, so the caller re-sends every few seconds and it snaps
+        // back — near-static, drifting by at most the resend interval, instead
+        // of showing a number that means nothing at all.
+        //
+        // `end` goes along so Discord draws a real progress bar at the right
+        // fraction rather than a bare count-up.
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+        let start_time = now - elapsed_secs as i64;
+        let timestamps = if duration_secs == 0 || duration_secs == u64::MAX {
+            Timestamps::new().start(start_time)
+        } else {
+            Timestamps::new()
+                .start(start_time)
+                .end(start_time + duration_secs as i64)
+        };
+
+        // The text keeps the exact position too: it is the only part that truly
+        // holds still, and it stays correct between re-anchors.
         let state = format!("{artist} • Paused {}", Self::format_clock(elapsed_secs));
         let mut activity = activity::Activity::new()
             .details(title)
             .state(&state)
             .status_display_type(activity::StatusDisplayType::State)
-            .timestamps(Timestamps::new())
+            .timestamps(timestamps)
             .activity_type(activity::ActivityType::Listening);
 
         if let Some(url) = cover_url {
@@ -358,6 +388,7 @@ impl Presence {
         _artist: &str,
         _album: &str,
         _elapsed_secs: u64,
+        _duration_secs: u64,
         _cover_url: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
