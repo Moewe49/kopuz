@@ -103,6 +103,32 @@ fn nudge_event_loop() {
     player::systemint::wake_run_loop();
 }
 
+/// Record a completed play with the metadata needed to use it later.
+///
+/// Reached only from the two end-of-track paths that already bump
+/// `listen_counts`, both guarded by `!skip_in_progress` — so a skipped track is
+/// never recorded, and a count here means the track was heard through.
+///
+/// Kept alongside `listen_counts` rather than replacing it: the activity page
+/// reads that map, and a rename would be churn for no gain.
+#[cfg(not(target_arch = "wasm32"))]
+fn record_play(config: &mut AppConfig, track_id: &str, track: &reader::models::Track) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let entry = config
+        .play_history
+        .entry(track_id.to_string())
+        .or_default();
+    // Refresh the metadata every time: a track first heard from search may get
+    // better tags later, and the newest reading is the one worth keeping.
+    entry.title = track.title.clone();
+    entry.artist = track.artist.clone();
+    entry.plays += 1;
+    entry.last_played = now;
+}
+
 pub fn use_player_task(ctrl: PlayerController) {
     #[cfg(not(target_arch = "wasm32"))]
     let presence: Option<Arc<Presence>> = use_context();
@@ -746,7 +772,11 @@ pub fn use_player_task(ctrl: PlayerController) {
                                 let idx = *ctrl.current_queue_index.peek();
                                 if let Some(track) = ctrl.get_track_at(idx) {
                                     let track_id = track.path.to_string_lossy().to_string();
-                                    *config_write.listen_counts.entry(track_id).or_insert(0) += 1;
+                                    *config_write
+                                        .listen_counts
+                                        .entry(track_id.clone())
+                                        .or_insert(0) += 1;
+                                    record_play(&mut config_write, &track_id, &track);
                                 }
                             }
                             ctrl.play_next_with_crossfade();
@@ -781,7 +811,11 @@ pub fn use_player_task(ctrl: PlayerController) {
                                 let idx = *ctrl.current_queue_index.peek();
                                 if let Some(track) = ctrl.get_track_at(idx) {
                                     let track_id = track.path.to_string_lossy().to_string();
-                                    *config_write.listen_counts.entry(track_id).or_insert(0) += 1;
+                                    *config_write
+                                        .listen_counts
+                                        .entry(track_id.clone())
+                                        .or_insert(0) += 1;
+                                    record_play(&mut config_write, &track_id, &track);
                                 }
                             }
                             ctrl.play_next();

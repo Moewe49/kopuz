@@ -528,6 +528,21 @@ fn default_hero_height() -> u32 {
     300
 }
 
+/// One track's listening record. Written only when a track finishes — both
+/// call sites are end-of-track paths guarded by `!skip_in_progress`, so a skip
+/// never lands here and a count means the track was actually heard through.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PlayRecord {
+    pub title: String,
+    pub artist: String,
+    /// Completed plays.
+    pub plays: u64,
+    /// Unix seconds of the most recent completed play. 0 for records written
+    /// before this field existed.
+    #[serde(default)]
+    pub last_played: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -554,6 +569,17 @@ pub struct AppConfig {
     pub artist_view_order: ArtistViewOrder,
     #[serde(default)]
     pub listen_counts: HashMap<String, u64>,
+    /// What was actually listened to, with enough metadata to use it later.
+    ///
+    /// `listen_counts` only ever held a number against a path, which turned out
+    /// to be too little: 240 tracks had three or more completed plays, but only
+    /// 33 of them existed in `library.json` — the rest were played from search,
+    /// radio or playlists, which never add to the library. Anything built on
+    /// the library therefore saw a seventh of the real history. This keeps the
+    /// title and artist so a played track stands on its own, and the time so
+    /// "not heard in months" becomes expressible at all.
+    #[serde(default)]
+    pub play_history: HashMap<String, PlayRecord>,
     #[serde(default)]
     pub musicbrainz_token: String,
     #[serde(default)]
@@ -920,6 +946,7 @@ impl Default for AppConfig {
             sort_order: default_sort_order(),
             artist_view_order: default_artist_view_order(),
             listen_counts: HashMap::new(),
+            play_history: HashMap::new(),
             musicbrainz_token: String::new(),
             lastfm_api_key: String::new(),
             lastfm_api_secret: String::new(),
@@ -977,7 +1004,11 @@ impl AppConfig {
         if let Some(dir) = &self.download_directory {
             return dir.clone();
         }
-        if let Some(music) = self.music_directory.iter().find(|p| !p.as_os_str().is_empty()) {
+        if let Some(music) = self
+            .music_directory
+            .iter()
+            .find(|p| !p.as_os_str().is_empty())
+        {
             return music.join("Kopuz");
         }
         directories::UserDirs::new()
