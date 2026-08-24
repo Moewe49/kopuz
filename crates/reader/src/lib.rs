@@ -11,6 +11,7 @@ pub mod share;
 pub mod taste;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod utils;
+pub mod vectors;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use metadata::{read, read_cover, write_tags};
