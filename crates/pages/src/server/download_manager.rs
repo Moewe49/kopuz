@@ -324,74 +324,108 @@ async fn download_worker(
             if cancel_flag.load(Ordering::Relaxed) {
                 break;
             }
-            let outcome: Result<std::path::PathBuf, String> = if ::server::soundcloud::is_soundcloud_path(&id)
-            {
-                // SoundCloud: resolve the permalink to a progressive stream
-                // (yt-dlp under the hood) and stream it like any other URL.
-                // content_length from yt-dlp can be filesize_approx, so pass
-                // None to skip the strict Range/206 path (it requires exact
-                // lengths) and download sequentially.
-                match ::server::soundcloud::resolve_path(&id).await {
-                    Ok(info) => {
-                        download_with_progress(
-                            &id,
-                            &info.url,
-                            info.format.extension(),
-                            &dest_no_ext,
-                            Some(&info.user_agent),
-                            None,
-                            &mut queue,
-                            &session_start,
-                            &cancel_flag,
-                        )
-                        .await
+            let outcome: Result<std::path::PathBuf, String> =
+                if ::server::soundcloud::is_soundcloud_path(&id) {
+                    // SoundCloud: resolve the permalink to a progressive stream
+                    // (yt-dlp under the hood) and stream it like any other URL.
+                    // content_length from yt-dlp can be filesize_approx, so pass
+                    // None to skip the strict Range/206 path (it requires exact
+                    // lengths) and download sequentially.
+                    match ::server::soundcloud::resolve_path(&id).await {
+                        Ok(info) => {
+                            download_with_progress(
+                                &id,
+                                &info.url,
+                                info.format.extension(),
+                                &dest_no_ext,
+                                Some(&info.user_agent),
+                                None,
+                                &mut queue,
+                                &session_start,
+                                &cancel_flag,
+                            )
+                            .await
+                        }
+                        Err(e) => Err(e),
                     }
-                    Err(e) => Err(e),
-                }
-            } else if is_yt && ytdlp_available {
-                remove_stem_files(&dest_no_ext);
-                ytdlp_download_with_progress(&id, &dest_no_ext, None, &mut queue, &session_start)
+                } else if is_yt && ytdlp_available {
+                    remove_stem_files(&dest_no_ext);
+                    ytdlp_download_with_progress(
+                        &id,
+                        &dest_no_ext,
+                        None,
+                        &mut queue,
+                        &session_start,
+                    )
                     .await
-            } else if is_yt {
-                let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(
-                    yt_cookies.clone().unwrap_or_default(),
-                );
-                match yt.get_stream(&id).await {
-                    Ok(info) => {
-                        download_with_progress(
-                            &id,
-                            &info.url,
-                            info.format.extension(),
-                            &dest_no_ext,
-                            Some(&info.user_agent),
-                            info.content_length,
-                            &mut queue,
-                            &session_start,
-                            &cancel_flag,
-                        )
-                        .await
+                } else if is_yt {
+                    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(
+                        yt_cookies.clone().unwrap_or_default(),
+                    );
+                    match yt.get_stream(&id).await {
+                        Ok(info) => {
+                            download_with_progress(
+                                &id,
+                                &info.url,
+                                info.format.extension(),
+                                &dest_no_ext,
+                                Some(&info.user_agent),
+                                info.content_length,
+                                &mut queue,
+                                &session_start,
+                                &cancel_flag,
+                            )
+                            .await
+                        }
+                        Err(e) => Err(e),
                     }
-                    Err(e) => Err(e),
-                }
-            } else {
-                let url = {
-                    let conf = config.read();
-                    super::build_download_url(&id, &conf)
+                } else {
+                    let url = {
+                        let conf = config.read();
+                        super::build_download_url(&id, &conf)
+                    };
+                    match url {
+                        Some((url, ext)) => {
+                            download_with_progress(
+                                &id,
+                                &url,
+                                ext,
+                                &dest_no_ext,
+                                None,
+                                None,
+                                &mut queue,
+                                &session_start,
+                                &cancel_flag,
+                            )
+                            .await
+                        }
+                        None => Err("Could not build a download URL for this track.".to_string()),
+                    }
                 };
-                match url {
-                    Some((url, ext)) => {
-                        download_with_progress(
-                            &id, &url, ext, &dest_no_ext, None, None, &mut queue, &session_start,
-                            &cancel_flag,
-                        )
-                        .await
-                    }
-                    None => Err("Could not build a download URL for this track.".to_string()),
-                }
-            };
 
             match outcome {
                 Ok(path) => {
+                    // A download that lands AFTER its cancellation must not
+                    // register itself.
+                    //
+                    // Cancelling only sets the flag; a transfer already in
+                    // flight still runs to completion, and this arm then wrote
+                    // the file into the library and recorded it as offline. The
+                    // user cancelled and got the track anyway — and on the next
+                    // start it was in `offline_tracks`, so it looked downloaded
+                    // on purpose. Spotted in upstream's hardening pass (#650,
+                    // "a worker could finish after deletion and register the
+                    // track again"); the same shape existed here.
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        let _ = std::fs::remove_file(&path);
+                        clear_progress(&id);
+                        if let Some(item) =
+                            queue.write().items.iter_mut().find(|i| i.id == id)
+                        {
+                            item.status = DownloadStatus::Failed;
+                        }
+                        break;
+                    }
                     // Write title/artist/album tags (keeping yt-dlp's embedded
                     // cover) so the LOCAL library groups + shows the file
                     // correctly. Without tags every download landed in one
@@ -409,10 +443,10 @@ async fn download_worker(
                             cover: reader::models::CoverChange::Keep,
                         },
                     );
-                    config
-                        .write()
-                        .offline_tracks
-                        .insert(offline_key(&id).to_string(), path.to_string_lossy().into_owned());
+                    config.write().offline_tracks.insert(
+                        offline_key(&id).to_string(),
+                        path.to_string_lossy().into_owned(),
+                    );
                     if let Some(item) = queue.write().items.iter_mut().find(|i| i.id == id) {
                         item.status = DownloadStatus::Done;
                     }
@@ -431,10 +465,8 @@ async fn download_worker(
                     // to recover from a transient throttle/fragment hiccup
                     // instead of hammering the same failing endpoint instantly.
                     if attempt < 3 {
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            800 * attempt as u64,
-                        ))
-                        .await;
+                        tokio::time::sleep(std::time::Duration::from_millis(800 * attempt as u64))
+                            .await;
                     }
                 }
             }
@@ -661,10 +693,8 @@ async fn download_with_progress(
                 if range_attempt > RANGE_RETRIES || cancel_flag.load(Ordering::Relaxed) {
                     break Err(err);
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    600 * range_attempt as u64,
-                ))
-                .await;
+                tokio::time::sleep(std::time::Duration::from_millis(600 * range_attempt as u64))
+                    .await;
             };
             let resp = resp?;
             let status = resp.status();
@@ -723,12 +753,14 @@ async fn download_with_progress(
             }
         }
 
-        writer
-            .flush()
-            .await
-            .map_err(|e| format!("Flush: {e}"))?;
+        writer.flush().await.map_err(|e| format!("Flush: {e}"))?;
         let trailing = bytes_done.saturating_sub(last_update_bytes);
-        publish_progress(item_id, bytes_done, trailing, session_start.elapsed().as_secs_f64());
+        publish_progress(
+            item_id,
+            bytes_done,
+            trailing,
+            session_start.elapsed().as_secs_f64(),
+        );
         return Ok(file_path);
     }
 
@@ -818,11 +850,13 @@ async fn download_with_progress(
         }
     }
 
-    writer
-        .flush()
-        .await
-        .map_err(|e| format!("Flush: {e}"))?;
+    writer.flush().await.map_err(|e| format!("Flush: {e}"))?;
     let trailing = bytes_done.saturating_sub(last_update_bytes);
-    publish_progress(item_id, bytes_done, trailing, session_start.elapsed().as_secs_f64());
+    publish_progress(
+        item_id,
+        bytes_done,
+        trailing,
+        session_start.elapsed().as_secs_f64(),
+    );
     Ok(file_path)
 }
