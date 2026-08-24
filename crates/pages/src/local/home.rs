@@ -620,7 +620,17 @@ fn LocalHeroBanner(
                     }
                     div { class: "flex items-center gap-4",
                         button {
-                            class: "flex items-center gap-3 bg-white text-black px-8 py-3 rounded-full font-bold hover:bg-white/90 hover:scale-105 active:scale-95 transition-all w-fit",
+                            class: "flex items-center gap-3 bg-white text-black px-8 py-3 rounded-full font-bold hover:bg-white/90 hover:scale-105 active:scale-95 transition-all w-fit disabled:opacity-40 disabled:hover:scale-100 disabled:cursor-not-allowed",
+                            // Don't offer a button that cannot act.
+                            //
+                            // The album is an Option, and the handler below did
+                            // nothing at all when it was None — a button that
+                            // looks live, takes the click and silently ignores
+                            // it. This component has no track-level callback to
+                            // fall back on (unlike the server hero, which now
+                            // plays the track instead), so the honest move is to
+                            // stop pretending it is actionable.
+                            disabled: hero_entry.as_ref().is_none_or(|(_, a)| a.is_none()),
                             onclick: {
                                 let id = hero_entry.as_ref().and_then(|(_, a)| a.as_ref().map(|a| a.id.clone()));
                                 move |_| {

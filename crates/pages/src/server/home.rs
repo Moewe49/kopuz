@@ -682,6 +682,7 @@ fn render_server_section(
                 hero_entry,
                 hero_cover,
                 on_play_album,
+                on_play_track,
             }
         },
         "continue_listening" => render_continue_listening(
@@ -758,6 +759,8 @@ fn ServerHeroBanner(
     hero_entry: Option<(Track, Option<Album>, Option<String>)>,
     hero_cover: Option<String>,
     on_play_album: EventHandler<String>,
+    /// Fallback for a hero whose album is unknown — see the button handler.
+    on_play_track: EventHandler<Track>,
 ) -> Element {
     let mut is_resizing = use_signal(|| false);
     let mut start_y = use_signal(|| 0.0_f64);
@@ -835,7 +838,15 @@ fn ServerHeroBanner(
                 div { class: "relative h-full flex flex-col justify-center p-8 md:p-12",
                     span { class: "text-indigo-400 font-bold tracking-widest uppercase text-[10px] mb-3 flex items-center gap-2",
                         i { class: "fa-solid fa-star text-[8px]" }
-                        "{i18n::t(\"featured_album\")}"
+                        if hero_entry.as_ref().is_some_and(|(_, a, _)| a.is_some()) {
+                            "{i18n::t(\"featured_album\")}"
+                        } else {
+                            // No album backs this entry — it came from
+                            // recently-played. Calling it a featured ALBUM was
+                            // the visible half of the same bug as the dead
+                            // button below.
+                            "{i18n::t(\"continue_listening\")}"
+                        }
                     }
                     h1 { class: "text-3xl md:text-5xl font-black text-white mb-4 leading-tight max-w-xl break-words", "{hero_title}" }
                     if !hero_artist.is_empty() {
@@ -845,11 +856,24 @@ fn ServerHeroBanner(
                         button {
                             class: "flex items-center gap-3 bg-white text-black px-8 py-3 rounded-full font-bold hover:bg-white/90 hover:scale-105 active:scale-95 transition-all w-fit",
                             onclick: {
-                                let id = hero_entry.as_ref().and_then(|(_, a, _)| a.as_ref().map(|a| a.id.clone()));
-                                move |_| {
-                                    if let Some(id) = id.clone() {
-                                        on_play_album.call(id)
-                                    }
+                                // A hero without an album must still play.
+                                //
+                                // The album is looked up by `track.album_id` in
+                                // `jellyfin_albums`, and YouTube Music tracks
+                                // frequently have no entry there. This handler
+                                // used to call `on_play_album` only when that
+                                // lookup succeeded and do NOTHING otherwise — no
+                                // error, no feedback, a button that silently
+                                // ignores the click. The track itself was in
+                                // hand the whole time.
+                                let album_id = hero_entry
+                                    .as_ref()
+                                    .and_then(|(_, a, _)| a.as_ref().map(|a| a.id.clone()));
+                                let track = hero_entry.as_ref().map(|(t, _, _)| t.clone());
+                                move |_| match (album_id.clone(), track.clone()) {
+                                    (Some(id), _) => on_play_album.call(id),
+                                    (None, Some(t)) => on_play_track.call(t),
+                                    (None, None) => {}
                                 }
                             },
                             i { class: "fa-solid fa-play text-[10px]" }
