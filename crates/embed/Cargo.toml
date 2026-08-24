@@ -1,0 +1,20 @@
+[package]
+name = "embed"
+version = "0.1.0"
+edition = "2024"
+
+# Deliberately not a dependency of the app. The ONNX runtime is a native
+# library with a per-platform build, and the Android build cannot be compiled
+# or tested locally — so this crate stays out of that path until it is wired in
+# behind a desktop-only target gate.
+
+[features]
+default = ["onnx"]
+# The native ONNX runtime. Everything else in this crate — the mel
+# spectrogram, the pooling, the hash check — builds and tests without it, so
+# a consumer that only needs the preprocessing does not pay for the runtime.
+onnx = ["dep:ort"]
+
+[dependencies]
+realfft = "3.5"
+ort = { version = "2.0.0-rc.13", optional = true }
