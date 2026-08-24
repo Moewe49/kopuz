@@ -19,7 +19,7 @@
 use player::systemint::{self, ExoEvent};
 use reader::models::Track;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, OnceLock};
 
@@ -107,24 +107,7 @@ fn mirror() -> &'static Mutex<Mirror> {
 /// a new song never waits behind a fill that is already irrelevant.
 static QUEUE_GEN: AtomicU64 = AtomicU64::new(0);
 
-/// Milliseconds since the engine started, at the last fast-start. Used to
-/// disbelieve an `Ended` that arrives before the look-ahead window can possibly
-/// have been filled. See the `ExoEvent::Ended` arm.
-static LAST_FAST_START_MS: AtomicI64 = AtomicI64::new(i64::MIN);
 
-/// Monotonic-enough clock for [`LAST_FAST_START_MS`].
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-/// A fast-start seeds ExoPlayer with the current track and appends the rest
-/// asynchronously. Until that append lands, ExoPlayer legitimately reaches the
-/// end of a one-item queue — which is not the end of the playlist.
-const FAST_START_GRACE_MS: i64 = 5_000;
 
 /// How far the fast-start scan walks looking for a playable track before it
 /// gives up and lets the stall retry handle it.
@@ -759,19 +742,32 @@ async fn handle_event(ev: ExoEvent) {
             // stuck on one song.
             eprintln!("[exo] ended at idx {idx} of {len}");
 
-            // Disbelieve an `Ended` that arrives right after a fast-start.
+            // Is ExoPlayer out of items because the QUEUE ended, or because the
+            // look-ahead window hasn't been handed over yet?
             //
-            // A fast-start hands ExoPlayer the current track alone and appends
-            // the look-ahead window afterwards, one resolve at a time. Reaching
-            // the end of that one-item queue is not the end of the playlist, but
-            // it produced a real `Ended` — and with a stale or unset index the
-            // guard below read it as "last track", seeded autoradio, and
-            // restarted everything at 0. Observed doing exactly that one second
-            // after a fast-start, twice in a row.
-            let just_fast_started =
-                now_ms() - LAST_FAST_START_MS.load(Ordering::Acquire) < FAST_START_GRACE_MS;
-            if just_fast_started {
-                eprintln!("[exo] ended within the fast-start grace window — ignoring");
+            // A fast-start gives ExoPlayer the current track alone and appends
+            // the rest as each one resolves. Reaching the end of that one-item
+            // queue is not the end of the playlist — but it produces a real
+            // `Ended`, and reading it as "last track" seeds autoradio and
+            // restarts at 0, which fast-starts again, forever.
+            //
+            // `resolved_upto` answers this exactly, with no clock involved: it
+            // is the highest index already given to ExoPlayer. If the mirror
+            // holds tracks past it, the window is simply still filling.
+            //
+            // (The first attempt at this used a five-second grace window after
+            // the last fast-start. The store that recorded that timestamp never
+            // made it into the file, so the sentinel stayed at i64::MIN and
+            // `now_ms() - i64::MIN` overflowed to a negative number — the guard
+            // then swallowed EVERY end-of-song and playback simply stopped.
+            // A condition that reads real state cannot fail that way.)
+            let window_incomplete = {
+                let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
+                m.resolved_upto + 1 < m.tracks.len()
+            };
+            if window_incomplete {
+                eprintln!("[exo] ended while the window was still filling — recovering");
+                let _ = engine_tx().send(Cmd::PlayFrom { position_ms: 0 });
                 return;
             }
 
