@@ -18,3 +18,15 @@ onnx = ["dep:ort"]
 [dependencies]
 realfft = "3.5"
 ort = { version = "2.0.0-rc.13", optional = true }
+
+# Examples only. Dev-dependencies are never built for a package that merely
+# depends on this crate, so nothing here can reach the app or the Android
+# target — which is the whole reason the end-to-end tool lives in this crate
+# rather than in `server`.
+[dev-dependencies]
+server = { workspace = true }
+reader = { workspace = true }
+scrobble = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+serde_json = { workspace = true }
