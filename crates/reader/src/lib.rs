@@ -1,11 +1,12 @@
+#[cfg(not(target_arch = "wasm32"))]
+pub mod candidates;
 pub mod cover_fetcher;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod metadata;
 pub mod models;
+pub mod rediscover;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod scanner;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod rediscover;
 pub mod share;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod utils;
