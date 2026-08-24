@@ -8,6 +8,7 @@ pub mod rediscover;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod scanner;
 pub mod share;
+pub mod taste;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod utils;
 
