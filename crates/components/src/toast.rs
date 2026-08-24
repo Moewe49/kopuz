@@ -14,7 +14,14 @@ pub fn show_toast(msg: impl Into<String>) {
         let mut sig = state.0;
         let msg = msg.into();
         sig.set(Some(msg.clone()));
-        spawn(async move {
+        // `spawn_forever`, not `spawn`: a plain `spawn` binds the future to the
+        // calling scope, so dismissing the dialog that raised the toast makes
+        // dioxus cancel the pending sleep — and the toast then stays on screen
+        // forever. That is exactly what happened after a playlist import: the
+        // share modal unmounts, the timer dies with it, "imported" never
+        // clears. ROOT outlives every caller, and the future only touches a
+        // `Copy` signal, so it is safe to leave there.
+        dioxus::core::spawn_forever(async move {
             utils::sleep(std::time::Duration::from_secs(3)).await;
             // Only clear if our message is still the one showing.
             if sig.peek().as_deref() == Some(msg.as_str()) {

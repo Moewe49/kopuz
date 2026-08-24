@@ -23,6 +23,22 @@
     background: var(--color-black, #000000);
 }
 
+/* `scrollbar-hide` is used on eleven horizontal strips (home shelves, discover
+   rows, artist rows) but was never defined — it comes from a Tailwind plugin
+   this project does not install, so every carousel has been showing the themed
+   scrollbar above it was meant to suppress. Written out by hand rather than
+   adding the plugin for one utility. */
+.scrollbar-hide {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* old Edge */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+}
+
 @keyframes scan-slide {
     0% {
         transform: translateX(-100%);

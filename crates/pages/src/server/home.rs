@@ -81,6 +81,11 @@ pub fn JellyfinHome(
     on_select_album: EventHandler<String>,
     on_play_album: EventHandler<String>,
     on_select_playlist: EventHandler<String>,
+    /// Opening a playlist from the YT "For You" shelves, which is NOT the same
+    /// action as opening a saved one: those ids only exist on YouTube, so the
+    /// saved-playlist route looks them up in the local store, finds nothing and
+    /// renders "playlist not found" — which is what every For You tile did.
+    on_select_discover_playlist: EventHandler<(String, String)>,
     on_search_artist: EventHandler<String>,
 ) -> Element {
     let is_offline = use_context::<Signal<bool>>();
@@ -131,9 +136,8 @@ pub fn JellyfinHome(
         });
     });
     // ShelfRow wants pair handlers; the home only has single-arg ones. Adapt:
-    // playlist → use its id; artist → search by name.
-    let on_select_playlist_pair =
-        EventHandler::new(move |(id, _title): (String, String)| on_select_playlist.call(id));
+    // artist → search by name. Playlists keep both halves, because the title is
+    // what the detail view shows before its own fetch returns.
     let on_open_artist_pair =
         EventHandler::new(move |(_cid, name): (String, String)| on_search_artist.call(name));
 
@@ -529,7 +533,7 @@ pub fn JellyfinHome(
                             shelf: shelf.clone(),
                             scroll_id: format!("home-foryou-{}", shelf.title),
                             on_select_album,
-                            on_select_playlist: on_select_playlist_pair,
+                            on_select_playlist: on_select_discover_playlist,
                             on_open_artist: on_open_artist_pair,
                             on_search_artist,
                         }

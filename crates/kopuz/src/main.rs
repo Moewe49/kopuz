@@ -241,7 +241,11 @@ async fn fetch_available_update_via_redirect() -> Option<AvailableUpdate> {
         .send()
         .await
         .ok()?;
-    let location = resp.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
+    let location = resp
+        .headers()
+        .get(reqwest::header::LOCATION)?
+        .to_str()
+        .ok()?;
     let tag = location.rsplit('/').next()?.to_string();
     if !is_newer_version(env!("CARGO_PKG_VERSION"), &tag) {
         return None;
@@ -250,9 +254,8 @@ async fn fetch_available_update_via_redirect() -> Option<AvailableUpdate> {
     Some(AvailableUpdate {
         version: tag.trim_start_matches(['v', 'V']).to_string(),
         release_url: format!("https://github.com/Moewe49/kopuz/releases/tag/{tag}"),
-        installer_url: platform_asset_name().map(|name| {
-            format!("https://github.com/Moewe49/kopuz/releases/download/{tag}/{name}")
-        }),
+        installer_url: platform_asset_name()
+            .map(|name| format!("https://github.com/Moewe49/kopuz/releases/download/{tag}/{name}")),
     })
 }
 
@@ -3380,6 +3383,16 @@ fn App() -> Element {
                                 on_select_playlist: move |id: String| {
                                     selected_playlist_id.set(Some(id));
                                     current_route.set(Route::Playlists);
+                                },
+                                // A For You tile carries a YouTube playlist id,
+                                // which the saved-playlist route cannot resolve.
+                                // Same destination Discover uses, with the
+                                // origin set to Home so Back returns here.
+                                on_select_discover_playlist: move |(id, title): (String, String)| {
+                                    discover_selected_playlist_id.set(Some(id));
+                                    discover_selected_playlist_title.set(Some(title));
+                                    discover_playlist_origin.set(Route::Home);
+                                    current_route.set(Route::DiscoverPlaylist);
                                 },
                                 on_search_artist: move |artist: String| {
                                     selected_artist_name.set(artist);

@@ -79,12 +79,7 @@ fn to_shared(
                 // Not in the library (a stale entry, or a source this build
                 // doesn't index). A portable path still travels on its own; a
                 // local path becomes a title we can at least try to match.
-                None => share::shared_track(
-                    key,
-                    &file_stem(key),
-                    "",
-                    0,
-                ),
+                None => share::shared_track(key, &file_stem(key), "", 0),
             }
         })
         .collect();
@@ -178,7 +173,14 @@ pub fn PlaylistShareModal(
     let mut do_import = move |decoded: SharedPlaylist| {
         importing.set(true);
         spawn(async move {
-            let outcome = import_playlist(decoded.clone(), config, playlist_store, is_server, is_ytmusic).await;
+            let outcome = import_playlist(
+                decoded.clone(),
+                config,
+                playlist_store,
+                is_server,
+                is_ytmusic,
+            )
+            .await;
             importing.set(false);
             match outcome {
                 Ok(o) => {
@@ -194,7 +196,11 @@ pub fn PlaylistShareModal(
     rsx! {
         div {
             class: "fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4",
-            onclick: move |_| on_close.call(()),
+            // Dismissal is blocked while an import runs, matching
+            // `SpotifyImportModal`. The import task is bound to this scope, so
+            // unmounting mid-flight cancels it silently — the tracks that were
+            // already added stay, and nothing says so.
+            onclick: move |_| if !*importing.read() { on_close.call(()) },
             div {
                 class: "bg-neutral-900 rounded-xl border border-white/10 w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col",
                 onclick: move |e| e.stop_propagation(),
@@ -208,8 +214,9 @@ pub fn PlaylistShareModal(
                         }
                     }
                     button {
-                        class: "text-white/40 hover:text-white transition-colors px-2",
-                        onclick: move |_| on_close.call(()),
+                        class: "text-white/40 hover:text-white transition-colors px-2 disabled:opacity-30",
+                        disabled: *importing.read(),
+                        onclick: move |_| if !*importing.read() { on_close.call(()) },
                         i { class: "fa-solid fa-xmark" }
                     }
                 }
