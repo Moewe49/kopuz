@@ -107,6 +107,25 @@ fn mirror() -> &'static Mutex<Mirror> {
 /// a new song never waits behind a fill that is already irrelevant.
 static QUEUE_GEN: AtomicU64 = AtomicU64::new(0);
 
+/// Milliseconds since the engine started, at the last fast-start. Used to
+/// disbelieve an `Ended` that arrives before the look-ahead window can possibly
+/// have been filled. See the `ExoEvent::Ended` arm.
+static LAST_FAST_START_MS: AtomicI64 = AtomicI64::new(i64::MIN);
+
+/// Monotonic-enough clock for [`LAST_FAST_START_MS`].
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// A fast-start seeds ExoPlayer with the current track and appends the rest
+/// asynchronously. Until that append lands, ExoPlayer legitimately reaches the
+/// end of a one-item queue — which is not the end of the playlist.
+const FAST_START_GRACE_MS: i64 = 5_000;
+
 /// How far the fast-start scan walks looking for a playable track before it
 /// gives up and lets the stall retry handle it.
 const MAX_FAST_START_SCAN: usize = 12;
@@ -730,10 +749,33 @@ async fn handle_event(ev: ExoEvent) {
             // lagged) — recover by resolving+playing from the next track instead
             // of dead-stopping mid-playlist. Only a TRUE end (index at the last
             // track) flags autoradio for the driver.
-            let has_more = {
+            let (idx, len) = {
                 let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-                m.index + 1 < m.tracks.len()
+                (m.index, m.tracks.len())
             };
+            // Say what the decision was made on. Without these two numbers an
+            // `Ended` is unattributable: the queue collapsing into autoradio and
+            // restarting at 0 looked from the outside like the display being
+            // stuck on one song.
+            eprintln!("[exo] ended at idx {idx} of {len}");
+
+            // Disbelieve an `Ended` that arrives right after a fast-start.
+            //
+            // A fast-start hands ExoPlayer the current track alone and appends
+            // the look-ahead window afterwards, one resolve at a time. Reaching
+            // the end of that one-item queue is not the end of the playlist, but
+            // it produced a real `Ended` — and with a stale or unset index the
+            // guard below read it as "last track", seeded autoradio, and
+            // restarted everything at 0. Observed doing exactly that one second
+            // after a fast-start, twice in a row.
+            let just_fast_started =
+                now_ms() - LAST_FAST_START_MS.load(Ordering::Acquire) < FAST_START_GRACE_MS;
+            if just_fast_started {
+                eprintln!("[exo] ended within the fast-start grace window — ignoring");
+                return;
+            }
+
+            let has_more = idx + 1 < len;
             if has_more {
                 {
                     let mut m = mirror().lock().unwrap_or_else(|e| e.into_inner());
