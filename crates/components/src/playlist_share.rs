@@ -79,59 +79,6 @@ fn current_jam(ctrl: &PlayerController, now_secs: u64) -> Option<String> {
     }))
 }
 
-/// Turn the tracks a jam carries into something playable, and map the
-/// sender's position onto the result.
-///
-/// Only tracks that travelled with a portable id can play directly. One that
-/// travelled as metadata would need a search before playback could start,
-/// which is the wrong trade for something meant to begin immediately.
-///
-/// Dropping tracks shifts every index after them, so the mapping is done here
-/// rather than by the caller: `at` is an index into the jam's own list, and
-/// what comes back indexes the playable list. If the track the sender was on
-/// is itself unplayable here, the next one that is plays from its start —
-/// carrying the position across would drop the listener into the middle of a
-/// song the sender had not reached.
-fn jam_tracks(jam: &Jam, at: usize) -> (Vec<reader::models::Track>, usize, bool, usize) {
-    let mut out = Vec::new();
-    let mut dropped = 0usize;
-    let mut mapped = 0usize;
-    let mut landed_on_anchor = false;
-    for (i, t) in jam.playlist.tracks.iter().enumerate() {
-        let Some(path) = &t.path else {
-            dropped += 1;
-            continue;
-        };
-        if i == at {
-            mapped = out.len();
-            landed_on_anchor = true;
-        } else if i < at {
-            // Keeps `mapped` pointing at the first playable track at or after
-            // the anchor, for the case where the anchor itself is dropped.
-            mapped = out.len() + 1;
-        }
-        out.push(reader::models::Track {
-            path: std::path::PathBuf::from(path),
-            album_id: String::new(),
-            title: t.title.clone(),
-            artist: t.artist.clone(),
-            album: String::new(),
-            duration: t.duration,
-            khz: 0,
-            bitrate: 0,
-            track_number: None,
-            disc_number: None,
-            musicbrainz_release_id: None,
-            musicbrainz_recording_id: None,
-            musicbrainz_track_id: None,
-            playlist_item_id: None,
-            artists: vec![t.artist.clone()],
-        });
-    }
-    let mapped = mapped.min(out.len().saturating_sub(1));
-    (out, mapped, landed_on_anchor, dropped)
-}
-
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -291,7 +238,7 @@ pub fn PlaylistShareModal(
             return;
         };
         let (at, position_ms) = share::catch_up(&jam, now_secs());
-        let (tracks, index, on_anchor, dropped) = jam_tracks(&jam, at);
+        let (tracks, index, on_anchor, dropped) = crate::jam::jam_tracks(&jam, at);
         if tracks.is_empty() {
             show_toast("Nothing in that jam can be played here".to_string());
             return;
