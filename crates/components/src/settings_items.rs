@@ -1344,11 +1344,6 @@ pub fn RadioRegistryDropdown(
 ///
 /// Desktop only: the runtime has no verified aarch64-android build, and the
 /// phone is meant to consume the result rather than compute it.
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    not(target_os = "android"),
-    not(target_os = "ios")
-))]
 /// Where this device's siblings can be reached.
 ///
 /// Two fields and a button that answers the only question worth asking: does
@@ -1450,6 +1445,11 @@ pub fn RelaySetting(config: Signal<config::AppConfig>) -> Element {
     }
 }
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
 #[component]
 pub fn AudioAnalysisSetting(config: Signal<config::AppConfig>) -> Element {
     let enabled = config.read().audio_analysis;
