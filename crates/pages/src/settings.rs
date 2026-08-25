@@ -19,6 +19,30 @@ fn theme_editor_section(config: Signal<AppConfig>) -> Element {
 fn theme_editor_section(_config: Signal<AppConfig>) -> Element {
     rsx! {}
 }
+
+/// Audio analysis is desktop-only: the ONNX runtime has no verified
+/// aarch64-android build, and the phone is meant to consume the resulting
+/// mixes rather than compute them.
+///
+/// Two definitions rather than a `cfg!` inside the rsx. `cfg!` is a runtime
+/// boolean — the code inside it is still compiled, so on Android it looked for
+/// a component whose import had been configured away. That is what broke the
+/// first build of this.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
+fn audio_analysis_section(config: Signal<AppConfig>) -> Element {
+    rsx! {
+        AudioAnalysisSetting { config }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", target_os = "android", target_os = "ios"))]
+fn audio_analysis_section(_config: Signal<AppConfig>) -> Element {
+    rsx! {}
+}
 #[cfg(all(
     not(target_arch = "wasm32"),
     not(target_os = "android"),
@@ -731,15 +755,7 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                         }
                         // Sits beside autoradio because it changes the same
                         // thing: what plays next and what the mixes contain.
-                        // Desktop only — the runtime has no verified
-                        // aarch64-android build.
-                        if cfg!(all(
-                            not(target_arch = "wasm32"),
-                            not(target_os = "android"),
-                            not(target_os = "ios")
-                        )) {
-                            AudioAnalysisSetting { config }
-                        }
+                        {audio_analysis_section(config)}
                         if !cfg!(target_arch = "wasm32") {
                             SettingItem {
                                 title: i18n::t("auto_check_updates").to_string(),
