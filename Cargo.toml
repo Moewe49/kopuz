@@ -27,7 +27,7 @@ resolver = "3"
 rustls-platform-verifier = { path = "vendor/rustls-platform-verifier" }
 
 [workspace.package]
-version = "0.7.98"
+version = "0.7.99"
 
 [workspace.dependencies]
 dioxus = { version = "0.7.9", features = [] }
