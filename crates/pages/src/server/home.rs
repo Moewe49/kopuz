@@ -59,6 +59,15 @@ fn album_cover_url(conf: &AppConfig, album: &Album) -> Option<String> {
     )
 }
 
+/// Where the generated mixes live. Config rather than cache: they are cheap to
+/// read and expensive to rebuild — eight paced network requests — so losing
+/// them to a cache clear would be a visible, silent regression on next launch.
+fn mixes_path() -> std::path::PathBuf {
+    directories::ProjectDirs::from("com", "temidaradev", "kopuz")
+        .map(|d| d.config_dir().join("mixes.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("./config/mixes.json"))
+}
+
 fn track_cover_url(conf: &AppConfig, track: &Track) -> Option<String> {
     let server = conf.server.as_ref()?;
     let path_str = track.path.to_string_lossy();
@@ -135,6 +144,111 @@ pub fn JellyfinHome(
             }
         });
     });
+    // Generated mixes: several directions from this listener's own history,
+    // told apart by how much their radios overlap rather than by genre tags.
+    // Persisted, because building them costs eight paced radio requests and
+    // the shelf should be a fixture the listener recognises, not a slot machine.
+    let mut mixes = use_signal(server::mixes::MixSet::default);
+    let mut mixes_loaded = use_signal(|| false);
+    use_effect(move || {
+        if *mixes_loaded.peek() {
+            return;
+        }
+        mixes_loaded.set(true);
+        let path = mixes_path();
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(set) = serde_json::from_str::<server::mixes::MixSet>(&text)
+        {
+            mixes.set(set);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if !mixes.peek().is_stale(now) {
+            return;
+        }
+        // Anchors are the most-played YouTube tracks. `listen_counts` keys look
+        // like `ytmusic:<id>:urlhex_…`; only the id seeds a radio.
+        let conf = config.peek();
+        let is_yt = conf
+            .server
+            .as_ref()
+            .map(|s| s.service == MusicService::YtMusic)
+            .unwrap_or(false);
+        if !is_yt {
+            return;
+        }
+        let mut plays: Vec<(String, u64)> = conf
+            .listen_counts
+            .iter()
+            .filter(|&(_, &n)| n >= 3)
+            .filter_map(|(k, &n)| {
+                let mut parts = k.split(':');
+                (parts.next()? == "ytmusic").then(|| parts.next().map(|id| (id.to_string(), n)))?
+            })
+            .collect();
+        // Ties by id, so an unchanged history rebuilds the same shelf.
+        plays.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let anchors: Vec<String> = plays.into_iter().map(|(id, _)| id).collect();
+        if anchors.is_empty() {
+            return;
+        }
+        let cookies = conf
+            .server
+            .as_ref()
+            .and_then(|s| s.access_token.clone())
+            .unwrap_or_default();
+        drop(conf);
+        spawn(async move {
+            let built = server::mixes::generate(&anchors, &cookies, now).await;
+            if built.mixes.is_empty() {
+                return;
+            }
+            if let Ok(text) = serde_json::to_string(&built) {
+                let path = mixes_path();
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&path, text);
+            }
+            mixes.set(built);
+        });
+    });
+
+    // Mixes as shelf cards. They reuse the album tile — same shape, same
+    // hover, same play button — so a new visual is not invented for something
+    // that behaves like the rows around it.
+    let mix_cards = use_memo(move || -> Vec<AlbumCard> {
+        let conf = config.read();
+        mixes
+            .read()
+            .mixes
+            .iter()
+            .map(|m| {
+                (
+                    m.id.clone(),
+                    m.name.clone(),
+                    i18n::t_with("track_count", &[("count", m.tracks.len().to_string())]),
+                    m.tracks.first().and_then(|t| track_cover_url(&conf, t)),
+                )
+            })
+            .collect()
+    });
+    let on_play_mix = EventHandler::new(move |id: String| {
+        let tracks = mixes
+            .peek()
+            .mixes
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| m.tracks.clone())
+            .unwrap_or_default();
+        if !tracks.is_empty() {
+            let mut ctrl = ctrl;
+            ctrl.play_queue_linear(tracks);
+        }
+    });
+
     // ShelfRow wants pair handlers; the home only has single-arg ones. Adapt:
     // artist → search by name. Playlists keep both halves, because the title is
     // what the detail view shows before its own fetch returns.
@@ -632,6 +746,7 @@ pub fn JellyfinHome(
                                     jellyfin_artists(),
                                     new_releases(),
                                     made_for_you(),
+                                    mix_cards(),
                                     recently_added(),
                                     recent_playlists(),
                                     on_select_album,
@@ -639,6 +754,7 @@ pub fn JellyfinHome(
                                     on_play_track,
                                     on_select_playlist,
                                     on_search_artist,
+                                    on_play_mix,
                                     scroll_container,
                                 )}
                             }
@@ -666,6 +782,9 @@ fn render_server_section(
     artists: Vec<(String, Option<String>)>,
     new_releases: Vec<AlbumCard>,
     made_for_you: (String, Vec<AlbumCard>),
+    // Generated mixes, as cards. When there are any they take over the
+    // "Made for you" slot from the genre shelf — see the arm below.
+    mixes: Vec<AlbumCard>,
     recently_added: Vec<AlbumCard>,
     recent_playlists: Vec<(String, String, usize, Option<String>)>,
     on_select_album: EventHandler<String>,
@@ -673,6 +792,7 @@ fn render_server_section(
     on_play_track: EventHandler<Track>,
     on_select_playlist: EventHandler<String>,
     on_search_artist: EventHandler<String>,
+    on_play_mix: EventHandler<String>,
     scroll_container: impl Fn(&str, i32) + Copy + 'static,
 ) -> Element {
     match key {
@@ -714,6 +834,26 @@ fn render_server_section(
             scroll_container,
         ),
         "made_for_you" => {
+            // Mixes take this slot when there are any. The genre shelf they
+            // replace could only ever offer more of one label, and it read
+            // `jellyfin_albums`, so for a YouTube Music account it was empty.
+            // Reusing the existing key rather than adding one keeps the shelf
+            // order the listener already arranged, and needs no new string in
+            // twenty-one locale files.
+            if !mixes.is_empty() {
+                return render_albums_row(
+                    "jelly-mixes-scroll",
+                    i18n::t("made_for_you").to_string(),
+                    i18n::t("music").to_string(),
+                    is_modern,
+                    mixes,
+                    // No detail view yet: a mix tile plays, whichever half of
+                    // it is clicked.
+                    on_play_mix,
+                    on_play_mix,
+                    scroll_container,
+                );
+            }
             let (genre, albums) = made_for_you;
             let eyebrow = if genre.is_empty() {
                 i18n::t("music").to_string()
