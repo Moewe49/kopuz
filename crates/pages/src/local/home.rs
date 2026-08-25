@@ -48,6 +48,16 @@ pub fn LocalHome(
 ) -> Element {
     let mut config = use_context::<Signal<AppConfig>>();
 
+    // Play a single track now. Continue-listening tiles are individual songs,
+    // and routing their click through an album id leaves a loose file with no
+    // album metadata completely dead — both the tile and its play button did
+    // nothing at all. The server home already fixed this for the same reason.
+    let ctrl = use_context::<hooks::use_player_controller::PlayerController>();
+    let on_play_track = EventHandler::new(move |t: Track| {
+        let mut ctrl = ctrl;
+        ctrl.play_queue_linear(vec![t]);
+    });
+
     let recent_albums = use_memo(move || {
         let lib = library.read();
         let mut unique_albums = Vec::new();
@@ -411,6 +421,7 @@ pub fn LocalHome(
                                     recent_playlists(),
                                     on_select_album,
                                     on_play_album,
+                                    on_play_track,
                                     on_select_playlist,
                                     on_search_artist,
                                     scroll_container,
@@ -444,6 +455,7 @@ fn render_local_section(
     recent_playlists: Vec<(String, String, usize, Option<String>)>,
     on_select_album: EventHandler<String>,
     on_play_album: EventHandler<String>,
+    on_play_track: EventHandler<Track>,
     on_select_playlist: EventHandler<String>,
     on_search_artist: EventHandler<String>,
     scroll_container: impl Fn(&str, i32) + Copy + 'static,
@@ -465,6 +477,7 @@ fn render_local_section(
             continue_listening,
             on_select_album,
             on_play_album,
+            on_play_track,
             scroll_container,
         ),
         "listen_now" => render_listen_now(
@@ -719,6 +732,7 @@ fn render_continue_listening(
     tracks: Vec<(Track, Option<Album>)>,
     on_select_album: EventHandler<String>,
     on_play_album: EventHandler<String>,
+    on_play_track: EventHandler<Track>,
     scroll_container: impl Fn(&str, i32) + Copy + 'static,
 ) -> Element {
     if tracks.is_empty() {
@@ -766,9 +780,15 @@ fn render_continue_listening(
                             div {
                                 key: "{key}",
                                 class: "flex-none w-44 group cursor-pointer",
-                                onclick: move |_| {
-                                    if let Some(id) = album_id_click.clone() {
-                                        on_select_album.call(id);
+                                onclick: {
+                                    // Falls back to playing the track itself.
+                                    // A loose file with no album metadata has
+                                    // no id to route through, and this tile
+                                    // used to do nothing at all for those.
+                                    let track = track.clone();
+                                    move |_| match album_id_click.clone() {
+                                        Some(id) => on_select_album.call(id),
+                                        None => on_play_track.call(track.clone()),
                                     }
                                 },
                                 div { class: "aspect-square rounded-xl bg-stone-800 mb-3 overflow-hidden relative gpu-hover",
@@ -782,10 +802,14 @@ fn render_continue_listening(
                                     div {
                                         class: "absolute right-2 bottom-2 w-10 h-10 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0",
                                         style: "background: var(--color-indigo-500);",
-                                        onclick: move |evt| {
-                                            evt.stop_propagation();
-                                            if let Some(id) = album_id_play.clone() {
-                                                on_play_album.call(id);
+                                        onclick: {
+                                            let track = track.clone();
+                                            move |evt: Event<MouseData>| {
+                                                evt.stop_propagation();
+                                                match album_id_play.clone() {
+                                                    Some(id) => on_play_album.call(id),
+                                                    None => on_play_track.call(track.clone()),
+                                                }
                                             }
                                         },
                                         i { class: "fa-solid fa-play text-white text-xs ml-0.5" }
