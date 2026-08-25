@@ -67,6 +67,16 @@ pub struct MixSet {
     pub mixes: Vec<Mix>,
     /// Unix seconds. 0 means "never generated".
     pub generated: u64,
+    /// Feature version of the vectors these were built from, or 0 when they
+    /// came from the radio path instead.
+    ///
+    /// Without this a set stays "fresh" for a day even after the vectors
+    /// underneath it were corrected — which is exactly what happened: the
+    /// spectrogram fix landed, every vector was recomputed, and the shelf kept
+    /// serving mixes built from the wrong ones because they were only an hour
+    /// old. A mix set has no other way to know what it was made from.
+    #[serde(default)]
+    pub feature_version: u8,
 }
 
 /// How often to rebuild. A day: long enough that the shelf is a fixture the
@@ -84,7 +94,13 @@ pub const REFRESH_SECS: u64 = 24 * 60 * 60;
 pub const RETRY_SECS: u64 = 60 * 60;
 
 impl MixSet {
-    pub fn is_stale(&self, now_secs: u64) -> bool {
+    /// `vectors_version` is what the caller has available right now:
+    /// [`reader::vectors::FEATURE_VERSION`] when there are vectors, 0 when
+    /// there are none. A mismatch means these mixes describe different data.
+    pub fn is_stale(&self, now_secs: u64, vectors_version: u8) -> bool {
+        if self.feature_version != vectors_version {
+            return true;
+        }
         // 0 means never generated, and must not be read as "just now" — which
         // is what an age subtraction says when the clock is also near zero.
         if self.generated == 0 {
@@ -276,6 +292,9 @@ pub async fn generate(anchor_ids: &[String], cookies: &str, now_secs: u64) -> Mi
     MixSet {
         mixes: distinct_mixes(&candidates),
         generated: now_secs,
+        // Built from radios, not from audio: anything analysed later should
+        // supersede this rather than wait out the refresh interval.
+        feature_version: 0,
     }
 }
 
@@ -334,6 +353,7 @@ pub fn from_vectors(
         return MixSet {
             mixes: Vec::new(),
             generated: now_secs,
+            feature_version: reader::vectors::FEATURE_VERSION,
         };
     }
 
@@ -387,6 +407,7 @@ pub fn from_vectors(
     MixSet {
         mixes,
         generated: now_secs,
+        feature_version: reader::vectors::FEATURE_VERSION,
     }
 }
 
@@ -673,6 +694,67 @@ mod tests {
         assert_eq!(set.generated, 500);
     }
 
+    /// A file written before the field existed — which is what is sitting on
+    /// disk right now for anyone who used the previous build. It must read
+    /// back as "unknown provenance" and therefore rebuild, not fail to parse
+    /// and not silently claim to be current.
+    #[test]
+    fn a_mix_file_from_before_this_field_reads_as_unknown_provenance() {
+        let legacy = r#"{"mixes":[],"generated":1700000000}"#;
+        let set: MixSet = serde_json::from_str(legacy).expect("legacy file must still parse");
+        assert_eq!(set.feature_version, 0);
+        assert!(
+            set.is_stale(1_700_000_001, reader::vectors::FEATURE_VERSION),
+            "an old file must not pass as current"
+        );
+    }
+
+    /// The measured failure: the spectrogram fix landed, every vector was
+    /// recomputed, and the shelf kept serving mixes built from the old ones
+    /// because they were only an hour old. Age is not the only way to be out
+    /// of date.
+    #[test]
+    fn mixes_built_from_different_vectors_are_stale_however_recent() {
+        let just_made = MixSet {
+            mixes: vec![Mix {
+                id: "mix:a".into(),
+                name: "A".into(),
+                tracks: radio(0, 10, "A"),
+            }],
+            generated: 1_000_000,
+            feature_version: 1,
+        };
+        assert!(
+            just_made.is_stale(1_000_001, 2),
+            "a set from older vectors must rebuild immediately"
+        );
+        assert!(
+            !just_made.is_stale(1_000_001, 1),
+            "same vectors, still fresh"
+        );
+    }
+
+    /// Mixes from the radio path carry version 0, so the moment any audio has
+    /// been analysed they give way to it rather than holding the shelf for a
+    /// day.
+    #[test]
+    fn radio_mixes_give_way_once_vectors_exist() {
+        let from_radio = MixSet {
+            mixes: vec![Mix {
+                id: "mix:a".into(),
+                name: "A".into(),
+                tracks: radio(0, 10, "A"),
+            }],
+            generated: 1_000_000,
+            feature_version: 0,
+        };
+        assert!(
+            !from_radio.is_stale(1_000_001, 0),
+            "no vectors yet, keep them"
+        );
+        assert!(from_radio.is_stale(1_000_001, 2), "vectors exist now");
+    }
+
     /// The set is written to disk and read back on the next launch, and the
     /// detail page renders straight from it — so a Track field that does not
     /// survive serde would show up as an empty tracklist rather than an error.
@@ -684,6 +766,7 @@ mod tests {
                 ("b".to_string(), radio(100, 20, "Artist B")),
             ]),
             generated: 1_700_000_000,
+            feature_version: reader::vectors::FEATURE_VERSION,
         };
         assert_eq!(original.mixes.len(), 2);
 
@@ -710,13 +793,14 @@ mod tests {
         let empty = MixSet {
             mixes: Vec::new(),
             generated: 1_000_000,
+            feature_version: 0,
         };
         assert!(
-            !empty.is_stale(1_000_000 + RETRY_SECS - 1),
+            !empty.is_stale(1_000_000 + RETRY_SECS - 1, 0),
             "must not re-fire immediately"
         );
         assert!(
-            empty.is_stale(1_000_000 + RETRY_SECS),
+            empty.is_stale(1_000_000 + RETRY_SECS, 0),
             "but must try again before a whole day"
         );
     }
@@ -732,10 +816,12 @@ mod tests {
                 tracks: radio(0, 10, "A"),
             }],
             generated: 1_000_000,
+            feature_version: reader::vectors::FEATURE_VERSION,
         };
-        assert!(!fresh.is_stale(1_000_000 + REFRESH_SECS - 1));
-        assert!(fresh.is_stale(1_000_000 + REFRESH_SECS));
+        let v = reader::vectors::FEATURE_VERSION;
+        assert!(!fresh.is_stale(1_000_000 + REFRESH_SECS - 1, v));
+        assert!(fresh.is_stale(1_000_000 + REFRESH_SECS, v));
         // Never generated is always stale.
-        assert!(MixSet::default().is_stale(0));
+        assert!(MixSet::default().is_stale(0, 0));
     }
 }

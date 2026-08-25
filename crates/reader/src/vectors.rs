@@ -47,7 +47,8 @@ const MAGIC: &[u8; 4] = b"KPZV";
 ///
 /// v1: magnitude spectrogram (wrong).
 /// v2: power spectrogram, matching Essentia at cosine 0.999919.
-const VERSION: u8 = 2;
+pub const FEATURE_VERSION: u8 = 2;
+const VERSION: u8 = FEATURE_VERSION;
 
 /// One vector per track id, all of the same width.
 #[derive(Debug, Clone, Default, PartialEq)]

@@ -183,7 +183,20 @@ pub fn JellyfinHome(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        if !mixes.peek().is_stale(now) {
+        // What the shelf must agree with: the version of the vectors on disk,
+        // or 0 when nothing has been analysed. A mix set built from different
+        // vectors is out of date however recently it was made.
+        let vectors_version =
+            reader::vectors::VectorStore::load(&mixes_dir().join("style_vectors.bin"), 400)
+                .map(|s| {
+                    if s.is_empty() {
+                        0
+                    } else {
+                        reader::vectors::FEATURE_VERSION
+                    }
+                })
+                .unwrap_or(0);
+        if !mixes.peek().is_stale(now, vectors_version) {
             return;
         }
         // Anchors are the most-played YouTube tracks. `listen_counts` keys look
