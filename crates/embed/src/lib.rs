@@ -7,6 +7,7 @@ pub mod decode;
 pub mod mel;
 pub mod model;
 pub mod resample;
+pub mod runtime;
 
 #[cfg(feature = "onnx")]
 pub mod session;

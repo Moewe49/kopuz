@@ -25,7 +25,14 @@ symphonia = { workspace = true }
 # measured: "unsupported audio codec". The player carries the same adapter for
 # the same reason.
 symphonia-adapter-libopus = "0.3"
-ort = { version = "2.0.0-rc.13", optional = true }
+# `load-dynamic`, not the default static link. Measured: linking ONNX Runtime
+# adds 17.6 MB to a binary (3.8 -> 21.4 MB on the same example), which would
+# take the app from 26.7 MB to about 44 MB — and the in-app updater downloads
+# the whole archive on every release. The model is already a runtime download
+# because its licence forbids bundling, and recommendations are opt-in, so the
+# runtime rides along with it. A listener who never turns the feature on pays
+# nothing, and the build needs no network.
+ort = { version = "2.0.0-rc.13", optional = true, default-features = false, features = ["load-dynamic", "std", "ndarray"] }
 
 # Examples only. Dev-dependencies are never built for a package that merely
 # depends on this crate, so nothing here can reach the app or the Android

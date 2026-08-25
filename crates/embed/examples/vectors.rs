@@ -23,6 +23,10 @@ fn main() {
         pcm.len() as f32 / 16_000.0
     );
 
+    // The runtime is not linked into the binary; point ort at it first.
+    if let Ok(rt) = std::env::var("KOPUZ_ORT") {
+        embed::session::use_runtime(&rt).expect("load onnx runtime");
+    }
     let mut embedder = Embedder::open(&model).expect("load model");
     let v = embedder.vectors(&pcm).expect("embed");
     // Machine-readable, so the comparison script does not have to parse prose.

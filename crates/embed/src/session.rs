@@ -15,6 +15,31 @@ pub struct Embedder {
     mel: Mel,
 }
 
+/// Point ort at an ONNX Runtime shared library on disk.
+///
+/// Must succeed before any [`Embedder`] is opened. The runtime is not linked
+/// into the binary — see the note on the `ort` dependency for the measurement
+/// behind that — so this is how it gets found.
+///
+/// Calling it twice is harmless: ort keeps the first environment, and a second
+/// path is ignored rather than being an error.
+pub fn use_runtime(path: impl AsRef<std::path::Path>) -> Result<(), Error> {
+    let path = path.as_ref();
+    if !path.exists() {
+        return Err(Error::Model(format!(
+            "ONNX Runtime not found at {}",
+            path.display()
+        )));
+    }
+    // `commit` returns whether this call was the one that created the
+    // environment, not whether it worked — a second call with a different path
+    // simply returns false and keeps the first.
+    let _first = ort::init_from(path.to_string_lossy().as_ref())
+        .map_err(|e| Error::Model(format!("ONNX Runtime at {}: {e}", path.display())))?
+        .commit();
+    Ok(())
+}
+
 impl Embedder {
     /// Load weights from disk. The file is never bundled — see the licence
     /// note in [`crate::model`] — so this is always a path the caller
