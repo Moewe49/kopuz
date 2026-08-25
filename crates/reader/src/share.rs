@@ -216,6 +216,12 @@ fn plan(track: &SharedTrack) -> Plan<'_> {
 
 /// Encode a playlist into one pasteable token.
 pub fn encode(playlist: &SharedPlaylist) -> String {
+    format!("{PREFIX}{}", URL_SAFE_NO_PAD.encode(encode_body(playlist)))
+}
+
+/// The payload without its prefix or base64 wrapper, so a jam code can carry
+/// the same bytes behind its own header instead of duplicating the format.
+fn encode_body(playlist: &SharedPlaylist) -> Vec<u8> {
     let plans: Vec<Plan<'_>> = playlist.tracks.iter().map(plan).collect();
     let all_yt = !plans.is_empty() && plans.iter().all(|p| matches!(p, Plan::YtPacked(_)));
 
@@ -257,7 +263,7 @@ pub fn encode(playlist: &SharedPlaylist) -> String {
         }
     }
 
-    format!("{PREFIX}{}", URL_SAFE_NO_PAD.encode(&body))
+    body
 }
 
 fn portable(path: String) -> SharedTrack {
@@ -276,24 +282,40 @@ fn portable(path: String) -> SharedTrack {
 /// about the payload: an unknown version or unreadable base64 is an error, not
 /// a half-recovered playlist.
 pub fn decode(input: &str) -> Result<SharedPlaylist, String> {
+    let bytes = unwrap_token(
+        input,
+        PREFIX,
+        "That doesn't look like a Kopuz playlist link.",
+    )?;
+    decode_body(&bytes)
+}
+
+/// Pull the base64 payload out of a pasted token.
+///
+/// Tolerant about what surrounds it — people paste with stray whitespace,
+/// quotes, or a chat client's zero-width junk attached — and strict about
+/// what is inside.
+fn unwrap_token(input: &str, prefix: &str, not_ours: &str) -> Result<Vec<u8>, String> {
     let trimmed = input
         .trim()
         .trim_matches(|c: char| c == '"' || c == '\'' || c == '<' || c == '>');
     let payload = trimmed
-        .find(PREFIX)
-        .map(|i| &trimmed[i + PREFIX.len()..])
-        .ok_or("That doesn't look like a Kopuz playlist link.")?;
+        .find(prefix)
+        .map(|i| &trimmed[i + prefix.len()..])
+        .ok_or_else(|| not_ours.to_string())?;
     let payload: String = payload
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .collect();
     if payload.is_empty() {
-        return Err("The playlist link is empty.".into());
+        return Err("The link is empty.".into());
     }
-    let bytes = URL_SAFE_NO_PAD
+    URL_SAFE_NO_PAD
         .decode(payload.as_bytes())
-        .map_err(|_| "The playlist link is damaged — it looks truncated.".to_string())?;
+        .map_err(|_| "The link is damaged — it looks truncated.".to_string())
+}
 
+fn decode_body(bytes: &[u8]) -> Result<SharedPlaylist, String> {
     let playlist = match bytes.first() {
         Some(&VERSION) => decode_v2(&bytes[1..])?,
         // v1 was UTF-8 text beginning with the ASCII digit '1'. Codes from it
@@ -447,6 +469,124 @@ fn unescape_v1(s: &str) -> String {
         }
     }
     out
+}
+
+// ── Jam ───────────────────────────────────────────────────────────────────
+//
+// A jam is a share code that also says *where the sender is*. The receiver
+// imports the queue and jumps to the same moment, so two people end up
+// listening to the same thing at the same time.
+//
+// It is deliberately one-shot rather than a live session. A live jam needs a
+// rendezvous server somebody pays for, a clock-offset protocol between the two
+// machines, and drift correction on three different playback engines — and the
+// only correction primitive here is `seek`, which is audible. This carries a
+// real share of the same feeling for none of that, and it keeps the property
+// the playlist code was built around: no server, no account, nothing to expire.
+//
+// What it cannot do: the sender skipping a track will not move the receiver.
+// That is the honest limit of a code you paste.
+
+/// Token prefix for a jam. Distinct from [`PREFIX`], so pasting one where the
+/// other is expected fails with a clear message instead of a corrupt playlist.
+pub const JAM_PREFIX: &str = "kopuz:jam:";
+
+/// Jam payload version, independent of the playlist body version that follows
+/// it — the two can move separately.
+const JAM_VERSION: u8 = 1;
+
+/// A moment in someone else's listening, packaged to be pasted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Jam {
+    pub playlist: SharedPlaylist,
+    /// Index into `playlist.tracks` that was playing when the code was made.
+    pub index: usize,
+    /// Position within that track, in milliseconds.
+    pub position_ms: u64,
+    /// Unix seconds at which the code was made. Without this the receiver
+    /// lands wherever the sender *was*, which is behind by however long the
+    /// code spent in a chat window.
+    pub sent_at: u64,
+}
+
+pub fn encode_jam(jam: &Jam) -> String {
+    let mut body = vec![JAM_VERSION];
+    put_varint(&mut body, jam.index as u64);
+    put_varint(&mut body, jam.position_ms);
+    put_varint(&mut body, jam.sent_at);
+    body.extend_from_slice(&encode_body(&jam.playlist));
+    format!("{JAM_PREFIX}{}", URL_SAFE_NO_PAD.encode(body))
+}
+
+pub fn decode_jam(input: &str) -> Result<Jam, String> {
+    let bytes = unwrap_token(
+        input,
+        JAM_PREFIX,
+        "That doesn't look like a Kopuz jam link.",
+    )?;
+    let mut rest: &[u8] = match bytes.split_first() {
+        Some((&JAM_VERSION, rest)) => rest,
+        Some((other, _)) => {
+            return Err(format!(
+                "This jam link was made by a different Kopuz version (format {other}) - update and try again."
+            ));
+        }
+        None => return Err("The jam link is empty.".into()),
+    };
+    let (Some(index), Some(position_ms), Some(sent_at)) = (
+        take_varint(&mut rest),
+        take_varint(&mut rest),
+        take_varint(&mut rest),
+    ) else {
+        return damaged();
+    };
+    let playlist = decode_body(rest)?;
+    // An index past the end would seek into nothing. Clamp rather than reject:
+    // the queue is still worth having.
+    let index = (index as usize).min(playlist.tracks.len().saturating_sub(1));
+    Ok(Jam {
+        playlist,
+        index,
+        position_ms,
+        sent_at,
+    })
+}
+
+/// Where the sender is *now*, given when the code was made.
+///
+/// A code sits in a chat window for a while before anyone pastes it. Landing
+/// at the position it recorded would put the receiver behind by exactly that
+/// delay, which for a three-minute-old code means starting a track the sender
+/// already finished. So the elapsed time is played forward through the queue.
+///
+/// A track whose duration is unknown (0) stops the walk: without a length
+/// there is no way to know when it ended, and guessing would skip music the
+/// receiver should hear.
+pub fn catch_up(jam: &Jam, now_secs: u64) -> (usize, u64) {
+    let tracks = &jam.playlist.tracks;
+    if tracks.is_empty() {
+        return (0, 0);
+    }
+    let mut index = jam.index.min(tracks.len() - 1);
+    let mut position = jam
+        .position_ms
+        .saturating_add(now_secs.saturating_sub(jam.sent_at).saturating_mul(1000));
+
+    while index < tracks.len() {
+        let duration_ms = tracks[index].duration.saturating_mul(1000);
+        if duration_ms == 0 || position < duration_ms {
+            break;
+        }
+        if index + 1 == tracks.len() {
+            // They have run out of queue; sit at the end rather than seeking
+            // past it.
+            position = duration_ms;
+            break;
+        }
+        position -= duration_ms;
+        index += 1;
+    }
+    (index, position)
 }
 
 #[cfg(test)]
@@ -624,7 +764,10 @@ mod tests {
         // outcome worth spending bytes to avoid.
         let lossy = "dQw4w9WgXcR";
         assert!(pack_yt_id(lossy).is_none(), "must refuse to pack {lossy}");
-        assert!(pack_yt_id("dQw4w9WgXcQ").is_some(), "canonical id must pack");
+        assert!(
+            pack_yt_id("dQw4w9WgXcQ").is_some(),
+            "canonical id must pack"
+        );
 
         let pl = SharedPlaylist {
             name: "Edge".into(),
@@ -703,5 +846,136 @@ mod tests {
         );
         assert_eq!(decode(&encode(&pure)).unwrap().tracks.len(), 50);
         assert_eq!(decode(&encode(&mixed)).unwrap().tracks.len(), 51);
+    }
+
+    // ── Jam ───────────────────────────────────────────────────────────────
+
+    fn jam_track(id: &str, secs: u64) -> SharedTrack {
+        SharedTrack {
+            path: Some(format!("ytmusic:{id}")),
+            title: format!("track {id}"),
+            artist: "Someone".into(),
+            duration: secs,
+        }
+    }
+
+    fn a_jam() -> Jam {
+        Jam {
+            playlist: SharedPlaylist {
+                name: "Jam".into(),
+                tracks: vec![
+                    jam_track("aaaaaaaaaaa", 200),
+                    jam_track("bbbbbbbbbbb", 180),
+                    jam_track("ccccccccccc", 240),
+                ],
+            },
+            index: 1,
+            position_ms: 45_000,
+            sent_at: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn a_jam_survives_the_round_trip() {
+        let jam = a_jam();
+        let decoded = decode_jam(&encode_jam(&jam)).unwrap();
+        assert_eq!(decoded.index, jam.index);
+        assert_eq!(decoded.position_ms, jam.position_ms);
+        assert_eq!(decoded.sent_at, jam.sent_at);
+        assert_eq!(decoded.playlist.tracks.len(), 3);
+        assert_eq!(decoded.playlist.name, "Jam");
+    }
+
+    /// The two token kinds must not be interchangeable: a playlist pasted into
+    /// the jam box would otherwise decode into a jam starting at zero, and a
+    /// jam pasted into the playlist box would fail on the version byte with a
+    /// misleading message.
+    #[test]
+    fn a_playlist_code_is_not_a_jam_code() {
+        let jam = a_jam();
+        assert!(decode(&encode_jam(&jam)).is_err());
+        assert!(decode_jam(&encode(&jam.playlist)).is_err());
+    }
+
+    /// The whole point of the timestamp: pasting late must not start late.
+    #[test]
+    fn catching_up_advances_within_the_current_track() {
+        let jam = a_jam();
+        // 30 seconds later, still inside the 180-second track.
+        let (index, position) = catch_up(&jam, jam.sent_at + 30);
+        assert_eq!(index, 1);
+        assert_eq!(position, 75_000);
+    }
+
+    #[test]
+    fn catching_up_rolls_into_the_next_track() {
+        let jam = a_jam();
+        // Track 1 has 135 s left; 150 s later they are 15 s into track 2.
+        let (index, position) = catch_up(&jam, jam.sent_at + 150);
+        assert_eq!(index, 2);
+        assert_eq!(position, 15_000);
+    }
+
+    #[test]
+    fn catching_up_can_cross_several_tracks() {
+        let mut jam = a_jam();
+        jam.index = 0;
+        jam.position_ms = 0;
+        // 200 + 180 = 380 s consumed, so 400 s later is 20 s into track 2.
+        let (index, position) = catch_up(&jam, jam.sent_at + 400);
+        assert_eq!(index, 2);
+        assert_eq!(position, 20_000);
+    }
+
+    /// A code found the next morning must not seek past the end of the queue.
+    #[test]
+    fn catching_up_stops_at_the_end_of_the_queue() {
+        let jam = a_jam();
+        let (index, position) = catch_up(&jam, jam.sent_at + 86_400);
+        assert_eq!(index, 2);
+        assert_eq!(position, 240_000, "must sit at the end, not beyond it");
+    }
+
+    /// An unknown duration cannot be walked past — and must not spin.
+    #[test]
+    fn an_unknown_duration_stops_the_walk_rather_than_looping() {
+        let jam = Jam {
+            playlist: SharedPlaylist {
+                name: "x".into(),
+                tracks: vec![jam_track("aaaaaaaaaaa", 0), jam_track("bbbbbbbbbbb", 100)],
+            },
+            index: 0,
+            position_ms: 0,
+            sent_at: 1_000,
+        };
+        let (index, position) = catch_up(&jam, 1_000 + 9_999);
+        assert_eq!(index, 0);
+        assert_eq!(position, 9_999_000);
+    }
+
+    /// A clock that disagrees, or a code from the future, must not underflow.
+    #[test]
+    fn a_code_from_the_future_does_not_underflow() {
+        let jam = a_jam();
+        let (index, position) = catch_up(&jam, jam.sent_at - 500);
+        assert_eq!(index, 1);
+        assert_eq!(position, 45_000, "no time has passed as far as we can tell");
+    }
+
+    /// An index past the end is clamped rather than rejected — the queue is
+    /// still worth having.
+    #[test]
+    fn an_out_of_range_index_is_clamped_not_rejected() {
+        let mut jam = a_jam();
+        jam.index = 99;
+        let decoded = decode_jam(&encode_jam(&jam)).unwrap();
+        assert_eq!(decoded.index, 2);
+    }
+
+    #[test]
+    fn a_damaged_jam_link_is_reported() {
+        assert!(decode_jam("kopuz:jam:").is_err());
+        assert!(decode_jam("hello").is_err());
+        assert!(decode_jam("kopuz:jam:!!!!").is_err());
     }
 }
