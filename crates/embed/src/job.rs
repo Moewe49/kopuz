@@ -53,12 +53,13 @@ pub struct Paths {
     pub model: PathBuf,
     /// Where vectors accumulate between runs.
     pub store: PathBuf,
-    /// Artist and title per id, beside the vectors.
+    /// Artist, title and cover URL per id, beside the vectors.
     ///
     /// A vector store keyed by video id can rank tracks but cannot name them,
     /// and everything built on it — a mix tile, a suggestion list — has to
-    /// show something a person recognises. The player response that yields the
-    /// stream URL already carries both, so this costs no extra request.
+    /// show something a person recognises — and a tile with no artwork reads as
+    /// broken. The player response that yields the stream URL carries all
+    /// three, so this costs no extra request.
     pub labels: PathBuf,
 }
 
@@ -74,6 +75,8 @@ pub struct Progress {
     pub remaining: usize,
     /// Total vectors held, including earlier runs.
     pub total: usize,
+    /// Tracks that already had a vector but were missing their artwork.
+    pub relabelled: usize,
 }
 
 /// `Read + Seek` as something symphonia will accept.
@@ -135,25 +138,50 @@ pub async fn analyse(ids: &[String], paths: &Paths, budget: usize) -> Result<Pro
     // engine on every launch to discover there was no work.
     let mut store =
         VectorStore::load(&paths.store, N_STYLES).map_err(|e| format!("vector store: {e}"))?;
+    let mut labels = server::mixes::load_labels(&paths.labels);
     let todo: Vec<&String> = ids.iter().filter(|id| !store.contains(id)).collect();
     let mut progress = Progress {
         remaining: todo.len(),
         total: store.len(),
         ..Progress::default()
     };
+    // Tracks analysed before covers were recorded have a vector but no
+    // artwork, and nothing would ever revisit them — they already have what
+    // the job checks for. A metadata-only resolve fixes them: no download, no
+    // inference, just the player response.
+    let coverless: Vec<String> = store
+        .ids()
+        .filter(|id| {
+            labels
+                .get(*id)
+                .map(|(_, _, cover)| cover.is_empty())
+                .unwrap_or(true)
+        })
+        .map(str::to_string)
+        .take(budget)
+        .collect();
+    for id in &coverless {
+        if let Some((artist, title, cover, _)) = resolve(id).await
+            && !cover.is_empty()
+        {
+            labels.insert(id.clone(), (artist, title, cover));
+            progress.relabelled += 1;
+        }
+        tokio::time::sleep(SPACING).await;
+    }
+
     if todo.is_empty() {
+        // Nothing left to analyse, but the backfill above may still have
+        // learned something worth keeping.
+        write_labels(&paths.labels, &labels);
         return Ok(progress);
     }
 
     crate::session::use_runtime(&paths.runtime).map_err(|e| e.to_string())?;
     let mut embedder = crate::Embedder::open(&paths.model).map_err(|e| e.to_string())?;
 
-    let mut labels: std::collections::HashMap<String, (String, String)> =
-        serde_json::from_str(&std::fs::read_to_string(&paths.labels).unwrap_or_default())
-            .unwrap_or_default();
-
     for id in todo.into_iter().take(budget) {
-        let Some((artist, title, url)) = resolve(id).await else {
+        let Some((artist, title, cover, url)) = resolve(id).await else {
             progress.failed += 1;
             continue;
         };
@@ -164,7 +192,7 @@ pub async fn analyse(ids: &[String], paths: &Paths, budget: usize) -> Result<Pro
         match result {
             Ok(style) => {
                 if store.insert(id_owned.clone(), style).is_ok() {
-                    labels.insert(id_owned, (artist, title));
+                    labels.insert(id_owned, (artist, title, cover));
                     progress.embedded += 1;
                     progress.remaining = progress.remaining.saturating_sub(1);
                 }
@@ -183,15 +211,13 @@ pub async fn analyse(ids: &[String], paths: &Paths, budget: usize) -> Result<Pro
     store
         .save(&paths.store)
         .map_err(|e| format!("save vectors: {e}"))?;
-    if let Ok(json) = serde_json::to_string(&labels) {
-        let _ = std::fs::write(&paths.labels, json);
-    }
+    write_labels(&paths.labels, &labels);
     progress.total = store.len();
     Ok(progress)
 }
 
-/// Artist, title and the highest-bitrate non-dub audio URL, anonymously.
-async fn resolve(video_id: &str) -> Option<(String, String, String)> {
+/// Artist, title, cover URL and the highest-bitrate non-dub audio URL.
+async fn resolve(video_id: &str) -> Option<(String, String, String, String)> {
     use server::ytmusic::clients::VISIONOS;
     use server::ytmusic::innertube::{self, PlayerExtras, visitor_id};
 
@@ -218,6 +244,19 @@ async fn resolve(video_id: &str) -> Option<(String, String, String)> {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
+    // Largest thumbnail, matching what the search path stores. Without it a
+    // generated mix renders as grey placeholders.
+    let cover = json
+        .pointer("/videoDetails/thumbnail/thumbnails")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .max_by_key(|t| t.get("width").and_then(|w| w.as_u64()).unwrap_or(0))
+        })
+        .and_then(|t| t.get("url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
     let url = json
         .pointer("/streamingData/adaptiveFormats")
         .and_then(|v| v.as_array())?
@@ -239,7 +278,13 @@ async fn resolve(video_id: &str) -> Option<(String, String, String)> {
         .and_then(|f| f.get("url"))
         .and_then(|v| v.as_str())?
         .to_string();
-    Some((artist, title, url))
+    Some((artist, title, cover, url))
+}
+
+fn write_labels(path: &std::path::Path, labels: &server::mixes::Labels) {
+    if let Ok(json) = serde_json::to_string(labels) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 /// Whether everything the job needs is present.

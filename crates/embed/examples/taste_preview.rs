@@ -25,7 +25,7 @@ fn main() {
         }
     };
     // Written by build_mixes; missing names simply print as ids.
-    let meta: HashMap<String, (String, String)> = serde_json::from_str(
+    let meta: HashMap<String, (String, String, String)> = serde_json::from_str(
         &std::fs::read_to_string(dir.join("style_meta.json")).unwrap_or_default(),
     )
     .unwrap_or_default();
@@ -58,13 +58,16 @@ fn main() {
     }
     println!();
 
-    let k = reader::taste::best_k(&vectors, 4, 42);
+    let k: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
     let clusters = reader::taste::cluster(&vectors, k, 42);
     println!("-> {} taste direction(s)\n", clusters.len());
 
     let label = |i: usize| {
         meta.get(&ids[i])
-            .map(|(a, t)| format!("{a} — {t}"))
+            .map(|(a, t, _)| format!("{a} — {t}"))
             .unwrap_or_else(|| ids[i].clone())
     };
 
@@ -75,7 +78,7 @@ fn main() {
             c.members.len(),
             c.cohesion
         );
-        for &i in c.members.iter().take(8) {
+        for &i in c.members.iter().take(10) {
             println!(
                 "    {:.3}  {}",
                 embed::similarity(&vectors[i], &c.centroid),

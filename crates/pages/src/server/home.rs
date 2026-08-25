@@ -245,11 +245,7 @@ pub fn JellyfinHome(
                 .ok()
                 .filter(|store| !store.is_empty())
                 .map(|store| {
-                    let labels: std::collections::HashMap<String, (String, String)> =
-                        serde_json::from_str(
-                            &std::fs::read_to_string(&labels_path).unwrap_or_default(),
-                        )
-                        .unwrap_or_default();
+                    let labels = server::mixes::load_labels(&labels_path);
                     server::mixes::from_vectors(&store, &labels, now, 42)
                 })
                 .filter(|set| !set.mixes.is_empty());

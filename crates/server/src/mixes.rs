@@ -279,6 +279,30 @@ pub async fn generate(anchor_ids: &[String], cookies: &str, now_secs: u64) -> Mi
     }
 }
 
+/// What is known about a track besides its vector: artist, title, cover URL.
+pub type Labels = std::collections::HashMap<String, (String, String, String)>;
+
+/// Read the label sidecar, tolerating the earlier two-field shape.
+///
+/// The first version stored artist and title only. Parsing that file strictly
+/// as three fields yields an empty map, and an empty map means every mix loses
+/// its names silently — the sort of failure that looks like the feature simply
+/// stopped working. Old entries come back with an empty cover, which the
+/// backfill in the analysis job then fills in.
+pub fn load_labels(path: &std::path::Path) -> Labels {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    if let Ok(full) = serde_json::from_str::<Labels>(&text) {
+        return full;
+    }
+    serde_json::from_str::<std::collections::HashMap<String, (String, String)>>(&text)
+        .map(|old| {
+            old.into_iter()
+                .map(|(id, (a, t))| (id, (a, t, String::new())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Tracks by one artist inside a single mix.
 ///
 /// A taste direction genuinely can be mostly one artist — that is what a sound
@@ -301,7 +325,7 @@ const MAX_PER_ARTIST: usize = 3;
 /// say how they group, so there is not a single request.
 pub fn from_vectors(
     store: &reader::vectors::VectorStore,
-    labels: &std::collections::HashMap<String, (String, String)>,
+    labels: &Labels,
     now_secs: u64,
     seed: u64,
 ) -> MixSet {
@@ -333,7 +357,7 @@ pub fn from_vectors(
             // come from tracks analysed before labels were recorded; skipping
             // them costs one entry out of a few hundred and keeps every tile
             // readable.
-            let Some((artist, title)) = labels.get(id).cloned() else {
+            let Some((artist, title, cover)) = labels.get(id).cloned() else {
                 continue;
             };
             let key = scrobble::similar::clean_artist(&artist).to_lowercase();
@@ -342,7 +366,7 @@ pub fn from_vectors(
                 continue;
             }
             *seen += 1;
-            tracks.push(track_from(id, &artist, &title));
+            tracks.push(track_from(id, &artist, &title, &cover));
         }
         if tracks.len() < MIN_MIX_LEN {
             continue;
@@ -367,9 +391,23 @@ pub fn from_vectors(
 }
 
 /// A playable track from what the vector store and its labels know.
-fn track_from(id: &str, artist: &str, title: &str) -> Track {
+///
+/// The cover URL rides in the path, the way every other surface in the app
+/// expects it. Building the path without it — which is what this did — leaves
+/// every tile and every row as a grey placeholder, since that is where the
+/// artwork is decoded from.
+fn track_from(id: &str, artist: &str, title: &str, cover: &str) -> Track {
+    let path = if cover.is_empty() {
+        format!("{}:{id}", crate::ytmusic::SOURCE_PREFIX)
+    } else {
+        format!(
+            "{}:{id}:{}",
+            crate::ytmusic::SOURCE_PREFIX,
+            crate::ytmusic::search::encode_url_tag(cover)
+        )
+    };
     Track {
-        path: std::path::PathBuf::from(format!("{}:{id}", crate::ytmusic::SOURCE_PREFIX)),
+        path: std::path::PathBuf::from(path),
         album_id: String::new(),
         title: title.to_string(),
         artist: artist.to_string(),
@@ -586,7 +624,14 @@ mod tests {
             let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
             v.iter_mut().for_each(|x| *x /= n);
             store.insert(id.clone(), v).unwrap();
-            labels.insert(id, ("One Artist".to_string(), format!("track {i}")));
+            labels.insert(
+                id,
+                (
+                    "One Artist".to_string(),
+                    format!("track {i}"),
+                    String::new(),
+                ),
+            );
         }
         for i in 0..20 {
             let id = format!("var{i}");
@@ -594,7 +639,10 @@ mod tests {
             let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
             v.iter_mut().for_each(|x| *x /= n);
             store.insert(id.clone(), v).unwrap();
-            labels.insert(id, (format!("Artist {i}"), format!("song {i}")));
+            labels.insert(
+                id,
+                (format!("Artist {i}"), format!("song {i}"), String::new()),
+            );
         }
 
         let set = from_vectors(&store, &labels, 1_000, 42);

@@ -17,10 +17,7 @@ fn main() {
             return;
         }
     };
-    let labels: std::collections::HashMap<String, (String, String)> = serde_json::from_str(
-        &std::fs::read_to_string(dir.join("style_meta.json")).unwrap_or_default(),
-    )
-    .unwrap_or_default();
+    let labels = server::mixes::load_labels(&dir.join("style_meta.json"));
 
     println!(
         "{} analysed tracks, {} labelled\n",
@@ -31,7 +28,12 @@ fn main() {
     for m in &set.mixes {
         println!("=== {} ({} tracks) ===", m.name, m.tracks.len());
         for t in m.tracks.iter().take(8) {
-            println!("    {} — {}", t.artist, t.title);
+            let cover = if t.path.to_string_lossy().contains("urlhex_") {
+                "[cover]"
+            } else {
+                "[  --  ]"
+            };
+            println!("    {cover} {} — {}", t.artist, t.title);
         }
         println!();
     }

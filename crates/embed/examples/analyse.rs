@@ -54,13 +54,13 @@ async fn main() {
     let started = std::time::Instant::now();
     match embed::job::analyse(&ids, &paths, budget).await {
         Ok(p) => println!(
-            "embedded {}, failed {}, remaining {}, total {} — {:.1}s ({:.1}s/track)",
+            "embedded {}, relabelled {}, failed {}, remaining {}, total {} — {:.1}s",
             p.embedded,
+            p.relabelled,
             p.failed,
             p.remaining,
             p.total,
             started.elapsed().as_secs_f32(),
-            started.elapsed().as_secs_f32() / p.embedded.max(1) as f32,
         ),
         Err(e) => eprintln!("job failed: {e}"),
     }
