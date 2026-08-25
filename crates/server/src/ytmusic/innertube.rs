@@ -12,22 +12,29 @@ use super::clients::{ORIGIN_YOUTUBE_MUSIC, YouTubeClient};
 /// Shared HTTP client for all InnerTube + keepalive calls. Keeps the
 /// TLS session and connection pool warm across the dozens of
 /// /youtubei/v1 hits a typical library sync makes.
-pub(super) fn http_client() -> &'static reqwest::Client {
+///
+/// Crate-visible because `recommend` reuses it for MusicBrainz and
+/// ListenBrainz. That is safe rather than convenient: this is a bare
+/// `Client::new()` with no default headers, and the workspace builds reqwest
+/// without its `cookies` feature, so there is no jar that could carry a
+/// YouTube session to a third party. Auth is applied per request in
+/// `apply_auth`, never here.
+pub(crate) fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(reqwest::Client::new)
 }
 
 /// Builds the `Authorization: SAPISIDHASH <ts>_<sha1(ts " " SAPISID " " origin)>` header.
 pub fn sapisid_hash(cookies: &str, origin: &str) -> Option<String> {
-    let sapisid = cookie_value(cookies, "SAPISID")
-        .or_else(|| cookie_value(cookies, "__Secure-3PAPISID"))?;
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+    let sapisid =
+        cookie_value(cookies, "SAPISID").or_else(|| cookie_value(cookies, "__Secure-3PAPISID"))?;
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
     let mut hasher = Sha1::new();
     hasher.update(format!("{ts} {sapisid} {origin}").as_bytes());
-    Some(format!("SAPISIDHASH {ts}_{}", hex::encode(hasher.finalize())))
+    Some(format!(
+        "SAPISIDHASH {ts}_{}",
+        hex::encode(hasher.finalize())
+    ))
 }
 
 /// Apply session auth to an InnerTube request. The `auth` string carries the
@@ -39,7 +46,11 @@ pub fn sapisid_hash(cookies: &str, origin: &str) -> Option<String> {
 ///
 /// Centralizing this means every endpoint stays scheme-agnostic: callers just
 /// thread the stored token through, whatever it is.
-pub fn apply_auth(req: reqwest::RequestBuilder, auth: &str, origin: &str) -> reqwest::RequestBuilder {
+pub fn apply_auth(
+    req: reqwest::RequestBuilder,
+    auth: &str,
+    origin: &str,
+) -> reqwest::RequestBuilder {
     if let Some(token) = auth.strip_prefix(super::oauth::OAUTH_PREFIX) {
         // Match ytmusicapi's OAuth request shape: Bearer token + a request
         // timestamp. No Cookie / SAPISIDHASH / InnerTube key for OAuth.
@@ -71,7 +82,10 @@ fn cookie_value(header: &str, name: &str) -> Option<String> {
 
 fn build_context(client: YouTubeClient) -> Value {
     let mut obj = serde_json::Map::new();
-    obj.insert("clientName".into(), Value::String(client.client_name.into()));
+    obj.insert(
+        "clientName".into(),
+        Value::String(client.client_name.into()),
+    );
     obj.insert(
         "clientVersion".into(),
         Value::String(client.client_version.into()),
@@ -85,7 +99,10 @@ fn build_context(client: YouTubeClient) -> Value {
         obj.insert("osVersion".into(), Value::String(client.os_version.into()));
     }
     if !client.device_make.is_empty() {
-        obj.insert("deviceMake".into(), Value::String(client.device_make.into()));
+        obj.insert(
+            "deviceMake".into(),
+            Value::String(client.device_make.into()),
+        );
     }
     if !client.device_model.is_empty() {
         obj.insert(
@@ -195,10 +212,7 @@ pub async fn player(
 
 /// Hits `/youtubei/v1/browse` (used for Liked Music validation and library
 /// fetches). Always WEB_REMIX with cookies.
-pub async fn browse(
-    browse_id: &str,
-    cookies: &str,
-) -> Result<Value, String> {
+pub async fn browse(browse_id: &str, cookies: &str) -> Result<Value, String> {
     browse_maybe_auth(browse_id, Some(cookies)).await
 }
 
@@ -207,10 +221,7 @@ pub async fn browse(
 /// (artists, albums, public playlists, discover home with generic
 /// recs). Private surfaces (Liked, user library) will return a
 /// sign-in shelf for anonymous callers — caller has to detect that.
-pub async fn browse_maybe_auth(
-    browse_id: &str,
-    cookies: Option<&str>,
-) -> Result<Value, String> {
+pub async fn browse_maybe_auth(browse_id: &str, cookies: Option<&str>) -> Result<Value, String> {
     let client = super::clients::WEB_REMIX;
     let context = build_context(client);
     let body = json!({
@@ -218,7 +229,9 @@ pub async fn browse_maybe_auth(
         "browseId": browse_id,
     });
     let mut req = http_client()
-        .post(format!("{ORIGIN_YOUTUBE_MUSIC}/youtubei/v1/browse?prettyPrint=false"))
+        .post(format!(
+            "{ORIGIN_YOUTUBE_MUSIC}/youtubei/v1/browse?prettyPrint=false"
+        ))
         .header("User-Agent", client.user_agent)
         .header("Content-Type", "application/json")
         .header("X-Goog-Api-Format-Version", "1")
@@ -254,10 +267,7 @@ pub fn extract_visitor_data(resp: &Value) -> Option<String> {
 /// Hit `/browse` with a continuation token instead of a browseId — used
 /// to walk paginated playlist shelves (Liked Music returns ~100 tracks
 /// per page).
-pub async fn browse_continuation(
-    continuation: &str,
-    cookies: &str,
-) -> Result<Value, String> {
+pub async fn browse_continuation(continuation: &str, cookies: &str) -> Result<Value, String> {
     browse_continuation_maybe_auth(continuation, Some(cookies)).await
 }
 

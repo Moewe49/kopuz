@@ -23,6 +23,9 @@ web-time = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "sync", "time"] }
 reader = { workspace = true }
+# For the ListenBrainz artist graph in `recommend`. No cycle: scrobble
+# depends on config/reqwest only.
+scrobble = { workspace = true }
 # Extract the ffmpeg(.exe) binary out of the downloaded release zip on first
 # run. default-features off keeps it to the standard Deflate codec ffmpeg zips
 # use — no aes/bzip2/zstd/lzma pulled in.

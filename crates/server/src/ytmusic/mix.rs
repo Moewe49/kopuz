@@ -34,7 +34,10 @@ pub async fn start_mix(seed_video_id: &str, cookies: &str) -> Result<Vec<Track>,
 /// seed's radio is fetched (anonymous first, cookied fallback), then the lists
 /// are round-robin interleaved and deduped by videoId (dropping the seeds
 /// themselves and cross-seed repeats). At most `MAX_MIX_SEEDS` seeds are used.
-pub async fn start_mix_multi(seed_video_ids: &[String], cookies: &str) -> Result<Vec<Track>, String> {
+pub async fn start_mix_multi(
+    seed_video_ids: &[String],
+    cookies: &str,
+) -> Result<Vec<Track>, String> {
     const MAX_MIX_SEEDS: usize = 4;
     let seeds: Vec<&String> = seed_video_ids.iter().take(MAX_MIX_SEEDS).collect();
     if seeds.is_empty() {
@@ -58,39 +61,19 @@ pub async fn start_mix_multi(seed_video_ids: &[String], cookies: &str) -> Result
         radios.push(tracks);
     }
 
-    let seed_set: std::collections::HashSet<&str> = seeds.iter().map(|s| s.as_str()).collect();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    let max_len = radios.iter().map(|r| r.len()).max().unwrap_or(0);
-    for i in 0..max_len {
-        for radio in &radios {
-            let Some(track) = radio.get(i) else {
-                continue;
-            };
-            let vid = video_id_of_path(&track.path);
-            if vid.is_empty() || seed_set.contains(vid.as_str()) {
-                continue;
-            }
-            if seen.insert(vid) {
-                out.push(track.clone());
-            }
-        }
-    }
+    // Interleave via the shared weave, which keys non-YouTube paths by the
+    // whole path rather than dropping them. The version this replaced skipped
+    // any track whose videoId came back empty, which was invisible here (every
+    // radio row is a YouTube video) but would have silently deleted every
+    // SoundCloud or local track once a second source was blended in.
+    let seed_set: std::collections::HashSet<String> = seeds.iter().map(|s| (*s).clone()).collect();
+    let out = crate::recommend::weave(&radios, &seed_set);
     if out.is_empty() {
         // Every seed's radio was empty/gated — fall back to the last seed's
         // plain mix so autoradio is never worse than the single-seed path.
         return start_mix(seeds[seeds.len() - 1], cookies).await;
     }
     Ok(out)
-}
-
-/// videoId out of a `ytmusic:<videoId>[:tag]` track path (empty if not one).
-fn video_id_of_path(path: &std::path::Path) -> String {
-    path.to_string_lossy()
-        .strip_prefix(&format!("{SOURCE_PREFIX}:"))
-        .and_then(|rest| rest.split(':').next())
-        .unwrap_or("")
-        .to_string()
 }
 
 /// One `/next` radio request for `RDAMVM<seed>`. `cookies` empty → anonymous
@@ -131,8 +114,13 @@ async fn request_radio(
     // Mix endpoint works without auth (anonymous radio for any public
     // video). Skip Cookie + SAPISID when cookies is empty so anon
     // YT mode (and the anonymous genre request above) can still hit Start-Radio.
-    let cookies_opt = if cookies.is_empty() { None } else { Some(cookies) };
-    let mut req = super::innertube::http_client().clone()
+    let cookies_opt = if cookies.is_empty() {
+        None
+    } else {
+        Some(cookies)
+    };
+    let mut req = super::innertube::http_client()
+        .clone()
         .post(format!("{ORIGIN}/youtubei/v1/next?prettyPrint=false"))
         .header("Content-Type", "application/json")
         .header("X-YouTube-Client-Name", client.client_id)
@@ -185,9 +173,11 @@ fn walk_queue(resp: &Value) -> Vec<Track> {
 
     let mut out = Vec::new();
     for item in items {
-        let row = item
-            .get("playlistPanelVideoRenderer")
-            .or_else(|| item.pointer("/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer"));
+        let row = item.get("playlistPanelVideoRenderer").or_else(|| {
+            item.pointer(
+                "/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer",
+            )
+        });
         let Some(row) = row else {
             continue;
         };
@@ -205,7 +195,12 @@ fn parse_queue_row(row: &Value) -> Option<Track> {
         .and_then(|v| v.as_str());
     if !matches!(
         mvt,
-        Some("MUSIC_VIDEO_TYPE_ATV" | "MUSIC_VIDEO_TYPE_OMV" | "MUSIC_VIDEO_TYPE_UGC" | "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC")
+        Some(
+            "MUSIC_VIDEO_TYPE_ATV"
+                | "MUSIC_VIDEO_TYPE_OMV"
+                | "MUSIC_VIDEO_TYPE_UGC"
+                | "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC"
+        )
     ) {
         return None;
     }
@@ -255,7 +250,10 @@ fn parse_queue_row(row: &Value) -> Option<Track> {
     let thumbnail = row
         .pointer("/thumbnail/thumbnails")
         .and_then(|v| v.as_array())
-        .and_then(|arr| arr.iter().max_by_key(|t| t.get("width").and_then(|w| w.as_u64()).unwrap_or(0)))
+        .and_then(|arr| {
+            arr.iter()
+                .max_by_key(|t| t.get("width").and_then(|w| w.as_u64()).unwrap_or(0))
+        })
         .and_then(|t| t.get("url"))
         .and_then(|u| u.as_str())
         .map(normalize_yt_thumbnail);

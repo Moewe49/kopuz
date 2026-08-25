@@ -107,8 +107,6 @@ fn mirror() -> &'static Mutex<Mirror> {
 /// a new song never waits behind a fill that is already irrelevant.
 static QUEUE_GEN: AtomicU64 = AtomicU64::new(0);
 
-
-
 /// How far the fast-start scan walks looking for a playable track before it
 /// gives up and lets the stall retry handle it.
 const MAX_FAST_START_SCAN: usize = 12;
@@ -617,32 +615,24 @@ async fn handle_reorder_upcoming() {
 /// autoradio doesn't). Publishes the radio as the new UI queue and starts it.
 /// Returns true if a radio actually started.
 async fn seed_autoradio() -> bool {
-    let (seeds, exclude, cookies) = {
+    // The finished queue itself, not just its ids: the artist-graph half of the
+    // blend works from artist names. Seed selection now lives in
+    // `server::recommend`, so both engines spread their seeds the same way
+    // instead of each having its own index arithmetic.
+    let (finished, exclude, cookies) = {
         let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
         let played: Vec<String> = m.tracks.iter().filter_map(video_id).collect();
         if played.is_empty() {
             return false;
         }
-        let n = played.len();
-        // Up to 4 seeds spread across the playlist (first + last included).
-        let mut seeds: Vec<String> = Vec::new();
-        for k in 0..4usize {
-            let pos = k * n.saturating_sub(1) / 3;
-            if let Some(v) = played.get(pos)
-                && !seeds.contains(v)
-            {
-                seeds.push(v.clone());
-            }
-        }
         let exclude: std::collections::HashSet<String> = played.into_iter().collect();
-        (seeds, exclude, m.cookies.clone())
+        (m.tracks.clone(), exclude, m.cookies.clone())
     };
-    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies.unwrap_or_default());
-    let mut radio = match yt.start_mix_multi(&seeds).await {
-        Ok(t) if !t.is_empty() => t,
-        _ => return false,
-    };
-    radio.retain(|t| video_id(t).map(|v| !exclude.contains(&v)).unwrap_or(true));
+    let cookies = cookies.unwrap_or_default();
+    // Same blend as the desktop engine: YouTube's radio woven with the
+    // ListenBrainz artist graph, both fetched concurrently, the graph on a
+    // deadline so a slow lookup never delays the music.
+    let radio = ::server::recommend::blended_continuation(&finished, &cookies, &exclude).await;
     if radio.is_empty() {
         return false;
     }

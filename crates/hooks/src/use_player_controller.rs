@@ -745,11 +745,13 @@ impl PlayerController {
                         // bug). The queue Track + UI signal were already backfilled; meta
                         // was the missing piece.
                         let mut resolved_duration_secs = track.duration;
-                        let (stream_url, yt_format, yt_user_agent, yt_reresolve, yt_deep_range_safe) = if let Some(
-                            video_id,
-                        ) =
-                            stream_url.strip_prefix("__YT_PENDING:")
-                        {
+                        let (
+                            stream_url,
+                            yt_format,
+                            yt_user_agent,
+                            yt_reresolve,
+                            yt_deep_range_safe,
+                        ) = if let Some(video_id) = stream_url.strip_prefix("__YT_PENDING:") {
                             let cookies = cfg_signal
                                 .peek()
                                 .server
@@ -868,7 +870,13 @@ impl PlayerController {
                                             current_song_duration_for_yt.set(secs);
                                         }
                                     }
-                                    (info.url, Some(info.format), Some(info.user_agent), None, true)
+                                    (
+                                        info.url,
+                                        Some(info.format),
+                                        Some(info.user_agent),
+                                        None,
+                                        true,
+                                    )
                                 }
                                 Err(e) => {
                                     if *play_generation.read() != current_gen {
@@ -1864,24 +1872,6 @@ impl PlayerController {
                 .unwrap_or("")
                 .to_string()
         }
-        /// Up to `n` items spread evenly across `items` (incl. first + last),
-        /// order-preserving and de-duplicated.
-        fn sample_evenly(items: &[String], n: usize) -> Vec<String> {
-            if items.len() <= n {
-                return items.to_vec();
-            }
-            let mut out = Vec::with_capacity(n);
-            let mut seen = std::collections::HashSet::new();
-            for k in 0..n {
-                let pos = k * (items.len() - 1) / (n.saturating_sub(1).max(1));
-                if let Some(v) = items.get(pos)
-                    && seen.insert(v.clone())
-                {
-                    out.push(v.clone());
-                }
-            }
-            out
-        }
 
         // Seed from the WHOLE finished playlist, not just the last song, so the
         // continuation matches the playlist's overall genre mix instead of
@@ -1896,8 +1886,10 @@ impl PlayerController {
         if played_ids.is_empty() {
             return false; // no YT tracks to seed a radio from
         }
-        let seeds = sample_evenly(&played_ids, 4);
         let exclude: std::collections::HashSet<String> = played_ids.into_iter().collect();
+        // The finished queue itself, not just its ids: the artist graph half of
+        // the blend needs the names.
+        let finished: Vec<Track> = self.queue.peek().clone();
         let cookies = self
             .config
             .peek()
@@ -1908,26 +1900,23 @@ impl PlayerController {
         let mut ctrl = *self;
         ctrl.is_loading.set(true);
         spawn(async move {
-            let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
-            match yt.start_mix_multi(&seeds).await {
-                Ok(mut tracks) if !tracks.is_empty() => {
-                    // Drop anything already in the just-played playlist so the
-                    // radio genuinely continues rather than replaying songs.
-                    tracks.retain(|t| !exclude.contains(&yt_vid(t)));
-                    if tracks.is_empty() {
-                        ctrl.is_loading.set(false);
-                        ctrl.player.write().pause();
-                        ctrl.is_playing.set(false);
-                        return;
-                    }
-                    ctrl.play_queue_linear(tracks);
-                }
-                _ => {
-                    ctrl.is_loading.set(false);
-                    ctrl.player.write().pause();
-                    ctrl.is_playing.set(false);
-                }
+            // YouTube's radio woven with the ListenBrainz artist graph, so the
+            // continuation is not simply more of what the queue already was.
+            // Both are fetched concurrently and the graph has a deadline, so
+            // this is no slower to start than the radio alone.
+            // Already-played tracks are excluded inside, by track path rather
+            // than by videoId — so no second filter here. The one that used to
+            // stand at this point keyed non-YouTube paths as the empty string
+            // and would have let them through.
+            let tracks =
+                ::server::recommend::blended_continuation(&finished, &cookies, &exclude).await;
+            if tracks.is_empty() {
+                ctrl.is_loading.set(false);
+                ctrl.player.write().pause();
+                ctrl.is_playing.set(false);
+                return;
             }
+            ctrl.play_queue_linear(tracks);
         });
         true
     }

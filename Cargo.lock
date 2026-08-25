@@ -2160,7 +2160,13 @@ name = "embed"
 version = "0.1.0"
 dependencies = [
  "ort",
+ "reader",
  "realfft",
+ "reqwest 0.13.4",
+ "scrobble",
+ "serde_json",
+ "server",
+ "tokio",
 ]
 
 [[package]]
@@ -6867,6 +6873,7 @@ dependencies = [
  "reader",
  "reqwest 0.13.4",
  "rookie",
+ "scrobble",
  "serde",
  "serde_json",
  "sha1",
