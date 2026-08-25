@@ -19,6 +19,15 @@ reqwest = { workspace = true, optional = true }
 axum = { version = "0.8", optional = true }
 tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros", "signal"] }
 
+# The end-to-end test needs both halves at once. Depending on this very package
+# is the way to say so: without it `cargo test` compiles the test out through
+# its own cfg gate and reports success for something it never ran, which is the
+# worst of the three possible outcomes.
+[dev-dependencies]
+relay = { path = ".", features = ["client", "server"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+axum = "0.8"
+
 # Only built when the server feature is on, so a device never compiles axum.
 [[bin]]
 name = "kopuz-relay"

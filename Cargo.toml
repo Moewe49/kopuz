@@ -74,6 +74,9 @@ kopuz_route = { path = "./crates/kopuz_route" }
 discord-presence = { path = "./crates/discord-presence" }
 scrobble = { path = "./crates/scrobble" }
 radio = { path = "./crates/radio" }
+# Default features are off on purpose: neither reqwest nor axum should
+# reach a device unless a crate has asked for that half by name.
+relay = { path = "./crates/relay", default-features = false }
 
 [profile.release]
 strip = "symbols"

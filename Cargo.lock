@@ -940,6 +940,7 @@ dependencies = [
  "player",
  "rand 0.10.1",
  "reader",
+ "relay",
  "rfd",
  "scrobble",
  "serde_json",
@@ -5247,6 +5248,7 @@ dependencies = [
  "radio",
  "rand 0.10.1",
  "reader",
+ "relay",
  "reqwest 0.13.4",
  "rfd",
  "serde",
@@ -6246,6 +6248,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "relay",
  "reqwest 0.13.4",
  "serde",
  "serde_json",

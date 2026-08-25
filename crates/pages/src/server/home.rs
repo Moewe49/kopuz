@@ -84,6 +84,21 @@ fn mixes_path() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("./config/mixes.json"))
 }
 
+/// Record a mix set on disk, whoever built it.
+///
+/// Config rather than cache: mixes are cheap to read and expensive to rebuild
+/// -- eight paced network requests, or an evening of analysis -- so losing
+/// them to a cache clear would be a visible regression on the next launch.
+fn write_mixes(text: &str) {
+    let path = mixes_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(&path, text) {
+        tracing::warn!("could not record the mixes: {e}");
+    }
+}
+
 fn track_cover_url(conf: &AppConfig, track: &Track) -> Option<String> {
     let server = conf.server.as_ref()?;
     let path_str = track.path.to_string_lossy();
@@ -173,8 +188,7 @@ pub fn JellyfinHome(
             return;
         }
         mixes_loaded.set(true);
-        let path = mixes_path();
-        if let Ok(text) = std::fs::read_to_string(&path)
+        if let Ok(text) = std::fs::read_to_string(mixes_path())
             && let Ok(set) = serde_json::from_str::<server::mixes::MixSet>(&text)
         {
             mixes.set(set);
@@ -196,43 +210,41 @@ pub fn JellyfinHome(
                     }
                 })
                 .unwrap_or(0);
-        if !mixes.peek().is_stale(now, vectors_version) {
-            return;
-        }
-        // Anchors are the most-played YouTube tracks. `listen_counts` keys look
-        // like `ytmusic:<id>:urlhex_…`; only the id seeds a radio.
         let conf = config.peek();
+        let relay = relay::RelayConfig {
+            url: conf.relay_url.clone(),
+            token: conf.relay_token.clone(),
+        };
+        // Anchors are the most-played YouTube tracks. `listen_counts` keys look
+        // like `ytmusic:<id>:urlhex_...`; only the id seeds a radio.
         let is_yt = conf
             .server
             .as_ref()
             .map(|s| s.service == MusicService::YtMusic)
             .unwrap_or(false);
-        if !is_yt {
-            return;
-        }
-        let mut plays: Vec<(String, u64)> = conf
-            .listen_counts
-            .iter()
-            .filter(|&(_, &n)| n >= 3)
-            .filter_map(|(k, &n)| {
-                let mut parts = k.split(':');
-                (parts.next()? == "ytmusic").then(|| parts.next().map(|id| (id.to_string(), n)))?
-            })
-            .collect();
-        // Ties by id, so an unchanged history rebuilds the same shelf.
-        plays.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let mut anchors: Vec<String> = Vec::with_capacity(plays.len());
-        for (id, _) in plays {
-            // One video can appear under two keys if its thumbnail URL ever
-            // changed. Not seen in practice (245 anchors, 245 distinct), but
-            // two identical anchors would fetch the same radio twice and spend
-            // two of the eight slots on it.
-            if !anchors.contains(&id) {
-                anchors.push(id);
+        let mut anchors: Vec<String> = Vec::new();
+        if is_yt {
+            let mut plays: Vec<(String, u64)> = conf
+                .listen_counts
+                .iter()
+                .filter(|&(_, &n)| n >= 3)
+                .filter_map(|(k, &n)| {
+                    let mut parts = k.split(':');
+                    (parts.next()? == "ytmusic")
+                        .then(|| parts.next().map(|id| (id.to_string(), n)))?
+                })
+                .collect();
+            // Ties by id, so an unchanged history rebuilds the same shelf.
+            plays.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            for (id, _) in plays {
+                // One video can appear under two keys if its thumbnail URL ever
+                // changed. Not seen in practice (245 anchors, 245 distinct), but
+                // two identical anchors would fetch the same radio twice and spend
+                // two of the eight slots on it.
+                if !anchors.contains(&id) {
+                    anchors.push(id);
+                }
             }
-        }
-        if anchors.is_empty() {
-            return;
         }
         let cookies = conf
             .server
@@ -246,11 +258,64 @@ pub fn JellyfinHome(
         // would then be recorded, it would start again from scratch on the way
         // back. This is the same defect that left the import toast on screen.
         dioxus::core::spawn_forever(async move {
+            // The branching lives in `server::mixes::decide`, where it can be
+            // tested; a screen cannot be. What it decides, in short: a device
+            // with no vectors reads, a device with vectors authors.
+            let mut action =
+                server::mixes::decide(&mixes.peek(), now, vectors_version, relay.is_configured());
+
+            if let server::mixes::MixAction::Fetch { have } = action {
+                let delivered = match relay::client::get(&relay, relay::KEY_MIXES, have).await {
+                    // Already current, and that answer cost a few hundred
+                    // bytes rather than fifty kilobytes.
+                    Ok(relay::Fetched::Unchanged) => true,
+                    Ok(relay::Fetched::Value(stored)) => {
+                        match serde_json::from_slice::<server::mixes::MixSet>(&stored.bytes) {
+                            Ok(mut set) => {
+                                set.relay_version = stored.version;
+                                if let Ok(text) = serde_json::to_string(&set) {
+                                    write_mixes(&text);
+                                }
+                                mixes.set(set);
+                                true
+                            }
+                            // Something else is under this key, or an older
+                            // app wrote a shape this one cannot read.
+                            Err(e) => {
+                                tracing::warn!("relay: not a mix set: {e}");
+                                false
+                            }
+                        }
+                    }
+                    Ok(relay::Fetched::Missing) => false,
+                    Err(e) => {
+                        tracing::warn!("relay: {e}");
+                        false
+                    }
+                };
+                if delivered {
+                    return;
+                }
+                // Nothing published yet, or the relay is out of reach -- on a
+                // phone that has just left the flat, the second is by far the
+                // more common. Decide again with it ruled out: a shelf built
+                // from radios is worse than the desktop's, and better than
+                // none at all.
+                action = server::mixes::decide(&mixes.peek(), now, vectors_version, false);
+            }
+
+            if action != server::mixes::MixAction::Build {
+                return;
+            }
+            // Not a YouTube account, or too little history to seed a radio.
+            if anchors.is_empty() {
+                return;
+            }
             // Analysed audio when there is any: it groups tracks by what they
             // actually sound like rather than by how much two YouTube radios
             // happen to overlap, and it costs no requests at all because the
             // tracks and their grouping are both already known. The radio path
-            // stays as the fallback, so the shelf works on day one — before
+            // stays as the fallback, so the shelf works on day one -- before
             // anything has been analysed, and for anyone who never opts in.
             let vectors = mixes_dir().join("style_vectors.bin");
             let labels_path = mixes_dir().join("style_meta.json");
@@ -269,14 +334,30 @@ pub fn JellyfinHome(
             };
             // Written even when empty. An unrecorded attempt is an attempt
             // that repeats on every single visit to this screen.
-            if let Ok(text) = serde_json::to_string(&built) {
-                let path = mixes_path();
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                let _ = std::fs::write(&path, text);
+            let encoded = serde_json::to_string(&built).ok();
+            if let Some(text) = encoded.as_deref() {
+                write_mixes(text);
             }
+            // Measured rather than guessed: `feature_version` is non-zero only
+            // for a set that came out of the vectors.
+            let is_measured = built.feature_version != 0 && !built.mixes.is_empty();
             mixes.set(built);
+
+            // Publish real work only. A radio-built set is this device
+            // guessing from how much two playlists overlap; putting that on
+            // the relay would let a laptop that has never analysed anything
+            // overwrite what the desktop actually measured.
+            if is_measured
+                && relay.is_configured()
+                && let Some(text) = encoded
+            {
+                match relay::client::put(&relay, relay::KEY_MIXES, text.as_bytes()).await {
+                    Ok(stored) => {
+                        tracing::info!("mixes published to the relay as version {}", stored.version)
+                    }
+                    Err(e) => tracing::warn!("relay: {e}"),
+                }
+            }
         });
     });
 

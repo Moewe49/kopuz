@@ -1349,6 +1349,107 @@ pub fn RadioRegistryDropdown(
     not(target_os = "android"),
     not(target_os = "ios")
 ))]
+/// Where this device's siblings can be reached.
+///
+/// Two fields and a button that answers the only question worth asking: does
+/// it work. Without that button, a typo in either field is discovered days
+/// later as "the mixes never showed up on my phone", which is a bug report
+/// nobody can act on -- least of all the person who filed it.
+#[component]
+pub fn RelaySetting(config: Signal<config::AppConfig>) -> Element {
+    let mut url = use_signal(|| config.peek().relay_url.clone());
+    let mut token = use_signal(|| config.peek().relay_token.clone());
+    let mut status = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+
+    // Recomputed as the address is typed, so the warning appears while the
+    // decision is still being made rather than after it.
+    let in_the_clear = use_memo(move || relay::token_travels_in_the_clear(&url()));
+    let ready = use_memo(move || !url().trim().is_empty() && !token().trim().is_empty());
+
+    let mut test = move || {
+        if *busy.peek() {
+            return;
+        }
+        // Normalised on test rather than on every keystroke: rewriting the
+        // field under someone mid-type is how a text box fights its user.
+        let tidy = relay::normalise_url(&url.peek());
+        url.set(tidy.clone());
+        let conf = relay::RelayConfig {
+            url: tidy.clone(),
+            token: token.peek().trim().to_string(),
+        };
+        config.write().relay_url = tidy;
+        config.write().relay_token = conf.token.clone();
+        busy.set(true);
+        status.set("Checking…".to_string());
+        // `spawn_forever`: leaving the settings screen mid-check should not
+        // leave the result unreported.
+        dioxus::core::spawn_forever(async move {
+            let result = relay::client::check(&conf).await;
+            busy.set(false);
+            // The error types spell out what to check; none of them carries
+            // the token, which must not reach a status line or a log.
+            status.set(match result {
+                Ok(()) => "Connected.".to_string(),
+                Err(e) => e.to_string(),
+            });
+        });
+    };
+
+    rsx! {
+        div { class: "flex flex-col gap-2 w-full",
+            div { class: "min-w-0",
+                div { class: "text-white text-sm font-medium", "My own relay" }
+                p { class: "text-white/40 text-xs mt-0.5",
+                    "A machine you run yourself, so this device and your others can hand mixes to each other. Off unless you have one."
+                }
+            }
+            div { class: "flex flex-col sm:flex-row gap-2 w-full max-w-xl",
+                div { class: "flex-1 bg-white/5 p-1 rounded-xl border border-white/5",
+                    input {
+                        class: "bg-transparent w-full px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none",
+                        placeholder: "ms-01:8484",
+                        value: "{url()}",
+                        oninput: move |evt| {
+                            url.set(evt.value());
+                            config.write().relay_url = evt.value().trim().to_string();
+                            status.set(String::new());
+                        },
+                    }
+                }
+                div { class: "flex-1 bg-white/5 p-1 rounded-xl border border-white/5",
+                    input {
+                        class: "bg-transparent w-full px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none",
+                        placeholder: "shared secret",
+                        value: "{token()}",
+                        r#type: "password",
+                        oninput: move |evt| {
+                            token.set(evt.value());
+                            config.write().relay_token = evt.value().trim().to_string();
+                            status.set(String::new());
+                        },
+                    }
+                }
+                button {
+                    class: "px-4 py-2 rounded-xl text-sm border border-white/10 text-white/80 hover:text-white hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent transition-colors",
+                    disabled: !ready() || busy(),
+                    onclick: move |_| test(),
+                    if busy() { "Checking…" } else { "Test" }
+                }
+            }
+            if in_the_clear() {
+                p { class: "text-xs text-amber-300/80",
+                    "This address is plain HTTP and not on your own network — the secret would travel readable. Put it behind HTTPS, or use Tailscale."
+                }
+            }
+            if !status.read().is_empty() {
+                p { class: "text-xs text-white/50", "{status}" }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn AudioAnalysisSetting(config: Signal<config::AppConfig>) -> Element {
     let enabled = config.read().audio_analysis;

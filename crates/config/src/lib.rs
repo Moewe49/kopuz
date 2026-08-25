@@ -589,6 +589,19 @@ pub struct AppConfig {
     /// while it is off; the mixes shelf falls back to YouTube radio.
     #[serde(default)]
     pub audio_analysis: bool,
+    /// Base URL of a relay this listener runs themselves, so their devices can
+    /// hand state to each other. Empty means the feature is off, which is the
+    /// default and stays the default: it costs a machine to run.
+    #[serde(default)]
+    pub relay_url: String,
+    /// The relay's shared secret. Held by the relay and by every device of
+    /// this listener's — there are no accounts, because there is one person.
+    ///
+    /// Stored in the config file in the clear, like every other credential
+    /// here. Encrypting it would need a key, and the only place to keep that
+    /// key is the same file.
+    #[serde(default)]
+    pub relay_token: String,
     #[serde(default)]
     pub musicbrainz_token: String,
     #[serde(default)]
@@ -957,6 +970,8 @@ impl Default for AppConfig {
             listen_counts: HashMap::new(),
             play_history: HashMap::new(),
             audio_analysis: false,
+            relay_url: String::new(),
+            relay_token: String::new(),
             musicbrainz_token: String::new(),
             lastfm_api_key: String::new(),
             lastfm_api_secret: String::new(),

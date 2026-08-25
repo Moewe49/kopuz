@@ -52,7 +52,7 @@ use components::settings_items::AudioAnalysisSetting;
 use components::settings_items::{
     BackBehaviorSelector, ChannelModeSelector, DiscordPresencePausedSettings,
     DiscordPresenceSettings, DownloadFolderSetting, EqualizerPanel, LanguageSelector,
-    LastFmSettings, MultiDirectoryPicker, MusicBrainzSettings, RadioRegistryDropdown,
+    LastFmSettings, MultiDirectoryPicker, MusicBrainzSettings, RadioRegistryDropdown, RelaySetting,
     ServerSettings, SettingItem, ThemeSelector, ToggleSetting,
 };
 use components::settings_popups::{AddRegistryPopup, AddServerPopup, LoginPopup, YtAuthMethod};
@@ -756,6 +756,9 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                         // Sits beside autoradio because it changes the same
                         // thing: what plays next and what the mixes contain.
                         {audio_analysis_section(config)}
+                        // And directly under it, because it is what carries
+                        // that analysis to the devices that cannot do it.
+                        RelaySetting { config }
                         if !cfg!(target_arch = "wasm32") {
                             SettingItem {
                                 title: i18n::t("auto_check_updates").to_string(),

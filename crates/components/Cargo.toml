@@ -24,6 +24,9 @@ config = { workspace = true }
 hooks = { workspace = true }
 rand = { workspace = true }
 server = { workspace = true }
+# The settings screen tests the connection; every device needs that, phone
+# included, so this is not behind a desktop-only target.
+relay = { workspace = true, features = ["client"] }
 tokio = { workspace = true, features = ["time", "fs"] }
 serde_json = { workspace = true }
 i18n = { workspace = true }

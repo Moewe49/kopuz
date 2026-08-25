@@ -158,8 +158,14 @@ impl std::fmt::Display for RelayError {
 
 impl std::error::Error for RelayError {}
 
+pub mod address;
+pub use address::{normalise_url, token_travels_in_the_clear};
+
 #[cfg(feature = "client")]
 pub mod client;
+
+#[cfg(feature = "server")]
+pub mod server;
 
 #[cfg(test)]
 mod tests {

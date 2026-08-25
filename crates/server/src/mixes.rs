@@ -77,6 +77,69 @@ pub struct MixSet {
     /// old. A mix set has no other way to know what it was made from.
     #[serde(default)]
     pub feature_version: u8,
+    /// Relay version this set was fetched at, or 0 when it was built here.
+    ///
+    /// Two jobs. It is what a device sends back to ask "is there anything
+    /// newer", so a phone on mobile data pays a few hundred bytes to learn
+    /// there is not. And a non-zero value marks the set as somebody else's
+    /// work, which is the only thing standing between a phone and the
+    /// following: a set built from audio carries a `feature_version` the
+    /// phone cannot match, [`MixSet::is_stale`] therefore calls it stale the
+    /// instant it arrives, and the phone replaces good mixes with radio ones.
+    #[serde(default)]
+    pub relay_version: u64,
+}
+
+/// What a device should do about its mixes when it starts.
+///
+/// This lives here rather than in the home screen because it is the part most
+/// likely to be quietly wrong, and a screen cannot be tested. The specific
+/// wrongness it guards against is described on [`MixAction::Fetch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixAction {
+    /// What is already held is current. Do nothing.
+    Keep,
+    /// Ask the relay, saying which version is already held so it can answer
+    /// "nothing new" in a few hundred bytes instead of fifty kilobytes.
+    ///
+    /// A device with no vectors always asks, and asks *before* consulting
+    /// [`MixSet::is_stale`] -- because a set built from audio carries a
+    /// feature version such a device can never match, so `is_stale` calls it
+    /// stale the moment it arrives. Left to that, a phone would replace real
+    /// measurements with radio guesses on every single launch, and the mixes
+    /// on the phone would never once match the mixes on the desktop.
+    Fetch { have: u64 },
+    /// Build here, from vectors if there are any and from radios if not.
+    Build,
+}
+
+/// Decide, given what this device has and what it can do.
+///
+/// `vectors_version` is [`reader::vectors::FEATURE_VERSION`] when this device
+/// has analysed audio and 0 when it has not -- which is also what says whether
+/// it authors mix sets or reads them. That is a fact about the device rather
+/// than a setting, so there is nothing for anyone to configure wrongly: a
+/// phone has no ONNX runtime and never publishes, and a desktop never
+/// overwrites its own measurements with a copy of them.
+///
+/// Call it again with `relay_configured = false` when the relay turns out to
+/// have nothing, or to be out of reach.
+pub fn decide(
+    current: &MixSet,
+    now_secs: u64,
+    vectors_version: u8,
+    relay_configured: bool,
+) -> MixAction {
+    if vectors_version == 0 && relay_configured {
+        return MixAction::Fetch {
+            have: current.relay_version,
+        };
+    }
+    if current.is_stale(now_secs, vectors_version) {
+        MixAction::Build
+    } else {
+        MixAction::Keep
+    }
 }
 
 /// How often to rebuild. A day: long enough that the shelf is a fixture the
@@ -295,6 +358,9 @@ pub async fn generate(anchor_ids: &[String], cookies: &str, now_secs: u64) -> Mi
         // Built from radios, not from audio: anything analysed later should
         // supersede this rather than wait out the refresh interval.
         feature_version: 0,
+        // Built here, so no relay version. A device that receives a set
+        // stamps this itself from what the relay reported.
+        relay_version: 0,
     }
 }
 
@@ -386,6 +452,7 @@ pub fn from_vectors(
             mixes: Vec::new(),
             generated: now_secs,
             feature_version: reader::vectors::FEATURE_VERSION,
+            relay_version: 0,
         };
     }
 
@@ -449,6 +516,7 @@ pub fn from_vectors(
         mixes,
         generated: now_secs,
         feature_version: reader::vectors::FEATURE_VERSION,
+        relay_version: 0,
     }
 }
 
@@ -798,6 +866,100 @@ mod tests {
         assert_eq!(plain, song_key("Paramore", "Still Into You (Lyrics)"));
     }
 
+    fn a_set(feature_version: u8, relay_version: u64, generated: u64) -> MixSet {
+        MixSet {
+            mixes: vec![Mix {
+                id: "m".into(),
+                name: "Shoegaze".into(),
+                tracks: Vec::new(),
+            }],
+            generated,
+            feature_version,
+            relay_version,
+        }
+    }
+
+    const DAY: u64 = 24 * 60 * 60;
+
+    /// The bug this whole arrangement exists to prevent.
+    ///
+    /// A phone has no vectors, so a set built from audio -- feature version 2
+    /// -- can never match what the phone can verify, and `is_stale` therefore
+    /// calls it stale from the second it arrives. If the decision ran through
+    /// staleness, the phone would throw away the desktop's measured mixes and
+    /// rebuild worse ones from YouTube radio, on every single launch, forever.
+    #[test]
+    fn a_phone_asks_the_relay_instead_of_rebuilding_over_what_it_was_given() {
+        let from_the_desktop = a_set(2, 5, 1_000);
+        // Old enough that staleness would certainly fire.
+        let much_later = 1_000 + 30 * DAY;
+        assert!(
+            from_the_desktop.is_stale(much_later, 0),
+            "precondition: without the relay this set reads as stale on a phone"
+        );
+        assert_eq!(
+            decide(&from_the_desktop, much_later, 0, true),
+            MixAction::Fetch { have: 5 },
+            "a device with no vectors must ask, not rebuild"
+        );
+    }
+
+    /// The version travels so the answer can be "nothing new" rather than
+    /// fifty kilobytes of what the caller already has.
+    #[test]
+    fn a_device_says_which_version_it_already_holds() {
+        assert_eq!(
+            decide(&a_set(2, 9, 1_000), 1_100, 0, true),
+            MixAction::Fetch { have: 9 }
+        );
+        // Nothing yet: ask for anything at all.
+        assert_eq!(
+            decide(&MixSet::default(), 1_100, 0, true),
+            MixAction::Fetch { have: 0 }
+        );
+    }
+
+    /// The desktop is the author. If it read from the relay it would fetch
+    /// back a copy of its own work and then never rebuild it again.
+    #[test]
+    fn a_device_that_can_analyse_never_reads_from_the_relay() {
+        let stale = a_set(2, 0, 1_000);
+        assert_eq!(decide(&stale, 1_000 + 2 * DAY, 2, true), MixAction::Build);
+        let fresh = a_set(2, 0, 1_000);
+        assert_eq!(decide(&fresh, 1_100, 2, true), MixAction::Keep);
+    }
+
+    /// With no relay configured -- which is everyone, by default -- nothing
+    /// about this changes from how it worked before there was one.
+    #[test]
+    fn without_a_relay_the_old_behaviour_stands() {
+        assert_eq!(
+            decide(&a_set(0, 0, 1_000), 1_100, 0, false),
+            MixAction::Keep
+        );
+        assert_eq!(
+            decide(&a_set(0, 0, 1_000), 1_000 + 2 * DAY, 0, false),
+            MixAction::Build
+        );
+        // Analysed since these were made: rebuild regardless of age.
+        assert_eq!(
+            decide(&a_set(0, 0, 1_000), 1_100, 2, false),
+            MixAction::Build
+        );
+    }
+
+    /// When the relay has nothing, or cannot be reached from wherever the
+    /// phone currently is, the caller asks again with the relay ruled out. A
+    /// worse shelf beats an empty one.
+    #[test]
+    fn a_silent_relay_falls_back_to_building_something() {
+        assert_eq!(
+            decide(&MixSet::default(), 1_100, 0, false),
+            MixAction::Build,
+            "nothing held and nowhere to ask: build"
+        );
+    }
+
     /// Naming a mix after two of its artists said nothing about the sound and
     /// repeated across tiles. The model already knows what it is.
     #[test]
@@ -857,6 +1019,7 @@ mod tests {
             }],
             generated: 1_000_000,
             feature_version: 1,
+            relay_version: 0,
         };
         assert!(
             just_made.is_stale(1_000_001, 2),
@@ -881,6 +1044,7 @@ mod tests {
             }],
             generated: 1_000_000,
             feature_version: 0,
+            relay_version: 0,
         };
         assert!(
             !from_radio.is_stale(1_000_001, 0),
@@ -901,6 +1065,7 @@ mod tests {
             ]),
             generated: 1_700_000_000,
             feature_version: reader::vectors::FEATURE_VERSION,
+            relay_version: 0,
         };
         assert_eq!(original.mixes.len(), 2);
 
@@ -928,6 +1093,7 @@ mod tests {
             mixes: Vec::new(),
             generated: 1_000_000,
             feature_version: 0,
+            relay_version: 0,
         };
         assert!(
             !empty.is_stale(1_000_000 + RETRY_SECS - 1, 0),
@@ -951,6 +1117,7 @@ mod tests {
             }],
             generated: 1_000_000,
             feature_version: reader::vectors::FEATURE_VERSION,
+            relay_version: 0,
         };
         let v = reader::vectors::FEATURE_VERSION;
         assert!(!fresh.is_stale(1_000_000 + REFRESH_SECS - 1, v));
