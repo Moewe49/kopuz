@@ -44,6 +44,7 @@ async fn main() {
         runtime: std::env::var("KOPUZ_ORT").unwrap_or_default().into(),
         model: std::env::var("KOPUZ_MODEL").unwrap_or_default().into(),
         store: dir.join("style_vectors.bin"),
+        labels: dir.join("style_meta.json"),
     };
     if !embed::job::is_ready(&paths) {
         eprintln!("set KOPUZ_ORT and KOPUZ_MODEL to existing files");

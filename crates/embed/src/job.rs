@@ -53,6 +53,13 @@ pub struct Paths {
     pub model: PathBuf,
     /// Where vectors accumulate between runs.
     pub store: PathBuf,
+    /// Artist and title per id, beside the vectors.
+    ///
+    /// A vector store keyed by video id can rank tracks but cannot name them,
+    /// and everything built on it — a mix tile, a suggestion list — has to
+    /// show something a person recognises. The player response that yields the
+    /// stream URL already carries both, so this costs no extra request.
+    pub labels: PathBuf,
 }
 
 /// What one batch achieved.
@@ -141,8 +148,12 @@ pub async fn analyse(ids: &[String], paths: &Paths, budget: usize) -> Result<Pro
     crate::session::use_runtime(&paths.runtime).map_err(|e| e.to_string())?;
     let mut embedder = crate::Embedder::open(&paths.model).map_err(|e| e.to_string())?;
 
+    let mut labels: std::collections::HashMap<String, (String, String)> =
+        serde_json::from_str(&std::fs::read_to_string(&paths.labels).unwrap_or_default())
+            .unwrap_or_default();
+
     for id in todo.into_iter().take(budget) {
-        let Some(url) = stream_url(id).await else {
+        let Some((artist, title, url)) = resolve(id).await else {
             progress.failed += 1;
             continue;
         };
@@ -152,7 +163,8 @@ pub async fn analyse(ids: &[String], paths: &Paths, budget: usize) -> Result<Pro
         let result = tokio::task::block_in_place(|| analyse_url(&mut embedder, &url));
         match result {
             Ok(style) => {
-                if store.insert(id_owned, style).is_ok() {
+                if store.insert(id_owned.clone(), style).is_ok() {
+                    labels.insert(id_owned, (artist, title));
                     progress.embedded += 1;
                     progress.remaining = progress.remaining.saturating_sub(1);
                 }
@@ -171,12 +183,15 @@ pub async fn analyse(ids: &[String], paths: &Paths, budget: usize) -> Result<Pro
     store
         .save(&paths.store)
         .map_err(|e| format!("save vectors: {e}"))?;
+    if let Ok(json) = serde_json::to_string(&labels) {
+        let _ = std::fs::write(&paths.labels, json);
+    }
     progress.total = store.len();
     Ok(progress)
 }
 
-/// Highest-bitrate non-dub audio URL for a video id, anonymously.
-async fn stream_url(video_id: &str) -> Option<String> {
+/// Artist, title and the highest-bitrate non-dub audio URL, anonymously.
+async fn resolve(video_id: &str) -> Option<(String, String, String)> {
     use server::ytmusic::clients::VISIONOS;
     use server::ytmusic::innertube::{self, PlayerExtras, visitor_id};
 
@@ -193,7 +208,18 @@ async fn stream_url(video_id: &str) -> Option<String> {
     )
     .await
     .ok()?;
-    json.pointer("/streamingData/adaptiveFormats")
+    let artist = json
+        .pointer("/videoDetails/author")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let title = json
+        .pointer("/videoDetails/title")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let url = json
+        .pointer("/streamingData/adaptiveFormats")
         .and_then(|v| v.as_array())?
         .iter()
         .filter(|f| {
@@ -211,8 +237,9 @@ async fn stream_url(video_id: &str) -> Option<String> {
         })
         .max_by_key(|f| f.get("bitrate").and_then(|v| v.as_u64()).unwrap_or(0))
         .and_then(|f| f.get("url"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+        .and_then(|v| v.as_str())?
+        .to_string();
+    Some((artist, title, url))
 }
 
 /// Whether everything the job needs is present.
@@ -258,6 +285,7 @@ mod tests {
             runtime: PathBuf::from("/no/such/runtime"),
             model: PathBuf::from("/no/such/model"),
             store: store_path.clone(),
+            labels: dir.join("labels.json"),
         };
         let progress = analyse(&["known".to_string()], &paths, 5)
             .await
