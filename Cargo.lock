@@ -2166,6 +2166,8 @@ dependencies = [
  "scrobble",
  "serde_json",
  "server",
+ "symphonia",
+ "symphonia-adapter-libopus",
  "tokio",
 ]
 

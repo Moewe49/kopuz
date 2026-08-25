@@ -17,6 +17,14 @@ onnx = ["dep:ort"]
 
 [dependencies]
 realfft = "3.5"
+# Already compiled into every native target for playback, so decoding here
+# costs nothing new — and removes the ffmpeg requirement, which `deps.rs` only
+# manages on Windows and macOS.
+symphonia = { workspace = true }
+# YouTube serves Opus in WebM, and symphonia's bundled codecs refuse it —
+# measured: "unsupported audio codec". The player carries the same adapter for
+# the same reason.
+symphonia-adapter-libopus = "0.3"
 ort = { version = "2.0.0-rc.13", optional = true }
 
 # Examples only. Dev-dependencies are never built for a package that merely
