@@ -256,3 +256,101 @@ pub fn JamButton() -> Element {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn portable(id: &str, secs: u64) -> SharedTrack {
+        SharedTrack {
+            path: Some(format!("ytmusic:{id}")),
+            title: format!("song {id}"),
+            artist: "Artist".into(),
+            duration: secs,
+        }
+    }
+
+    fn metadata_only(title: &str) -> SharedTrack {
+        SharedTrack {
+            path: None,
+            title: title.into(),
+            artist: "Artist".into(),
+            duration: 100,
+        }
+    }
+
+    fn jam_of(tracks: Vec<SharedTrack>, index: usize) -> Jam {
+        Jam {
+            playlist: SharedPlaylist {
+                name: "j".into(),
+                tracks,
+            },
+            index,
+            position_ms: 30_000,
+            sent_at: 1_000,
+        }
+    }
+
+    #[test]
+    fn every_playable_track_survives_and_the_index_is_kept() {
+        let jam = jam_of(
+            vec![portable("a", 100), portable("b", 100), portable("c", 100)],
+            1,
+        );
+        let (tracks, index, on_anchor, dropped) = super::jam_tracks(&jam, 1);
+        assert_eq!(tracks.len(), 3);
+        assert_eq!(index, 1);
+        assert!(on_anchor);
+        assert_eq!(dropped, 0);
+    }
+
+    /// Dropping a track shifts everything after it. If the mapping is wrong the
+    /// listener silently starts on the wrong song, which looks like the jam
+    /// simply not working.
+    #[test]
+    fn dropping_earlier_tracks_shifts_the_index_back() {
+        let jam = jam_of(
+            vec![
+                metadata_only("only on their disk"),
+                metadata_only("also unplayable"),
+                portable("a", 100),
+                portable("b", 100),
+            ],
+            3,
+        );
+        let (tracks, index, on_anchor, dropped) = super::jam_tracks(&jam, 3);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(dropped, 2);
+        assert!(on_anchor);
+        assert_eq!(index, 1, "the anchor is the second playable track");
+        assert!(tracks[index].path.to_string_lossy().contains('b'));
+    }
+
+    /// When the track they were on cannot play here, the next one that can
+    /// starts from its beginning — carrying the position across would drop the
+    /// listener into the middle of a song the sender had not reached.
+    #[test]
+    fn an_unplayable_anchor_falls_forward_and_reports_it() {
+        let jam = jam_of(
+            vec![
+                portable("a", 100),
+                metadata_only("their local file"),
+                portable("c", 100),
+            ],
+            1,
+        );
+        let (tracks, index, on_anchor, dropped) = super::jam_tracks(&jam, 1);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(dropped, 1);
+        assert!(!on_anchor, "caller must know not to apply the position");
+        assert_eq!(index, 1, "falls forward to the next playable track");
+    }
+
+    #[test]
+    fn a_jam_with_nothing_playable_yields_nothing() {
+        let jam = jam_of(vec![metadata_only("x"), metadata_only("y")], 0);
+        let (tracks, _, _, dropped) = super::jam_tracks(&jam, 0);
+        assert!(tracks.is_empty());
+        assert_eq!(dropped, 2);
+    }
+}
