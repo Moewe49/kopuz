@@ -2026,6 +2026,25 @@ impl PlayerController {
         self.play_track(0);
     }
 
+    /// Start a queue at a given track and position.
+    ///
+    /// A jam code says where its sender is, and landing at zero would throw
+    /// that away. The seek cannot be issued here — the stream is not open yet,
+    /// and `Player::seek` on an idle stream does nothing — so this hands the
+    /// position to the same pending-resume path that session restore uses, and
+    /// it is applied once the track is actually playing.
+    pub fn play_queue_at(&mut self, tracks: Vec<Track>, index: usize, progress_secs: u64) {
+        if tracks.is_empty() {
+            return;
+        }
+        let index = index.min(tracks.len() - 1);
+        if progress_secs > 0 {
+            self.set_pending_resume_for_track(&tracks[index], progress_secs);
+        }
+        self.queue.set(tracks);
+        self.play_track(index);
+    }
+
     pub fn add_to_queue(&mut self, tracks: impl IntoIterator<Item = Track>) {
         let tracks: Vec<Track> = tracks.into_iter().collect();
         let count = tracks.len();

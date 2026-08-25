@@ -19,8 +19,9 @@
 
 use config::{AppConfig, MusicService, MusicSource};
 use dioxus::prelude::*;
+use hooks::use_player_controller::PlayerController;
 use reader::PlaylistStore;
-use reader::share::{self, SharedPlaylist, SharedTrack};
+use reader::share::{self, Jam, SharedPlaylist, SharedTrack};
 
 use crate::toast::show_toast;
 use crate::track_row::copy_to_clipboard;
@@ -49,6 +50,119 @@ impl ImportOutcome {
             )
         }
     }
+}
+
+/// The moment currently playing, as a pasteable jam code.
+///
+/// `None` when nothing is queued — there is no moment to share.
+fn current_jam(ctrl: &PlayerController, now_secs: u64) -> Option<String> {
+    let queue = ctrl.queue.peek();
+    if queue.is_empty() {
+        return None;
+    }
+    let tracks: Vec<SharedTrack> = queue
+        .iter()
+        .map(|t| share::shared_track(&t.path.to_string_lossy(), &t.title, &t.artist, t.duration))
+        .collect();
+    let index = (*ctrl.current_queue_index.peek()).min(tracks.len() - 1);
+    // Named after what is playing, so the receiver sees something meaningful
+    // in the preview rather than the word "Jam".
+    let name = queue
+        .get(index)
+        .map(|t| format!("{} - {}", t.artist, t.title))
+        .unwrap_or_else(|| "Jam".to_string());
+    Some(share::encode_jam(&Jam {
+        playlist: SharedPlaylist { name, tracks },
+        index,
+        position_ms: (*ctrl.current_song_progress.peek()).saturating_mul(1000),
+        sent_at: now_secs,
+    }))
+}
+
+/// Turn the tracks a jam carries into something playable, and map the
+/// sender's position onto the result.
+///
+/// Only tracks that travelled with a portable id can play directly. One that
+/// travelled as metadata would need a search before playback could start,
+/// which is the wrong trade for something meant to begin immediately.
+///
+/// Dropping tracks shifts every index after them, so the mapping is done here
+/// rather than by the caller: `at` is an index into the jam's own list, and
+/// what comes back indexes the playable list. If the track the sender was on
+/// is itself unplayable here, the next one that is plays from its start —
+/// carrying the position across would drop the listener into the middle of a
+/// song the sender had not reached.
+fn jam_tracks(jam: &Jam, at: usize) -> (Vec<reader::models::Track>, usize, bool, usize) {
+    let mut out = Vec::new();
+    let mut dropped = 0usize;
+    let mut mapped = 0usize;
+    let mut landed_on_anchor = false;
+    for (i, t) in jam.playlist.tracks.iter().enumerate() {
+        let Some(path) = &t.path else {
+            dropped += 1;
+            continue;
+        };
+        if i == at {
+            mapped = out.len();
+            landed_on_anchor = true;
+        } else if i < at {
+            // Keeps `mapped` pointing at the first playable track at or after
+            // the anchor, for the case where the anchor itself is dropped.
+            mapped = out.len() + 1;
+        }
+        out.push(reader::models::Track {
+            path: std::path::PathBuf::from(path),
+            album_id: String::new(),
+            title: t.title.clone(),
+            artist: t.artist.clone(),
+            album: String::new(),
+            duration: t.duration,
+            khz: 0,
+            bitrate: 0,
+            track_number: None,
+            disc_number: None,
+            musicbrainz_release_id: None,
+            musicbrainz_recording_id: None,
+            musicbrainz_track_id: None,
+            playlist_item_id: None,
+            artists: vec![t.artist.clone()],
+        });
+    }
+    let mapped = mapped.min(out.len().saturating_sub(1));
+    (out, mapped, landed_on_anchor, dropped)
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// What a pasted code turned out to be.
+enum Pasted {
+    Playlist(SharedPlaylist),
+    Jam(Jam),
+    Bad(String),
+}
+
+fn read_pasted(raw: &str) -> Option<Pasted> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Checked by prefix rather than by trying both decoders: a jam pasted into
+    // this box should say "that is a jam", not "damaged playlist link".
+    if trimmed.contains(share::JAM_PREFIX) {
+        return Some(match share::decode_jam(trimmed) {
+            Ok(j) => Pasted::Jam(j),
+            Err(e) => Pasted::Bad(e),
+        });
+    }
+    Some(match share::decode(trimmed) {
+        Ok(p) => Pasted::Playlist(p),
+        Err(e) => Pasted::Bad(e),
+    })
 }
 
 /// Turn one of the user's playlists into the shareable form.
@@ -165,9 +279,36 @@ pub fn PlaylistShareModal(
 
     // Decode as they type so the paste box can show what they're about to get
     // — and say why a bad code is bad before they press anything.
-    let preview = {
-        let raw = pasted.read();
-        (!raw.trim().is_empty()).then(|| share::decode(&raw))
+    let preview = read_pasted(&pasted.read());
+
+    let ctrl = try_consume_context::<PlayerController>();
+
+    // Join: load the sender's queue and land where they are *now*, not where
+    // they were when the code was made.
+    let mut do_join = move |jam: Jam| {
+        let Some(ctrl) = ctrl else {
+            show_toast("Playback isn't ready yet".to_string());
+            return;
+        };
+        let (at, position_ms) = share::catch_up(&jam, now_secs());
+        let (tracks, index, on_anchor, dropped) = jam_tracks(&jam, at);
+        if tracks.is_empty() {
+            show_toast("Nothing in that jam can be played here".to_string());
+            return;
+        }
+        // If the track they were on cannot play here, the next one starts from
+        // its beginning rather than from a position that belongs to a
+        // different song.
+        let secs = if on_anchor { position_ms / 1000 } else { 0 };
+        let mut ctrl = ctrl;
+        ctrl.play_queue_at(tracks, index, secs);
+        pasted.set(String::new());
+        show_toast(if dropped == 0 {
+            "Joined the jam".to_string()
+        } else {
+            format!("Joined the jam — {dropped} tracks couldn't be played here")
+        });
+        on_close.call(());
     };
 
     let mut do_import = move |decoded: SharedPlaylist| {
@@ -251,6 +392,35 @@ pub fn PlaylistShareModal(
                             }
                         }
 
+                        // Sending the moment, not the list. Sits under the
+                        // playlist picker because it is the same gesture — turn
+                        // something you have into a code — and separating it
+                        // into its own dialog would mean explaining the code
+                        // twice.
+                        if let Some(jam_code) = ctrl.and_then(|c| current_jam(&c, now_secs())) {
+                            div {
+                                class: "rounded-lg border border-violet-400/25 bg-violet-500/5 px-3 py-2.5 flex items-center justify-between gap-3",
+                                div {
+                                    div { class: "text-white/90 text-sm font-medium",
+                                        i { class: "fa-solid fa-tower-broadcast mr-1.5 text-violet-300" }
+                                        "Send this moment"
+                                    }
+                                    p { class: "text-white/40 text-[11px] mt-0.5",
+                                        "They land where you are, even if they paste it later."
+                                    }
+                                }
+                                button {
+                                    class: "shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors",
+                                    onclick: move |_| {
+                                        copy_to_clipboard(&jam_code);
+                                        show_toast("Jam code copied".to_string());
+                                    },
+                                    i { class: "fa-solid fa-copy mr-1.5" }
+                                    "Copy"
+                                }
+                            }
+                        }
+
                         if let Some(code) = code.clone() {
                             {
                                 let len = code.len();
@@ -299,13 +469,46 @@ pub fn PlaylistShareModal(
 
                         textarea {
                             class: "w-full h-32 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-[11px] font-mono resize-none placeholder:text-white/30 focus:outline-none focus:border-emerald-400 break-all",
-                            placeholder: "Paste a kopuz:pl:… code here",
+                            placeholder: "Paste a kopuz:pl:… or kopuz:jam:… code here",
                             value: "{pasted}",
                             oninput: move |e| pasted.set(e.value()),
                         }
 
                         match preview {
-                            Some(Ok(decoded)) => {
+                            Some(Pasted::Jam(jam)) => {
+                                let count = jam.playlist.tracks.len();
+                                let (at, position_ms) = share::catch_up(&jam, now_secs());
+                                let where_ = jam
+                                    .playlist
+                                    .tracks
+                                    .get(at)
+                                    .map(|t| format!("{} — {}", t.artist, t.title))
+                                    .unwrap_or_default();
+                                let clock = format!(
+                                    "{}:{:02}",
+                                    position_ms / 60_000,
+                                    (position_ms / 1000) % 60
+                                );
+                                rsx! {
+                                    div {
+                                        class: "rounded-lg bg-violet-500/10 border border-violet-400/25 px-3 py-2",
+                                        div { class: "text-white text-sm font-medium",
+                                            i { class: "fa-solid fa-tower-broadcast mr-1.5 text-violet-300" }
+                                            "Jam — {count} tracks"
+                                        }
+                                        div { class: "text-violet-200/70 text-xs mt-0.5",
+                                            "Joins at {clock} in {where_}"
+                                        }
+                                    }
+                                    button {
+                                        class: "w-full px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors",
+                                        onclick: move |_| do_join(jam.clone()),
+                                        i { class: "fa-solid fa-play mr-1.5" }
+                                        "Join the jam"
+                                    }
+                                }
+                            }
+                            Some(Pasted::Playlist(decoded)) => {
                                 let name = decoded.name.clone();
                                 let count = decoded.tracks.len();
                                 let busy = *importing.read();
@@ -329,7 +532,7 @@ pub fn PlaylistShareModal(
                                     }
                                 }
                             }
-                            Some(Err(e)) => rsx! {
+                            Some(Pasted::Bad(e)) => rsx! {
                                 div {
                                     class: "rounded-lg bg-rose-500/10 border border-rose-400/25 px-3 py-2 text-rose-200 text-xs",
                                     i { class: "fa-solid fa-triangle-exclamation mr-1.5" }
@@ -531,5 +734,114 @@ mod tests {
             ..bare.clone()
         };
         assert_eq!(yt_id(&sc), None, "SoundCloud must not be taken for YouTube");
+    }
+
+    // ── Jam ───────────────────────────────────────────────────────────────
+
+    fn portable(id: &str, secs: u64) -> SharedTrack {
+        SharedTrack {
+            path: Some(format!("ytmusic:{id}")),
+            title: format!("song {id}"),
+            artist: "Artist".into(),
+            duration: secs,
+        }
+    }
+
+    fn metadata_only(title: &str) -> SharedTrack {
+        SharedTrack {
+            path: None,
+            title: title.into(),
+            artist: "Artist".into(),
+            duration: 100,
+        }
+    }
+
+    fn jam_of(tracks: Vec<SharedTrack>, index: usize) -> Jam {
+        Jam {
+            playlist: SharedPlaylist {
+                name: "j".into(),
+                tracks,
+            },
+            index,
+            position_ms: 30_000,
+            sent_at: 1_000,
+        }
+    }
+
+    #[test]
+    fn every_playable_track_survives_and_the_index_is_kept() {
+        let jam = jam_of(
+            vec![portable("a", 100), portable("b", 100), portable("c", 100)],
+            1,
+        );
+        let (tracks, index, on_anchor, dropped) = jam_tracks(&jam, 1);
+        assert_eq!(tracks.len(), 3);
+        assert_eq!(index, 1);
+        assert!(on_anchor);
+        assert_eq!(dropped, 0);
+    }
+
+    /// Dropping a track shifts everything after it. If the mapping is wrong the
+    /// listener silently starts on the wrong song, which looks like the jam
+    /// simply not working.
+    #[test]
+    fn dropping_earlier_tracks_shifts_the_index_back() {
+        let jam = jam_of(
+            vec![
+                metadata_only("only on their disk"),
+                metadata_only("also unplayable"),
+                portable("a", 100),
+                portable("b", 100),
+            ],
+            3,
+        );
+        let (tracks, index, on_anchor, dropped) = jam_tracks(&jam, 3);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(dropped, 2);
+        assert!(on_anchor);
+        assert_eq!(index, 1, "the anchor is the second playable track");
+        assert!(tracks[index].path.to_string_lossy().contains('b'));
+    }
+
+    /// When the track they were on cannot play here, the next one that can
+    /// starts from its beginning — carrying the position across would drop the
+    /// listener into the middle of a song the sender had not reached.
+    #[test]
+    fn an_unplayable_anchor_falls_forward_and_reports_it() {
+        let jam = jam_of(
+            vec![
+                portable("a", 100),
+                metadata_only("their local file"),
+                portable("c", 100),
+            ],
+            1,
+        );
+        let (tracks, index, on_anchor, dropped) = jam_tracks(&jam, 1);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(dropped, 1);
+        assert!(!on_anchor, "caller must know not to apply the position");
+        assert_eq!(index, 1, "falls forward to the next playable track");
+    }
+
+    #[test]
+    fn a_jam_with_nothing_playable_yields_nothing() {
+        let jam = jam_of(vec![metadata_only("x"), metadata_only("y")], 0);
+        let (tracks, _, _, dropped) = jam_tracks(&jam, 0);
+        assert!(tracks.is_empty());
+        assert_eq!(dropped, 2);
+    }
+
+    /// The paste box has to tell the two token kinds apart before decoding, or
+    /// a jam reads as a damaged playlist.
+    #[test]
+    fn the_paste_box_tells_the_two_code_kinds_apart() {
+        let jam = jam_of(vec![portable("aaaaaaaaaaa", 100)], 0);
+        let jam_code = share::encode_jam(&jam);
+        let list_code = share::encode(&jam.playlist);
+
+        assert!(matches!(read_pasted(&jam_code), Some(Pasted::Jam(_))));
+        assert!(matches!(read_pasted(&list_code), Some(Pasted::Playlist(_))));
+        assert!(matches!(read_pasted("nonsense"), Some(Pasted::Bad(_))));
+        assert!(read_pasted("   ").is_none());
     }
 }
