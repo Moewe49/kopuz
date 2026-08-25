@@ -1,0 +1,26 @@
+[package]
+name = "relay"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["client"]
+# Talking to a relay. Everything a device needs, and nothing that would drag a
+# web server into the app's dependency graph.
+client = ["dep:reqwest"]
+# Being a relay. Only the standalone binary turns this on.
+server = ["dep:axum", "dep:tokio"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+reqwest = { workspace = true, optional = true }
+axum = { version = "0.8", optional = true }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros", "signal"] }
+
+# Only built when the server feature is on, so a device never compiles axum.
+[[bin]]
+name = "kopuz-relay"
+path = "src/bin/kopuz-relay.rs"
+required-features = ["server"]

@@ -15,6 +15,7 @@ members = [
    "crates/i18n",
    "crates/radio",
    "crates/embed",
+   "crates/relay",
 ]
 # The TLS-verifier shim is a `[patch]` crate, not a workspace member.
 exclude = ["vendor/rustls-platform-verifier"]
