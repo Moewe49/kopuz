@@ -349,9 +349,9 @@ pub fn PlaylistShareModal(
                 div {
                     class: "flex items-center justify-between px-6 py-4 border-b border-white/10",
                     div {
-                        h2 { class: "text-white font-semibold", "Share playlists" }
+                        h2 { class: "text-white font-semibold", "Share playlists & jams" }
                         p { class: "text-xs text-white/40 mt-0.5",
-                            "The code carries the playlist itself — no account, no server, nothing to expire."
+                            "The code carries the music itself — no account, no server, nothing to expire. A jam code also carries where you are."
                         }
                     }
                     button {
@@ -464,7 +464,7 @@ pub fn PlaylistShareModal(
                         div {
                             class: "flex items-center gap-2 text-white/90 text-sm font-medium",
                             i { class: "fa-solid fa-inbox text-emerald-300" }
-                            "Add a shared playlist"
+                            "Take one in"
                         }
 
                         textarea {

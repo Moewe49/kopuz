@@ -514,6 +514,20 @@ pub fn encode_jam(jam: &Jam) -> String {
     put_varint(&mut body, jam.index as u64);
     put_varint(&mut body, jam.position_ms);
     put_varint(&mut body, jam.sent_at);
+
+    // Durations, which the playlist body deliberately does not carry: a
+    // YouTube track travels as an id alone, because the recipient re-resolves
+    // its title and length anyway. A jam cannot wait for that. Without the
+    // lengths [`catch_up`] has no way to know when a track ended, so it stops
+    // at the first one and the receiver lands wherever the sender was rather
+    // than where they are — which is the entire point of a jam.
+    //
+    // A varint each, so a thirty-track jam pays about sixty bytes for it.
+    put_varint(&mut body, jam.playlist.tracks.len() as u64);
+    for track in &jam.playlist.tracks {
+        put_varint(&mut body, track.duration);
+    }
+
     body.extend_from_slice(&encode_body(&jam.playlist));
     format!("{JAM_PREFIX}{}", URL_SAFE_NO_PAD.encode(body))
 }
@@ -540,7 +554,24 @@ pub fn decode_jam(input: &str) -> Result<Jam, String> {
     ) else {
         return damaged();
     };
-    let playlist = decode_body(rest)?;
+    let Some(count) = take_varint(&mut rest) else {
+        return damaged();
+    };
+    let mut durations = Vec::with_capacity(count.min(4096) as usize);
+    for _ in 0..count {
+        let Some(d) = take_varint(&mut rest) else {
+            return damaged();
+        };
+        durations.push(d);
+    }
+
+    let mut playlist = decode_body(rest)?;
+    // Put the lengths back on the tracks that travelled as bare ids.
+    for (track, duration) in playlist.tracks.iter_mut().zip(durations) {
+        if track.duration == 0 {
+            track.duration = duration;
+        }
+    }
     // An index past the end would seek into nothing. Clamp rather than reject:
     // the queue is still worth having.
     let index = (index as usize).min(playlist.tracks.len().saturating_sub(1));
@@ -970,6 +1001,67 @@ mod tests {
         jam.index = 99;
         let decoded = decode_jam(&encode_jam(&jam)).unwrap();
         assert_eq!(decoded.index, 2);
+    }
+
+    /// The whole path, as the app walks it: a queue is turned into a code, the
+    /// code sits somewhere for a while, and the receiver lands on the right
+    /// track at the right second. Each piece has its own test; this is the one
+    /// that would catch them being wired together wrongly.
+    #[test]
+    fn a_moment_survives_the_whole_journey() {
+        // Sender: four songs, two minutes into the second.
+        let queue = SharedPlaylist {
+            name: "Wisp - Sword".into(),
+            tracks: vec![
+                jam_track("aaaaaaaaaaa", 180),
+                jam_track("bbbbbbbbbbb", 200),
+                jam_track("ccccccccccc", 240),
+                jam_track("ddddddddddd", 150),
+            ],
+        };
+        let sent_at = 1_700_000_000;
+        let code = encode_jam(&Jam {
+            playlist: queue,
+            index: 1,
+            position_ms: 120_000,
+            sent_at,
+        });
+
+        // It travels as text and picks up the usual chat-window debris.
+        let pasted = format!("  \"{code}\"  ");
+        let received = decode_jam(&pasted).expect("a quoted code must still decode");
+
+        // Receiver opens it five minutes later. Track 1 had 80s left, track 2
+        // takes 240s, so they are 300 - 80 = 220s into track 2.
+        let (index, position_ms) = catch_up(&received, sent_at + 300);
+        assert_eq!(index, 2, "landed on the wrong track");
+        assert_eq!(position_ms, 220_000);
+
+        // And the queue itself arrived intact.
+        assert_eq!(received.playlist.tracks.len(), 4);
+        assert!(received.playlist.tracks.iter().all(|t| t.is_portable()));
+        assert_eq!(received.playlist.name, "Wisp - Sword");
+    }
+
+    /// Codes are pasted into chat, so length is the design constraint the
+    /// whole format was built around. The durations must not undo that.
+    #[test]
+    fn a_thirty_track_jam_still_fits_in_a_chat_message() {
+        let tracks: Vec<SharedTrack> = (0..30)
+            .map(|i| jam_track(&format!("aaaaaaaaa{i:02}"), 180 + i as u64))
+            .collect();
+        let code = encode_jam(&Jam {
+            playlist: SharedPlaylist {
+                name: "A Mix".into(),
+                tracks,
+            },
+            index: 3,
+            position_ms: 45_000,
+            sent_at: 1_700_000_000,
+        });
+        assert!(code.len() < 2000, "{} characters", code.len());
+        // And it round-trips at that size.
+        assert_eq!(decode_jam(&code).unwrap().playlist.tracks.len(), 30);
     }
 
     #[test]

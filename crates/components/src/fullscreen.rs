@@ -310,6 +310,8 @@ fn Tabs(
                     onclick: move |_| active_tab.set(1),
                     "{i18n::t(\"lyrics\")}"
                 }
+                // Beside the queue, because the queue is what a jam carries.
+                crate::jam::JamButton {}
             }
 
             if *active_tab.read() == 0 {
