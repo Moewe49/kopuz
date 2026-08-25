@@ -27,7 +27,7 @@ fn main() {
     let set = server::mixes::from_vectors(&store, &labels, 0, 42);
     for m in &set.mixes {
         println!("=== {} ({} tracks) ===", m.name, m.tracks.len());
-        for t in m.tracks.iter().take(8) {
+        for t in m.tracks.iter() {
             let cover = if t.path.to_string_lossy().contains("urlhex_") {
                 "[cover]"
             } else {
