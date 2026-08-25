@@ -37,7 +37,28 @@ fn main() {
         return;
     }
 
-    let k = reader::taste::best_k(&vectors, 6, 42);
+    // Why this k and not another: the chooser rejects a split when two
+    // centroids are too similar, and that threshold was calibrated on
+    // track-to-track distances. Centroids are averages, so they sit closer
+    // together by construction — print both so the two can be told apart.
+    println!("k   silhouette   worst centroid overlap   sizes");
+    for probe in 2..=6 {
+        let cl = reader::taste::cluster(&vectors, probe, 42);
+        let mut worst = 0f32;
+        for i in 0..cl.len() {
+            for j in i + 1..cl.len() {
+                worst = worst.max(embed::similarity(&cl[i].centroid, &cl[j].centroid));
+            }
+        }
+        println!(
+            "{probe}   {:>10.3}   {worst:>21.3}   {:?}",
+            reader::taste::silhouette_of(&vectors, &cl),
+            cl.iter().map(|c| c.members.len()).collect::<Vec<_>>()
+        );
+    }
+    println!();
+
+    let k = reader::taste::best_k(&vectors, 4, 42);
     let clusters = reader::taste::cluster(&vectors, k, 42);
     println!("-> {} taste direction(s)\n", clusters.len());
 

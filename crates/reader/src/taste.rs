@@ -200,35 +200,69 @@ fn worst_overlap(clusters: &[Cluster]) -> f32 {
     worst
 }
 
+/// A cluster smaller than this is not a mix, it is a handful of songs. A split
+/// that produces one is rejected rather than shown.
+const MIN_USEFUL_CLUSTER: usize = 8;
+
 /// How many directions the history actually contains.
 ///
 /// Not a fixed number, because the right answer differs per listener: a
 /// history that is all one thing must not be forced into four mixes, and one
 /// that spans five genres must not be collapsed into two.
 ///
-/// Silhouette alone cannot decide this. It is scale-invariant, so twenty
-/// near-identical tracks still split "cleanly" — measured at 0.587 for a
-/// history containing exactly one taste, higher than the 0.441 the same data
-/// scored at k=2. What separates a real split from a fake one is the absolute
-/// distance between the centroids, which was 0.9996 in that case and 0.113 for
-/// three genuinely different tastes.
+/// # Why not the best silhouette
+///
+/// Because silhouette answers a different question. It measures how cleanly a
+/// split separates, and it falls monotonically as k grows, so it always
+/// prefers the fewest clusters. Measured on a real 302-track library:
+///
+/// ```text
+/// k   silhouette   worst centroid overlap   sizes
+/// 2      0.369            0.789             [174, 128]
+/// 3      0.341            0.844             [84, 115, 103]
+/// 4      0.327            0.885             [68, 101, 51, 82]
+/// ```
+///
+/// Silhouette picks k=2 — two mixes of 174 and 128 tracks, which is not
+/// several mixes for several tastes, it is a halving. Yet every one of those
+/// splits is legitimate by the measure that matters: no two centroids are
+/// closer than the listener's own favourites are to each other.
+///
+/// So the rule is the largest k that stays honest — every pair of directions
+/// genuinely apart, every direction big enough to be worth a tile. What bounds
+/// it is the caller's `max_k`, because how many tiles belong on a shelf is a
+/// question about the shelf, not about the music.
+///
+/// Silhouette cannot be the guard either: it is scale-invariant, so twenty
+/// near-identical tracks scored 0.587 at k=4, *higher* than the same data at
+/// k=2. Absolute centroid distance is what separates a real split from a fake
+/// one — 0.9996 for one taste wrongly split, 0.113 for three real ones.
 pub fn best_k(vectors: &[Vec<f32>], max_k: usize, seed: u64) -> usize {
     if vectors.len() < 4 {
         return 1;
     }
     let upper = max_k.min(vectors.len() / 2).max(1);
-    let mut best = (1usize, f32::NEG_INFINITY);
+    let mut best = 1usize;
     for k in 2..=upper {
         let clusters = cluster(vectors, k, seed);
         if clusters.len() < 2 || worst_overlap(&clusters) >= SAME_DIRECTION {
             continue;
         }
-        let score = silhouette(vectors, &clusters);
-        if score > best.1 {
-            best = (k, score);
+        if clusters
+            .iter()
+            .any(|c| c.members.len() < MIN_USEFUL_CLUSTER)
+        {
+            continue;
         }
+        best = k;
     }
-    best.0
+    best
+}
+
+/// Mean silhouette for a split, so a caller can see why a `k` was chosen or
+/// rejected rather than only the verdict.
+pub fn silhouette_of(vectors: &[Vec<f32>], clusters: &[Cluster]) -> f32 {
+    silhouette(vectors, clusters)
 }
 
 /// Mean silhouette over all points, on cosine distance.
@@ -331,6 +365,40 @@ mod tests {
     #[test]
     fn the_number_of_mixes_follows_the_history() {
         assert_eq!(best_k(&three_tastes(), 6, 42), 3);
+    }
+
+    /// More tiles is not more choice if they are slivers. Eight tracks is the
+    /// floor for something worth its own tile — without it, "largest k that
+    /// stays distinct" would happily cut three outliers into their own mixes.
+    #[test]
+    fn a_split_that_produces_slivers_is_rejected() {
+        let mut rng = Rng(5);
+        let mut vectors: Vec<Vec<f32>> = Vec::new();
+        for axis in 0..2 {
+            for _ in 0..15 {
+                let mut v = vec![0f32; 8];
+                v[axis] = 1.0;
+                v[(axis + 3) % 8] = rng.next_f32() * 0.15;
+                normalise(&mut v);
+                vectors.push(v);
+            }
+        }
+        // Three lone points, far from both groups and from each other.
+        for axis in 4..7 {
+            let mut v = vec![0f32; 8];
+            v[axis] = 1.0;
+            normalise(&mut v);
+            vectors.push(v);
+        }
+        let k = best_k(&vectors, 6, 42);
+        let clusters = cluster(&vectors, k, 42);
+        assert!(
+            clusters
+                .iter()
+                .all(|c| c.members.len() >= MIN_USEFUL_CLUSTER),
+            "sizes {:?}",
+            clusters.iter().map(|c| c.members.len()).collect::<Vec<_>>()
+        );
     }
 
     /// A listener who only plays one thing must get one mix, not four
