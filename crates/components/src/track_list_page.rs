@@ -13,9 +13,21 @@
 use dioxus::prelude::*;
 use reader::models::Track;
 
-/// One row: index, cover, title, artist. Clicking plays from here.
+/// One row: index, play button, cover, title, artist.
+///
+/// Nothing moves on hover. The first version swapped the index for a play icon
+/// in the same slot, which made the whole row shift as the pointer crossed it —
+/// and left no way to see which track was actually playing. The play button
+/// now sits beside the cover and stays there; the index is replaced only for
+/// the track that is playing, and only by an indicator of the same width.
 #[component]
-pub fn TrackListRow(track: Track, index: usize, on_play: EventHandler<Track>) -> Element {
+pub fn TrackListRow(
+    track: Track,
+    index: usize,
+    /// The track playing right now, so this row can say so.
+    is_current: bool,
+    on_play: EventHandler<Track>,
+) -> Element {
     let thumbnail = utils::jellyfin_image::track_cover_url_with_album_fallback(
         &track.path.to_string_lossy(),
         &track.album_id,
@@ -29,10 +41,22 @@ pub fn TrackListRow(track: Track, index: usize, on_play: EventHandler<Track>) ->
     let track_for_click = track.clone();
     rsx! {
         button {
-            class: "group flex items-center gap-4 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors text-left cursor-pointer w-full",
+            class: if is_current {
+                "group flex items-center gap-3 px-3 py-2 rounded-lg bg-indigo-500/10 transition-colors text-left cursor-pointer w-full"
+            } else {
+                "group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors text-left cursor-pointer w-full"
+            },
             onclick: move |_| on_play.call(track_for_click.clone()),
-            span { class: "w-8 text-right text-white/40 text-xs tabular-nums group-hover:hidden", "{index}" }
-            i { class: "w-8 text-center fa-solid fa-play text-white text-xs hidden group-hover:inline-block" }
+
+            // Same width either way, so the row never shifts.
+            if is_current {
+                i { class: "w-6 text-center fa-solid fa-volume-high text-indigo-300 text-xs" }
+            } else {
+                span { class: "w-6 text-right text-white/30 text-xs tabular-nums", "{index}" }
+            }
+
+            i { class: "w-6 text-center fa-solid fa-play text-white/50 group-hover:text-white text-xs transition-colors" }
+
             if let Some(url) = thumbnail {
                 img {
                     src: "{url}",
@@ -44,7 +68,14 @@ pub fn TrackListRow(track: Track, index: usize, on_play: EventHandler<Track>) ->
                 div { class: "w-11 h-11 rounded bg-white/5" }
             }
             div { class: "min-w-0 flex-1",
-                p { class: "text-sm text-white font-medium truncate", "{title}" }
+                p {
+                    class: if is_current {
+                        "text-sm text-indigo-200 font-medium truncate"
+                    } else {
+                        "text-sm text-white font-medium truncate"
+                    },
+                    "{title}"
+                }
                 p { class: "text-xs text-white/50 truncate", "{artist}" }
             }
         }
@@ -74,6 +105,14 @@ pub fn TrackListPage(
     on_play_from: EventHandler<Track>,
 ) -> Element {
     let count = tracks.len();
+    // Which row to mark, taken from the player rather than passed in: every
+    // caller would otherwise have to compute the same thing, and get it
+    // subtly different.
+    let now_playing: Option<std::path::PathBuf> =
+        try_consume_context::<hooks::use_player_controller::PlayerController>().and_then(|ctrl| {
+            let idx = *ctrl.current_queue_index.peek();
+            ctrl.queue.peek().get(idx).map(|t| t.path.clone())
+        });
     rsx! {
         div { class: "p-6 md:p-10 max-w-[1600px] mx-auto",
             button {
@@ -116,6 +155,7 @@ pub fn TrackListPage(
                             key: "{idx}",
                             track: track.clone(),
                             index: idx + 1,
+                            is_current: now_playing.as_ref() == Some(&track.path),
                             on_play: move |t: Track| on_play_from.call(t),
                         }
                     }

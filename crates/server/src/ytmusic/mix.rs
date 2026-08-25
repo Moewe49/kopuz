@@ -230,6 +230,8 @@ fn parse_queue_row(row: &Value) -> Option<Track> {
     // For songs (has_album): byline = [artist, album, year-or-views, likes]
     // For videos:            byline = [artist, views, likes]
     let primary_artist = byline.first().cloned().unwrap_or_default();
+    let primary_artist = super::display_artist(&primary_artist);
+    let title = super::display_title(&primary_artist, &title);
     let artists = if primary_artist.is_empty() {
         Vec::new()
     } else {

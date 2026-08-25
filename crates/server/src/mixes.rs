@@ -330,6 +330,38 @@ pub fn load_labels(path: &std::path::Path) -> Labels {
 /// overwhelmingly Charli XCX.
 const MAX_PER_ARTIST: usize = 3;
 
+/// Name a mix after what the model says it is.
+///
+/// Better than naming it after two of its artists, which was the first
+/// attempt: those names repeat across tiles, say nothing about the sound, and
+/// go stale the moment the mix is regenerated with slightly different members.
+/// A style is what the listener is actually choosing between.
+///
+/// `taken` holds the styles earlier tiles already claimed, so a shelf never
+/// shows the same word twice — the next-strongest style is used instead.
+fn style_name(centroid: &[f32], taken: &HashSet<String>) -> String {
+    let mut ranked: Vec<(usize, f32)> = centroid.iter().copied().enumerate().collect();
+    ranked.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    for (index, _) in ranked.iter().take(12) {
+        let sub = reader::styles::subgenre(*index);
+        if sub.is_empty() || taken.contains(&sub.to_lowercase()) {
+            continue;
+        }
+        return sub.to_string();
+    }
+    // Everything in the top dozen is spoken for — fall back to the broad genre
+    // rather than repeating a tile's title.
+    ranked
+        .first()
+        .map(|(i, _)| reader::styles::genre(*i).to_string())
+        .filter(|g| !g.is_empty())
+        .unwrap_or_else(|| "Mix".to_string())
+}
+
 /// Mixes built from analysed audio.
 ///
 /// This is what the radio-overlap path in [`generate`] was standing in for.
@@ -367,6 +399,10 @@ pub fn from_vectors(
         // mix opens with what defines it.
         let mut per_artist: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
+        // The same song reaches the library under several uploads — a topic
+        // channel and a VEVO video carry different ids and the same music.
+        // Keyed on artist and title, because the ids genuinely differ.
+        let mut seen_songs: HashSet<String> = HashSet::new();
         let mut tracks: Vec<Track> = Vec::new();
         for &i in &cluster.members {
             if tracks.len() >= MIX_LEN {
@@ -380,7 +416,14 @@ pub fn from_vectors(
             let Some((artist, title, cover)) = labels.get(id).cloned() else {
                 continue;
             };
-            let key = scrobble::similar::clean_artist(&artist).to_lowercase();
+            // "- Topic" is a YouTube channel suffix, not part of anyone's
+            // name, and it was showing on every row.
+            let artist = scrobble::similar::clean_artist(&artist);
+            let song = song_key(&artist, &title);
+            if !seen_songs.insert(song) {
+                continue;
+            }
+            let key = artist.to_lowercase();
             let seen = per_artist.entry(key).or_insert(0);
             if *seen >= MAX_PER_ARTIST {
                 continue;
@@ -391,10 +434,8 @@ pub fn from_vectors(
         if tracks.len() < MIN_MIX_LEN {
             continue;
         }
-        let name = name_for(&tracks, &named);
-        for part in name.split(" & ") {
-            named.insert(part.to_lowercase());
-        }
+        let name = style_name(&cluster.centroid, &named);
+        named.insert(name.to_lowercase());
         mixes.push(Mix {
             // Keyed by the cluster's most typical track, so the tile keeps its
             // identity across a regeneration that finds the same direction.
@@ -409,6 +450,32 @@ pub fn from_vectors(
         generated: now_secs,
         feature_version: reader::vectors::FEATURE_VERSION,
     }
+}
+
+/// Identity of a song across uploads: artist and title, stripped of the
+/// decoration that differs between a topic channel and a music video.
+fn song_key(artist: &str, title: &str) -> String {
+    let clean = |s: &str| -> String {
+        let lower = s.to_lowercase();
+        // Cut the bracketed suffixes an upload adds — "(Official Music
+        // Video)", "[OFFICIAL VIDEO]", "(Lyrics)" — then keep letters and
+        // digits only, so punctuation and spacing cannot split one song in two.
+        let head = lower.split(['(', '[']).next().unwrap_or(&lower).to_string();
+        head.chars().filter(|c| c.is_alphanumeric()).collect()
+    };
+    // A VEVO upload often repeats the artist inside the title. Comparing the
+    // title alone would then miss the match, so both halves are normalised and
+    // the artist is removed from the title if it is echoed there.
+    //
+    // The channel suffix is stripped here rather than relying on the caller
+    // having done it: "AllyNicholasVEVO" and "Ally Nicholas - Topic" are the
+    // same artist, and a key that depends on which one arrived is not a key.
+    let a = clean(&scrobble::similar::clean_artist(artist));
+    let mut t = clean(title);
+    if !a.is_empty() && t.starts_with(&a) {
+        t = t[a.len()..].to_string();
+    }
+    format!("{a}|{t}")
 }
 
 /// A playable track from what the vector store and its labels know.
@@ -692,6 +759,73 @@ mod tests {
         assert!(set.mixes.is_empty());
         // Still recorded as a run, or the caller retries it forever.
         assert_eq!(set.generated, 500);
+    }
+
+    /// The exact pair a listener reported: one song, two uploads, both in the
+    /// same mix.
+    #[test]
+    fn one_song_under_two_uploads_is_one_song() {
+        let a = song_key(
+            "AllyNicholasVEVO",
+            "Ally Nicholas - Fall Into (Official Music Video)",
+        );
+        let b = song_key("Ally Nicholas", "Fall Into");
+        assert_eq!(
+            a, b,
+            "
+{a}
+{b}"
+        );
+    }
+
+    #[test]
+    fn different_songs_by_one_artist_stay_apart() {
+        assert_ne!(song_key("Wisp", "Sword"), song_key("Wisp", "See you soon"));
+        assert_ne!(
+            song_key("Paramore", "Decode"),
+            song_key("Paramore", "Monster")
+        );
+    }
+
+    /// Upload decoration must not create two entries for one recording.
+    #[test]
+    fn bracketed_upload_decoration_is_ignored() {
+        let plain = song_key("Paramore", "Still Into You");
+        assert_eq!(
+            plain,
+            song_key("Paramore", "Paramore: Still Into You [OFFICIAL VIDEO]")
+        );
+        assert_eq!(plain, song_key("Paramore", "Still Into You (Lyrics)"));
+    }
+
+    /// Naming a mix after two of its artists said nothing about the sound and
+    /// repeated across tiles. The model already knows what it is.
+    #[test]
+    fn a_mix_is_named_after_its_strongest_style() {
+        let shoegaze = reader::styles::STYLES
+            .iter()
+            .position(|s| *s == "Rock---Shoegaze")
+            .unwrap();
+        let mut centroid = vec![0.01f32; 400];
+        centroid[shoegaze] = 0.9;
+        assert_eq!(style_name(&centroid, &HashSet::new()), "Shoegaze");
+    }
+
+    /// Two directions can share a strongest style; the shelf still must not
+    /// show one word twice.
+    #[test]
+    fn a_style_already_on_the_shelf_is_not_used_again() {
+        let shoegaze = reader::styles::STYLES
+            .iter()
+            .position(|s| *s == "Rock---Shoegaze")
+            .unwrap();
+        let mut centroid = vec![0.01f32; 400];
+        centroid[shoegaze] = 0.9;
+        centroid[(shoegaze + 1) % 400] = 0.8;
+        let taken: HashSet<String> = ["shoegaze".to_string()].into_iter().collect();
+        let second = style_name(&centroid, &taken);
+        assert_ne!(second.to_lowercase(), "shoegaze");
+        assert!(!second.is_empty());
     }
 
     /// A file written before the field existed — which is what is sitting on

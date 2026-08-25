@@ -46,9 +46,9 @@ pub mod mutations;
 pub mod oauth;
 pub mod player;
 pub mod playlists;
-pub mod ytdlp_resolve;
 pub mod search;
 pub mod verify_session_keepalive;
+pub mod ytdlp_resolve;
 
 pub use player::YtStreamInfo;
 
@@ -71,9 +71,9 @@ fn set_preferred_strategy(s: u8) {
 // Resolved-stream cache: video_id → (resolved_at, info). googlevideo URLs are
 // valid for hours; a conservative TTL keeps re-clicks and prefetched next-tracks
 // instant without risking long-stale URLs.
-fn stream_cache() -> &'static std::sync::Mutex<
-    std::collections::HashMap<String, (std::time::Instant, YtStreamInfo)>,
-> {
+fn stream_cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, YtStreamInfo)>>
+{
     static C: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, YtStreamInfo)>>,
     > = std::sync::OnceLock::new();
@@ -94,7 +94,10 @@ fn stream_cache_put(video_id: &str, info: &YtStreamInfo) {
         if cache.len() > 256 {
             cache.clear();
         }
-        cache.insert(video_id.to_string(), (std::time::Instant::now(), info.clone()));
+        cache.insert(
+            video_id.to_string(),
+            (std::time::Instant::now(), info.clone()),
+        );
     }
 }
 
@@ -109,6 +112,34 @@ pub fn invalidate_stream(video_id: &str) {
 }
 
 pub const SOURCE_PREFIX: &str = "ytmusic";
+
+/// Strip the channel decoration YouTube puts on an artist name.
+///
+/// "Wisp - Topic" is not an artist called "Wisp - Topic"; it is the automatic
+/// channel YouTube creates for a rights holder, and it was showing on every
+/// row in the app. Applied where tracks are parsed rather than where they are
+/// drawn, so there is one place to be right instead of a dozen.
+///
+/// Narrower than `scrobble::similar::clean_artist`, which also removes quotes
+/// so a name can go safely into a search query — that would print
+/// `Guns "N" Roses` as `Guns N Roses`.
+pub fn display_artist(name: &str) -> String {
+    let mut s = name.trim();
+    loop {
+        let before = s;
+        for suffix in [" - Topic", " – Topic", " - Tema", "VEVO"] {
+            s = s.trim_end_matches(suffix).trim_end();
+        }
+        if s == before {
+            break;
+        }
+    }
+    if s.is_empty() {
+        name.trim().to_string()
+    } else {
+        s.to_string()
+    }
+}
 
 /// Surfaced by auth-only operations (like/unlike, add-to-playlist,
 /// liked-songs sync) when the YT backend is in anonymous mode.
@@ -169,10 +200,7 @@ impl YouTubeMusicClient {
         search::music_search_sections(query, self.cookies.as_deref()).await
     }
 
-    pub async fn resolve_artist_channel_id(
-        &self,
-        query: &str,
-    ) -> Result<Option<String>, String> {
+    pub async fn resolve_artist_channel_id(&self, query: &str) -> Result<Option<String>, String> {
         search::resolve_artist_channel_id(query, self.cookies.as_deref()).await
     }
 
@@ -183,9 +211,7 @@ impl YouTubeMusicClient {
     /// Library playlists view (FEmusic_liked_playlists). Auth-only —
     /// returns Ok(vec![]) in anonymous mode so the playlists tab
     /// just shows empty rather than erroring.
-    pub async fn list_playlists(
-        &self,
-    ) -> Result<Vec<playlists::YtPlaylistSummary>, String> {
+    pub async fn list_playlists(&self) -> Result<Vec<playlists::YtPlaylistSummary>, String> {
         let Some(cookies) = self.cookies.as_deref() else {
             return Ok(Vec::new());
         };
@@ -194,10 +220,7 @@ impl YouTubeMusicClient {
 
     /// Playlist contents. Public playlists work anonymously; the
     /// user's personal/private ones obviously won't.
-    pub async fn get_playlist_entries(
-        &self,
-        playlist_id: &str,
-    ) -> Result<Vec<Track>, String> {
+    pub async fn get_playlist_entries(&self, playlist_id: &str) -> Result<Vec<Track>, String> {
         playlists::get_playlist_entries(playlist_id, self.cookies.as_deref().unwrap_or("")).await
     }
 
@@ -209,7 +232,12 @@ impl YouTubeMusicClient {
     where
         F: FnMut(Vec<Track>),
     {
-        playlists::stream_playlist_entries(playlist_id, self.cookies.as_deref().unwrap_or(""), on_batch).await
+        playlists::stream_playlist_entries(
+            playlist_id,
+            self.cookies.as_deref().unwrap_or(""),
+            on_batch,
+        )
+        .await
     }
 
     // Mutations are inherently auth-only — keep the explicit "not
@@ -225,11 +253,7 @@ impl YouTubeMusicClient {
         mutations::unlike_video(video_id, cookies).await
     }
 
-    pub async fn add_to_playlist(
-        &self,
-        playlist_id: &str,
-        video_id: &str,
-    ) -> Result<(), String> {
+    pub async fn add_to_playlist(&self, playlist_id: &str, video_id: &str) -> Result<(), String> {
         let cookies = self.cookies.as_deref().ok_or(ANON_AUTH_REQUIRED)?;
         mutations::add_to_playlist(playlist_id, video_id, cookies).await
     }
@@ -297,20 +321,21 @@ impl YouTubeMusicClient {
         // boundaries; dedup against a video-id set across the entire stream so the
         // callback always sees unique tracks.
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let dedup = |page: Vec<Track>, seen: &mut std::collections::HashSet<String>| -> Vec<Track> {
-            page.into_iter()
-                .filter(|t| {
-                    let id = t
-                        .path
-                        .to_string_lossy()
-                        .split(':')
-                        .nth(1)
-                        .unwrap_or("")
-                        .to_string();
-                    !id.is_empty() && seen.insert(id)
-                })
-                .collect()
-        };
+        let dedup =
+            |page: Vec<Track>, seen: &mut std::collections::HashSet<String>| -> Vec<Track> {
+                page.into_iter()
+                    .filter(|t| {
+                        let id = t
+                            .path
+                            .to_string_lossy()
+                            .split(':')
+                            .nth(1)
+                            .unwrap_or("")
+                            .to_string();
+                        !id.is_empty() && seen.insert(id)
+                    })
+                    .collect()
+            };
 
         let (page1, mut next) = search::walk_playlist_shelf(&resp);
         let page1 = dedup(page1, &mut seen);
@@ -562,5 +587,155 @@ fn has_playlist_shelf(json: &Value) -> bool {
 impl Default for YouTubeMusicClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Upload decoration a title carries that is not part of the song.
+///
+/// Only these exact phrases, and only inside brackets. A blanket "strip
+/// everything in parentheses" would take "(feat. Doechii)", "(Remix)" and
+/// "(Radio Edit)" with it — those are the song.
+const TITLE_NOISE: &[&str] = &[
+    "official music video",
+    "official hd music video",
+    "official video",
+    "official audio",
+    "official lyric video",
+    "official visualizer",
+    "lyric video",
+    "visualizer",
+    "lyrics",
+    "audio",
+    "hd",
+    "4k",
+];
+
+/// A song title without the upload's decoration.
+///
+/// Two kinds of noise, both visible on every VEVO row: the artist repeated at
+/// the front ("Flyleaf - All Around Me" on the Flyleaf row) and a bracketed
+/// tag at the end. Neither is part of what the song is called.
+pub fn display_title(artist: &str, title: &str) -> String {
+    let mut out = title.trim().to_string();
+
+    // Leading "Artist - " or "Artist: " echo.
+    //
+    // Compared with spacing and punctuation removed, because the channel name
+    // and the name inside the title rarely agree on them: "AllyNicholasVEVO"
+    // fronts a title that says "Ally Nicholas - ".
+    let squash = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    };
+    let a = squash(&display_artist(artist));
+    if !a.is_empty() {
+        for sep in [" - ", ": ", " – ", " — "] {
+            let Some(cut) = out.find(sep) else { continue };
+            if squash(&out[..cut]) == a {
+                out = out[cut + sep.len()..].trim().to_string();
+                break;
+            }
+        }
+    }
+
+    // Trailing bracketed decoration, possibly more than one.
+    loop {
+        let trimmed = out.trim_end();
+        let Some(open) = trimmed.rfind(['(', '[']) else {
+            break;
+        };
+        let close = if trimmed.as_bytes()[open] == b'(' {
+            ')'
+        } else {
+            ']'
+        };
+        if !trimmed.ends_with(close) {
+            break;
+        }
+        let inner = trimmed[open + 1..trimmed.len() - 1].trim().to_lowercase();
+        if !TITLE_NOISE.contains(&inner.as_str()) {
+            break;
+        }
+        out = trimmed[..open].trim_end().to_string();
+    }
+
+    if out.is_empty() {
+        title.trim().to_string()
+    } else {
+        out
+    }
+}
+
+#[cfg(test)]
+mod display_artist_tests {
+    use super::display_artist;
+
+    #[test]
+    fn channel_decoration_is_removed() {
+        assert_eq!(display_artist("Wisp - Topic"), "Wisp");
+        assert_eq!(display_artist("Ally Nicholas - Topic"), "Ally Nicholas");
+        assert_eq!(display_artist("AllyNicholasVEVO"), "AllyNicholas");
+        assert_eq!(display_artist("  Paramore  "), "Paramore");
+    }
+
+    /// Narrower than the search-safe cleaner on purpose: punctuation inside a
+    /// name is part of the name.
+    #[test]
+    fn punctuation_inside_a_name_survives() {
+        assert_eq!(display_artist(r#"Guns "N" Roses"#), r#"Guns "N" Roses"#);
+        assert_eq!(display_artist("Tyler, The Creator"), "Tyler, The Creator");
+        assert_eq!(display_artist("A. G. Cook"), "A. G. Cook");
+    }
+
+    /// A name that is nothing but decoration would otherwise become an empty
+    /// row where an artist should be.
+    #[test]
+    fn upload_decoration_leaves_the_title() {
+        use super::display_title;
+        assert_eq!(
+            display_title("Flyleaf", "Flyleaf - All Around Me"),
+            "All Around Me"
+        );
+        assert_eq!(
+            display_title(
+                "AllyNicholasVEVO",
+                "Ally Nicholas - Fall Into (Official Music Video)"
+            ),
+            "Fall Into"
+        );
+        assert_eq!(
+            display_title("Paramore", "Paramore: Decode [OFFICIAL VIDEO]"),
+            "Decode"
+        );
+    }
+
+    /// Brackets that are part of the song must survive — this is why the noise
+    /// list is exact phrases rather than "anything in parentheses".
+    #[test]
+    fn meaningful_brackets_survive() {
+        use super::display_title;
+        for t in [
+            "Balloon (feat. Doechii)",
+            "Levitating (Remix)",
+            "fall (A. G. Cook Remix)",
+            "Gotta Get Up (Interlude)",
+            "So What (Radio Edit)",
+        ] {
+            assert_eq!(display_title("Someone", t), t, "lost meaning in {t}");
+        }
+    }
+
+    #[test]
+    fn a_title_is_never_emptied() {
+        use super::display_title;
+        assert_eq!(display_title("X", "(Official Video)"), "(Official Video)");
+    }
+
+    #[test]
+    fn a_name_is_never_emptied() {
+        assert_eq!(display_artist("VEVO"), "VEVO");
+        assert_eq!(display_artist(""), "");
     }
 }
