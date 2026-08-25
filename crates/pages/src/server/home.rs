@@ -190,7 +190,16 @@ pub fn JellyfinHome(
             .collect();
         // Ties by id, so an unchanged history rebuilds the same shelf.
         plays.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let anchors: Vec<String> = plays.into_iter().map(|(id, _)| id).collect();
+        let mut anchors: Vec<String> = Vec::with_capacity(plays.len());
+        for (id, _) in plays {
+            // One video can appear under two keys if its thumbnail URL ever
+            // changed. Not seen in practice (245 anchors, 245 distinct), but
+            // two identical anchors would fetch the same radio twice and spend
+            // two of the eight slots on it.
+            if !anchors.contains(&id) {
+                anchors.push(id);
+            }
+        }
         if anchors.is_empty() {
             return;
         }
@@ -200,11 +209,15 @@ pub fn JellyfinHome(
             .and_then(|s| s.access_token.clone())
             .unwrap_or_default();
         drop(conf);
-        spawn(async move {
+        // `spawn_forever`, not `spawn`. Generating takes eight paced requests
+        // and five to ten seconds; a scope-bound task is cancelled the moment
+        // the listener navigates away from the home screen, and since nothing
+        // would then be recorded, it would start again from scratch on the way
+        // back. This is the same defect that left the import toast on screen.
+        dioxus::core::spawn_forever(async move {
             let built = server::mixes::generate(&anchors, &cookies, now).await;
-            if built.mixes.is_empty() {
-                return;
-            }
+            // Written even when empty. An unrecorded attempt is an attempt
+            // that repeats on every single visit to this screen.
             if let Ok(text) = serde_json::to_string(&built) {
                 let path = mixes_path();
                 if let Some(dir) = path.parent() {

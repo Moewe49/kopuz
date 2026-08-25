@@ -74,9 +74,28 @@ pub struct MixSet {
 /// is moving.
 pub const REFRESH_SECS: u64 = 24 * 60 * 60;
 
+/// How long to wait before trying again after a run that produced nothing.
+///
+/// An empty result has to be recorded, or the attempt is not remembered and
+/// every visit to the home screen re-fires the whole paced burst — eight
+/// requests, several seconds, forever, for exactly the listener who has too
+/// little history for it to work. But a day is too long to wait for someone
+/// who is a few plays short, so a fruitless run is retried within the hour.
+pub const RETRY_SECS: u64 = 60 * 60;
+
 impl MixSet {
     pub fn is_stale(&self, now_secs: u64) -> bool {
-        self.mixes.is_empty() || now_secs.saturating_sub(self.generated) >= REFRESH_SECS
+        // 0 means never generated, and must not be read as "just now" — which
+        // is what an age subtraction says when the clock is also near zero.
+        if self.generated == 0 {
+            return true;
+        }
+        let age = now_secs.saturating_sub(self.generated);
+        if self.mixes.is_empty() {
+            age >= RETRY_SECS
+        } else {
+            age >= REFRESH_SECS
+        }
     }
 }
 
@@ -420,6 +439,25 @@ mod tests {
         assert!(distinct_mixes(&[("a".into(), vec![])]).is_empty());
     }
 
+    /// A run that produced nothing must still count as a run. Before this, an
+    /// empty result was never recorded, so the shelf was permanently stale and
+    /// re-fired eight paced requests on every visit to the home screen.
+    #[test]
+    fn an_empty_result_is_remembered_and_retried_within_the_hour() {
+        let empty = MixSet {
+            mixes: Vec::new(),
+            generated: 1_000_000,
+        };
+        assert!(
+            !empty.is_stale(1_000_000 + RETRY_SECS - 1),
+            "must not re-fire immediately"
+        );
+        assert!(
+            empty.is_stale(1_000_000 + RETRY_SECS),
+            "but must try again before a whole day"
+        );
+    }
+
     /// The shelf is a fixture the listener returns to, so it must not rebuild
     /// on every launch — but it must not calcify either.
     #[test]
@@ -434,7 +472,7 @@ mod tests {
         };
         assert!(!fresh.is_stale(1_000_000 + REFRESH_SECS - 1));
         assert!(fresh.is_stale(1_000_000 + REFRESH_SECS));
-        // Never generated, or generated empty, is always stale.
+        // Never generated is always stale.
         assert!(MixSet::default().is_stale(0));
     }
 }

@@ -265,11 +265,22 @@ pub async fn blended_continuation(
         .map(|t| track_key(&t.path))
         .collect();
     let seeds = spread_seeds(&ids, 4);
-    if seeds.is_empty() {
+    if seeds.is_empty() && finished.is_empty() {
         return Vec::new();
     }
 
-    let radio_fut = crate::ytmusic::mix::start_mix_multi(&seeds, cookies);
+    // A queue of local files or SoundCloud tracks has no YouTube seed, so
+    // there is no radio to fetch — but it still has artist names, and the
+    // graph works from those. Returning early here (which is what this did)
+    // meant a SoundCloud queue simply stopped at the end with no continuation
+    // at all, while the comment above claimed otherwise.
+    let radio_fut = async {
+        if seeds.is_empty() {
+            Ok(Vec::new())
+        } else {
+            crate::ytmusic::mix::start_mix_multi(&seeds, cookies).await
+        }
+    };
     let graph_fut = tokio::time::timeout(
         GRAPH_BUDGET,
         from_artist_graph(finished, exclude, GRAPH_SHARE),
