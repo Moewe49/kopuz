@@ -2137,6 +2137,7 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 name = "embed"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "ort",
  "reader",
  "realfft",
@@ -2147,6 +2148,8 @@ dependencies = [
  "symphonia",
  "symphonia-adapter-libopus",
  "tokio",
+ "tracing",
+ "utils",
 ]
 
 [[package]]
