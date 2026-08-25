@@ -2063,6 +2063,38 @@ impl PlayerController {
         }
     }
 
+    /// Weave `extra` into the part of the queue that has not played yet.
+    ///
+    /// For a song radio the listener pressed a button and wants music, so the
+    /// radio starts immediately and a second source arrives afterwards.
+    /// Appending it would put every one of those tracks past the end of what
+    /// anyone listens to — the blend has to reach into the upcoming stretch,
+    /// which is what this does. Everything already played, and the track
+    /// playing right now, is left exactly where it is.
+    ///
+    /// Shuffle is left alone deliberately: reordering under a listener who has
+    /// shuffle on would be a second surprise on top of the new tracks.
+    pub fn blend_into_upcoming(&mut self, extra: Vec<Track>) {
+        if extra.is_empty() {
+            return;
+        }
+        if *self.shuffle.peek() {
+            // With shuffle on the play order lives in `shuffle_order`, and
+            // rewriting the queue underneath it would scramble that mapping.
+            self.add_to_queue(extra);
+            return;
+        }
+        let current = *self.current_queue_index.peek();
+        let queue = self.queue.peek().clone();
+        if queue.is_empty() {
+            return;
+        }
+        // The index arithmetic lives in `server::recommend` where it can be
+        // tested without a virtual DOM — one off either way is audible.
+        self.queue
+            .set(::server::recommend::splice_upcoming(&queue, current, extra));
+    }
+
     pub fn queue_play_next(&mut self, tracks: impl IntoIterator<Item = Track>) {
         let tracks: Vec<Track> = tracks.into_iter().collect();
         let count = tracks.len();

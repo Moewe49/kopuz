@@ -1,15 +1,15 @@
+use crate::NavigationController;
 use crate::constants::*;
 use crate::dots_menu::{DotsMenu, MenuAction};
 use crate::queue_drag::{
     clear_dragged_queue_track, handle_select_click, is_queue_drag_enabled, set_dragged_queue_track,
     set_dragged_queue_tracks,
 };
-use crate::NavigationController;
+use config::MusicSource;
 use config::{AppConfig, UiStyle};
 use dioxus::prelude::*;
 use hooks::PlayerController;
 use reader::models::Track;
-use config::MusicSource;
 
 pub(crate) fn copy_to_clipboard(text: &str) {
     let value = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string());
@@ -176,8 +176,7 @@ pub fn TrackRow(
 
     let delete_action_idx = if !hide_delete {
         let idx = actions.len();
-        actions
-            .push(MenuAction::new(delete_song_text.as_str(), "fa-solid fa-trash").destructive());
+        actions.push(MenuAction::new(delete_song_text.as_str(), "fa-solid fa-trash").destructive());
         Some(idx)
     } else {
         None
@@ -192,7 +191,10 @@ pub fn TrackRow(
     let is_ytmusic_track = track.path.to_string_lossy().starts_with("ytmusic:");
     let mix_idx = if is_ytmusic_track {
         let idx = actions.len();
-        actions.push(MenuAction::new("Start radio", "fa-solid fa-tower-broadcast"));
+        actions.push(MenuAction::new(
+            "Start radio",
+            "fa-solid fa-tower-broadcast",
+        ));
         Some(idx)
     } else {
         None
@@ -942,7 +944,20 @@ fn start_radio_from(
         let yt = server::ytmusic::YouTubeMusicClient::with_cookies(cookies);
         match yt.start_mix(&video_id).await {
             Ok(tracks) if !tracks.is_empty() => {
-                ctrl.play_queue_linear(tracks);
+                ctrl.play_queue_linear(tracks.clone());
+                // The radio is playing; now fetch a second opinion from the
+                // artist graph and weave it into what has not been reached
+                // yet. Doing this before starting playback would put several
+                // seconds of MusicBrainz between a button press and any sound.
+                dioxus::core::spawn_forever(async move {
+                    let extra = server::recommend::song_radio_companion(
+                        &tracks,
+                        &std::collections::HashSet::new(),
+                    )
+                    .await;
+                    let mut ctrl = ctrl;
+                    ctrl.blend_into_upcoming(extra);
+                });
             }
             Ok(_) => eprintln!("[yt-mix] empty queue for seed {video_id}"),
             Err(e) => eprintln!("[yt-mix] failed for seed {video_id}: {e}"),

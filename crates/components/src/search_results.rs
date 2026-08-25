@@ -320,7 +320,19 @@ fn play_yt_song_radio(
             tracks.remove(0);
         }
         if !tracks.is_empty() {
-            ctrl.add_to_queue(tracks);
+            ctrl.add_to_queue(tracks.clone());
+            // Second opinion from the artist graph, woven into the stretch
+            // nobody has reached yet. Fetched after the radio is in place so
+            // the continuation is never delayed by it.
+            dioxus::core::spawn_forever(async move {
+                let extra = server::recommend::song_radio_companion(
+                    &tracks,
+                    &std::collections::HashSet::new(),
+                )
+                .await;
+                let mut ctrl = ctrl;
+                ctrl.blend_into_upcoming(extra);
+            });
         }
     });
 }

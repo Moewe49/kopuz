@@ -892,8 +892,20 @@ fn play_song_with_mix(
             Ok(mix) if !mix.is_empty() => {
                 let mut cache_writer = cache;
                 cache_writer.write().insert(video_id, mix.clone());
-                let queue = build_song_queue(&seed, mix);
+                let queue = build_song_queue(&seed, mix.clone());
                 ctrl.play_queue_linear(queue);
+                // The radio is playing; the artist graph follows and is woven
+                // into what has not been reached yet, rather than delaying the
+                // start by several seconds of lookups.
+                dioxus::core::spawn_forever(async move {
+                    let extra = ::server::recommend::song_radio_companion(
+                        &mix,
+                        &std::collections::HashSet::new(),
+                    )
+                    .await;
+                    let mut ctrl = ctrl;
+                    ctrl.blend_into_upcoming(extra);
+                });
             }
             _ => {
                 // Mix failed → at least play the seed alone so the user

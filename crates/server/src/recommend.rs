@@ -303,6 +303,56 @@ pub async fn blended_continuation(
     weave(&[radio, graph], exclude)
 }
 
+/// The queue after weaving `extra` into everything past `current`.
+///
+/// Split out from the controller because this is where an off-by-one costs
+/// something visible: one too far and the track playing right now is replaced
+/// mid-song, one too short and the blend starts behind where the listener
+/// already is.
+///
+/// Everything up to and including `current` is returned untouched, and nothing
+/// from it can reappear further down.
+pub fn splice_upcoming(queue: &[Track], current: usize, extra: Vec<Track>) -> Vec<Track> {
+    if queue.is_empty() {
+        return Vec::new();
+    }
+    let split = (current + 1).min(queue.len());
+    let (head, upcoming) = queue.split_at(split);
+    let played: HashSet<String> = head.iter().map(|t| track_key(&t.path)).collect();
+    let mut out = head.to_vec();
+    out.extend(weave(&[upcoming.to_vec(), extra], &played));
+    out
+}
+
+/// The artist-graph half of a song radio, fetched after the radio is already
+/// playing.
+///
+/// A song radio is started by pressing a button, so the wait has to be the
+/// radio's alone — several seconds of MusicBrainz and search on top of it would
+/// be a worse feature, not a better one. The radio therefore plays first and
+/// this arrives behind it, to be woven into the part of the queue nobody has
+/// reached yet.
+///
+/// No extra lookup is needed to know what the seed sounds like: a YouTube
+/// radio opens with the seed song itself, so the artist names are already in
+/// `radio`.
+pub async fn song_radio_companion(radio: &[Track], exclude: &HashSet<String>) -> Vec<Track> {
+    /// How much of the radio to read the taste from. The first few tracks are
+    /// the seed and its closest neighbours; reading the whole radio would
+    /// average away the very thing that was asked for.
+    const TASTE_SAMPLE: usize = 3;
+
+    if radio.is_empty() {
+        return Vec::new();
+    }
+    let sample: Vec<Track> = radio.iter().take(TASTE_SAMPLE).cloned().collect();
+    // Everything the radio already offers is excluded, so the companion is
+    // genuinely a second opinion rather than a reshuffle of the first.
+    let mut skip = exclude.clone();
+    skip.extend(radio.iter().map(|t| track_key(&t.path)));
+    from_artist_graph(&sample, &skip, GRAPH_SHARE).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,6 +446,63 @@ mod tests {
         let out = weave(&[a, b], &exclude);
         assert_eq!(out.len(), 1);
         assert_eq!(track_key(&out[0].path), "same");
+    }
+
+    /// The track playing right now must not move, and nothing already heard
+    /// may come back. One index either way is audible: too far replaces the
+    /// current song mid-play, too short blends in behind the listener.
+    #[test]
+    fn splicing_leaves_the_current_track_and_everything_before_it_alone() {
+        let queue = vec![
+            track("ytmusic:p0", "A", "played"),
+            track("ytmusic:p1", "A", "playing now"),
+            track("ytmusic:u0", "A", "upcoming"),
+            track("ytmusic:u1", "A", "upcoming"),
+        ];
+        let extra = vec![
+            track("ytmusic:x0", "B", "new"),
+            track("ytmusic:x1", "B", "new"),
+        ];
+        let out = splice_upcoming(&queue, 1, extra);
+
+        let ids: Vec<String> = out.iter().map(|t| track_key(&t.path)).collect();
+        assert_eq!(&ids[..2], &["p0", "p1"], "history and current track moved");
+        // From there the two sources alternate.
+        assert_eq!(&ids[2..], &["u0", "x0", "u1", "x1"]);
+    }
+
+    #[test]
+    fn splicing_cannot_reintroduce_something_already_played() {
+        let queue = vec![
+            track("ytmusic:seen", "A", "played"),
+            track("ytmusic:now", "A", "playing"),
+            track("ytmusic:next", "A", "upcoming"),
+        ];
+        // The companion offers a track the radio already played.
+        let extra = vec![track("ytmusic:seen", "B", "duplicate")];
+        let out = splice_upcoming(&queue, 1, extra);
+        assert_eq!(out.len(), 3, "the already-played track came back");
+    }
+
+    /// At the last track there is nothing upcoming, so the blend appends —
+    /// and must still not touch what is playing.
+    #[test]
+    fn splicing_at_the_end_of_the_queue_appends() {
+        let queue = vec![track("ytmusic:a", "A", "1"), track("ytmusic:b", "A", "2")];
+        let extra = vec![track("ytmusic:c", "B", "3")];
+        let out = splice_upcoming(&queue, 1, extra);
+        assert_eq!(
+            out.iter().map(|t| track_key(&t.path)).collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+    }
+
+    #[test]
+    fn splicing_an_index_past_the_end_does_not_panic() {
+        let queue = vec![track("ytmusic:a", "A", "1")];
+        let out = splice_upcoming(&queue, 99, vec![track("ytmusic:b", "B", "2")]);
+        assert_eq!(out.len(), 2);
+        assert!(splice_upcoming(&[], 0, vec![track("ytmusic:b", "B", "2")]).is_empty());
     }
 
     #[test]
