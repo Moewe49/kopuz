@@ -71,6 +71,13 @@ pub struct GeneratedMixes(pub Signal<server::mixes::MixSet>);
 /// Where the generated mixes live. Config rather than cache: they are cheap to
 /// read and expensive to rebuild — eight paced network requests — so losing
 /// them to a cache clear would be a visible, silent regression on next launch.
+/// Directory holding the analysis output, beside the mixes themselves.
+fn mixes_dir() -> std::path::PathBuf {
+    directories::ProjectDirs::from("com", "temidaradev", "kopuz")
+        .map(|d| d.config_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("./config"))
+}
+
 fn mixes_path() -> std::path::PathBuf {
     directories::ProjectDirs::from("com", "temidaradev", "kopuz")
         .map(|d| d.config_dir().join("mixes.json"))
@@ -226,7 +233,31 @@ pub fn JellyfinHome(
         // would then be recorded, it would start again from scratch on the way
         // back. This is the same defect that left the import toast on screen.
         dioxus::core::spawn_forever(async move {
-            let built = server::mixes::generate(&anchors, &cookies, now).await;
+            // Analysed audio when there is any: it groups tracks by what they
+            // actually sound like rather than by how much two YouTube radios
+            // happen to overlap, and it costs no requests at all because the
+            // tracks and their grouping are both already known. The radio path
+            // stays as the fallback, so the shelf works on day one — before
+            // anything has been analysed, and for anyone who never opts in.
+            let vectors = mixes_dir().join("style_vectors.bin");
+            let labels_path = mixes_dir().join("style_meta.json");
+            let from_audio = reader::vectors::VectorStore::load(&vectors, 400)
+                .ok()
+                .filter(|store| !store.is_empty())
+                .map(|store| {
+                    let labels: std::collections::HashMap<String, (String, String)> =
+                        serde_json::from_str(
+                            &std::fs::read_to_string(&labels_path).unwrap_or_default(),
+                        )
+                        .unwrap_or_default();
+                    server::mixes::from_vectors(&store, &labels, now, 42)
+                })
+                .filter(|set| !set.mixes.is_empty());
+
+            let built = match from_audio {
+                Some(set) => set,
+                None => server::mixes::generate(&anchors, &cookies, now).await,
+            };
             // Written even when empty. An unrecorded attempt is an attempt
             // that repeats on every single visit to this screen.
             if let Ok(text) = serde_json::to_string(&built) {

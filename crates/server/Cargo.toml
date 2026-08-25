@@ -49,4 +49,5 @@ name = "cdp_probe"
 path = "examples/cdp_probe.rs"
 
 [dev-dependencies]
+directories = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

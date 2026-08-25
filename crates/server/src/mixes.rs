@@ -112,6 +112,31 @@ fn overlap(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
     shared / union
 }
 
+/// How many of a mix's tracks decide its name.
+const NAME_FROM_TOP: usize = 10;
+
+/// Artists among the first `window` tracks, most frequent first.
+///
+/// Ties break by name, so regenerating an unchanged mix keeps its title.
+fn artist_counts(tracks: &[Track], window: usize) -> Vec<(String, usize)> {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for t in tracks.iter().take(window) {
+        let name = scrobble::similar::clean_artist(&t.artist);
+        if name.is_empty() {
+            continue;
+        }
+        match counts
+            .iter_mut()
+            .find(|(n, _)| n.eq_ignore_ascii_case(&name))
+        {
+            Some((_, c)) => *c += 1,
+            None => counts.push((name, 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    counts
+}
+
 /// Name a mix after the artists actually inside it, avoiding names already
 /// spent on an earlier mix.
 ///
@@ -127,22 +152,21 @@ fn overlap(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
 /// frequent artist nobody has claimed yet, falling back to the plain top two
 /// only when everything is taken.
 fn name_for(tracks: &[Track], taken: &HashSet<String>) -> String {
-    let mut counts: Vec<(String, usize)> = Vec::new();
-    for t in tracks {
-        let name = scrobble::similar::clean_artist(&t.artist);
-        if name.is_empty() {
-            continue;
-        }
-        match counts
-            .iter_mut()
-            .find(|(n, _)| n.eq_ignore_ascii_case(&name))
-        {
-            Some((_, c)) => *c += 1,
-            None => counts.push((name, 1)),
-        }
+    // Only the most typical tracks get a say. Tracks arrive in typicality
+    // order, and an artist cap flattens the frequencies across a full mix — so
+    // counting all thirty made the name essentially alphabetical. Measured:
+    // a mix of The Weeknd, Pastel Ghost and Paramore came out titled
+    // "Charli XCX & Katy Perry", neither of whom was anywhere near the front.
+    let mut counts = artist_counts(tracks, NAME_FROM_TOP);
+    // If nothing in the typical window is still unclaimed, look at the whole
+    // mix before settling for a title another tile already carries. A repeated
+    // title is worse than a slightly less typical one.
+    if counts
+        .iter()
+        .all(|(n, _)| taken.contains(&n.to_lowercase()))
+    {
+        counts = artist_counts(tracks, tracks.len());
     }
-    // Ties break by name, so regenerating an unchanged mix keeps its title.
-    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let unclaimed: Vec<&String> = counts
         .iter()
         .map(|(n, _)| n)
@@ -252,6 +276,114 @@ pub async fn generate(anchor_ids: &[String], cookies: &str, now_secs: u64) -> Mi
     MixSet {
         mixes: distinct_mixes(&candidates),
         generated: now_secs,
+    }
+}
+
+/// Tracks by one artist inside a single mix.
+///
+/// A taste direction genuinely can be mostly one artist — that is what a sound
+/// is — but thirty tracks by one of them is that artist's discography, not a
+/// mix. Measured on the real library, one direction held 82 tracks that were
+/// overwhelmingly Charli XCX.
+const MAX_PER_ARTIST: usize = 3;
+
+/// Mixes built from analysed audio.
+///
+/// This is what the radio-overlap path in [`generate`] was standing in for.
+/// Overlap between two YouTube radios is a proxy for "these are the same kind
+/// of music"; the vectors are the thing itself. On the real library the
+/// difference was not subtle — the proxy produced four barely distinguishable
+/// pop tiles, the vectors produced Evanescence/Flyleaf/Wisp,
+/// Weeknd/Pastel Ghost/Paramore, Sabrina Carpenter/Chappell Roan/Clairo and
+/// Charli XCX.
+///
+/// It also costs nothing: the tracks are already known and the vectors already
+/// say how they group, so there is not a single request.
+pub fn from_vectors(
+    store: &reader::vectors::VectorStore,
+    labels: &std::collections::HashMap<String, (String, String)>,
+    now_secs: u64,
+    seed: u64,
+) -> MixSet {
+    let (ids, vectors) = store.matrix();
+    if vectors.len() < MIN_MIX_LEN {
+        return MixSet {
+            mixes: Vec::new(),
+            generated: now_secs,
+        };
+    }
+
+    let k = reader::taste::best_k(&vectors, MAX_MIXES, seed);
+    let clusters = reader::taste::cluster(&vectors, k, seed);
+    let mut named: HashSet<String> = HashSet::new();
+    let mut mixes = Vec::new();
+
+    for cluster in &clusters {
+        // Members arrive most-typical-first, so taking from the front means a
+        // mix opens with what defines it.
+        let mut per_artist: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut tracks: Vec<Track> = Vec::new();
+        for &i in &cluster.members {
+            if tracks.len() >= MIX_LEN {
+                break;
+            }
+            let id = &ids[i];
+            // A vector with no label would render as a raw video id. Those
+            // come from tracks analysed before labels were recorded; skipping
+            // them costs one entry out of a few hundred and keeps every tile
+            // readable.
+            let Some((artist, title)) = labels.get(id).cloned() else {
+                continue;
+            };
+            let key = scrobble::similar::clean_artist(&artist).to_lowercase();
+            let seen = per_artist.entry(key).or_insert(0);
+            if *seen >= MAX_PER_ARTIST {
+                continue;
+            }
+            *seen += 1;
+            tracks.push(track_from(id, &artist, &title));
+        }
+        if tracks.len() < MIN_MIX_LEN {
+            continue;
+        }
+        let name = name_for(&tracks, &named);
+        for part in name.split(" & ") {
+            named.insert(part.to_lowercase());
+        }
+        mixes.push(Mix {
+            // Keyed by the cluster's most typical track, so the tile keeps its
+            // identity across a regeneration that finds the same direction.
+            id: format!("mix:{}", ids[cluster.members[0]]),
+            name,
+            tracks,
+        });
+    }
+
+    MixSet {
+        mixes,
+        generated: now_secs,
+    }
+}
+
+/// A playable track from what the vector store and its labels know.
+fn track_from(id: &str, artist: &str, title: &str) -> Track {
+    Track {
+        path: std::path::PathBuf::from(format!("{}:{id}", crate::ytmusic::SOURCE_PREFIX)),
+        album_id: String::new(),
+        title: title.to_string(),
+        artist: artist.to_string(),
+        album: String::new(),
+        duration: 0,
+        khz: 0,
+        bitrate: 0,
+        track_number: None,
+        disc_number: None,
+        musicbrainz_release_id: None,
+        musicbrainz_recording_id: None,
+        musicbrainz_track_id: None,
+        playlist_item_id: None,
+        artists: vec![artist.to_string()],
     }
 }
 
@@ -437,6 +569,60 @@ mod tests {
     fn no_candidates_means_no_mixes() {
         assert!(distinct_mixes(&[]).is_empty());
         assert!(distinct_mixes(&[("a".into(), vec![])]).is_empty());
+    }
+
+    /// A direction genuinely can be mostly one artist — that is what a sound
+    /// is — but a mix that is thirty tracks by one of them is a discography.
+    /// On the real library one direction held 82 tracks that were
+    /// overwhelmingly a single artist.
+    #[test]
+    fn one_artist_cannot_fill_a_whole_mix() {
+        let mut store = reader::vectors::VectorStore::new(4);
+        let mut labels = std::collections::HashMap::new();
+        // Two directions, one of them dominated by a single artist.
+        for i in 0..20 {
+            let id = format!("hog{i}");
+            let mut v = vec![1.0f32, 0.05, 0.0, 0.0];
+            let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            v.iter_mut().for_each(|x| *x /= n);
+            store.insert(id.clone(), v).unwrap();
+            labels.insert(id, ("One Artist".to_string(), format!("track {i}")));
+        }
+        for i in 0..20 {
+            let id = format!("var{i}");
+            let mut v = vec![0.0f32, 0.0, 1.0, 0.05];
+            let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            v.iter_mut().for_each(|x| *x /= n);
+            store.insert(id.clone(), v).unwrap();
+            labels.insert(id, (format!("Artist {i}"), format!("song {i}")));
+        }
+
+        let set = from_vectors(&store, &labels, 1_000, 42);
+        for mix in &set.mixes {
+            let mut counts: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for t in &mix.tracks {
+                *counts.entry(t.artist.as_str()).or_insert(0) += 1;
+            }
+            for (artist, n) in counts {
+                assert!(
+                    n <= MAX_PER_ARTIST,
+                    "{artist} appears {n} times in {}",
+                    mix.name
+                );
+            }
+        }
+    }
+
+    /// Nothing analysed yet is the normal state before the listener opts in,
+    /// and it must not produce an empty tile or a panic.
+    #[test]
+    fn an_unanalysed_library_yields_no_mixes() {
+        let store = reader::vectors::VectorStore::new(4);
+        let set = from_vectors(&store, &std::collections::HashMap::new(), 500, 42);
+        assert!(set.mixes.is_empty());
+        // Still recorded as a run, or the caller retries it forever.
+        assert_eq!(set.generated, 500);
     }
 
     /// The set is written to disk and read back on the next launch, and the
