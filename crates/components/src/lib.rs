@@ -40,6 +40,7 @@ pub mod spotify_import;
 pub mod stat_card;
 pub mod titlebar;
 pub mod toast;
+pub mod track_list_page;
 pub mod track_list_view;
 pub mod track_row;
 pub mod virtual_scroll;

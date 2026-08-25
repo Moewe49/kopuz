@@ -59,6 +59,15 @@ fn album_cover_url(conf: &AppConfig, album: &Album) -> Option<String> {
     )
 }
 
+/// The generated mixes, shared app-wide.
+///
+/// A context rather than a signal local to the home screen, because the mix
+/// detail page is a different route and would otherwise have to re-read the
+/// file on every navigation — and because a second copy could disagree with
+/// the first after a refresh.
+#[derive(Clone, Copy)]
+pub struct GeneratedMixes(pub Signal<server::mixes::MixSet>);
+
 /// Where the generated mixes live. Config rather than cache: they are cheap to
 /// read and expensive to rebuild — eight paced network requests — so losing
 /// them to a cache clear would be a visible, silent regression on next launch.
@@ -95,6 +104,8 @@ pub fn JellyfinHome(
     /// saved-playlist route looks them up in the local store, finds nothing and
     /// renders "playlist not found" — which is what every For You tile did.
     on_select_discover_playlist: EventHandler<(String, String)>,
+    /// Open a generated mix's tracklist.
+    on_open_mix: EventHandler<String>,
     on_search_artist: EventHandler<String>,
 ) -> Element {
     let is_offline = use_context::<Signal<bool>>();
@@ -148,7 +159,7 @@ pub fn JellyfinHome(
     // told apart by how much their radios overlap rather than by genre tags.
     // Persisted, because building them costs eight paced radio requests and
     // the shelf should be a fixture the listener recognises, not a slot machine.
-    let mut mixes = use_signal(server::mixes::MixSet::default);
+    let mut mixes = use_context::<GeneratedMixes>().0;
     let mut mixes_loaded = use_signal(|| false);
     use_effect(move || {
         if *mixes_loaded.peek() {
@@ -768,6 +779,7 @@ pub fn JellyfinHome(
                                     on_select_playlist,
                                     on_search_artist,
                                     on_play_mix,
+                                    on_open_mix,
                                     scroll_container,
                                 )}
                             }
@@ -806,6 +818,7 @@ fn render_server_section(
     on_select_playlist: EventHandler<String>,
     on_search_artist: EventHandler<String>,
     on_play_mix: EventHandler<String>,
+    on_open_mix: EventHandler<String>,
     scroll_container: impl Fn(&str, i32) + Copy + 'static,
 ) -> Element {
     match key {
@@ -860,9 +873,9 @@ fn render_server_section(
                     i18n::t("music").to_string(),
                     is_modern,
                     mixes,
-                    // No detail view yet: a mix tile plays, whichever half of
-                    // it is clicked.
-                    on_play_mix,
+                    // Tile opens the tracklist, the hover button plays — the
+                    // same split every album tile on this screen already uses.
+                    on_open_mix,
                     on_play_mix,
                     scroll_container,
                 );

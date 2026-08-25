@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use components::track_row::TrackRow;
 use config::{AppConfig, MusicService};
 use dioxus::prelude::*;
 use reader::models::{Library, Track};
 use server::ytmusic::discover::{DiscoverHome, DiscoverItem, DiscoverShelf, YtArtist};
-use components::track_row::TrackRow;
 use std::path::PathBuf;
 
 /// Tracks the id (playlist_id or MPRE… album browse id) that last
@@ -381,8 +381,13 @@ fn DiscoverTile(
     match item {
         DiscoverItem::Song(track) => {
             rsx! { SongCard { track: track.clone() } }
-        },
-        DiscoverItem::Playlist { playlist_id, title, subtitle, thumbnail } => {
+        }
+        DiscoverItem::Playlist {
+            playlist_id,
+            title,
+            subtitle,
+            thumbnail,
+        } => {
             let title_for_click = title.clone();
             let pid_for_play = playlist_id.clone();
             let pid_for_source = playlist_id.clone();
@@ -401,8 +406,13 @@ fn DiscoverTile(
                     source_id: Some(pid_for_source),
                 }
             }
-        },
-        DiscoverItem::Album { browse_id, title, subtitle, thumbnail } => {
+        }
+        DiscoverItem::Album {
+            browse_id,
+            title,
+            subtitle,
+            thumbnail,
+        } => {
             let title_for_click = title.clone();
             let bid_for_play = browse_id.clone();
             let bid_for_source = browse_id.clone();
@@ -421,8 +431,12 @@ fn DiscoverTile(
                     source_id: Some(bid_for_source),
                 }
             }
-        },
-        DiscoverItem::Artist { channel_id, name, thumbnail } => {
+        }
+        DiscoverItem::Artist {
+            channel_id,
+            name,
+            thumbnail,
+        } => {
             let cid = channel_id.clone();
             let name_for_click = name.clone();
             rsx! {
@@ -436,8 +450,10 @@ fn DiscoverTile(
                     source_id: None,
                 }
             }
-        },
-        DiscoverItem::Mood { title, thumbnail, .. } => rsx! {
+        }
+        DiscoverItem::Mood {
+            title, thumbnail, ..
+        } => rsx! {
             Card {
                 title: title,
                 subtitle: String::new(),
@@ -552,9 +568,8 @@ fn play_playlist_async(
             }
             Err(e) => {
                 eprintln!("[discover] playlist stream errored mid-flight: {e}");
-                ctrl.playback_error.set(Some(format!(
-                    "Discover playlist failed mid-load:\n{e}"
-                )));
+                ctrl.playback_error
+                    .set(Some(format!("Discover playlist failed mid-load:\n{e}")));
             }
         }
     });
@@ -583,7 +598,11 @@ fn Card(
     } else {
         "w-44 h-44 rounded-lg bg-white/5"
     };
-    let cover_radius = if rounded_full { "rounded-full" } else { "rounded-lg" };
+    let cover_radius = if rounded_full {
+        "rounded-full"
+    } else {
+        "rounded-lg"
+    };
     let now_playing = use_context::<DiscoverNowPlaying>().0;
     let mut cache = use_context::<DiscoverPrefetchCache>().0;
     let config_ctx = use_context::<Signal<AppConfig>>();
@@ -900,7 +919,12 @@ fn build_song_queue(seed: &Track, mix: Vec<Track>) -> Vec<Track> {
         .into_iter()
         .partition(|t| seed_vid.is_some() && track_video_id(t) == seed_vid);
     let mut out = Vec::with_capacity(rest.len() + 1);
-    out.push(seed_in_queue.into_iter().next().unwrap_or_else(|| seed.clone()));
+    out.push(
+        seed_in_queue
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| seed.clone()),
+    );
     out.extend(rest);
     out
 }
@@ -984,109 +1008,34 @@ pub fn DiscoverPlaylistDetail(
         };
     }
 
+    let all = tracks.read().clone();
+    let all_for_row = all.clone();
     rsx! {
-        div { class: "p-6 md:p-10 max-w-[1600px] mx-auto",
-            button {
-                class: "inline-flex items-center gap-2 text-white/70 hover:text-white text-sm cursor-pointer mb-6 group",
-                onclick: move |_| on_back.call(()),
-                i { class: "fa-solid fa-chevron-left text-xs transition-transform group-hover:-translate-x-0.5" }
-                span { "{i18n::t(\"back\")}" }
-            }
-            div { class: "flex items-end gap-6 mb-8",
-                div { class: "min-w-0",
-                    p { class: "text-[10px] font-bold tracking-widest uppercase text-white/40 mb-2", "{i18n::t(\"playlist\")}" }
-                    h1 { class: "text-3xl md:text-5xl font-black text-white break-words", "{header_title}" }
-                    if !*loading.read() {
-                        p { class: "text-sm text-white/50 mt-3",
-                            "{i18n::t_with(\"playlist_track_count\", &[(\"count\", tracks.read().len().to_string())])}"
-                        }
-                    }
+        components::track_list_page::TrackListPage {
+            eyebrow: i18n::t("playlist").to_string(),
+            title: header_title,
+            tracks: all.clone(),
+            loading: *loading.read(),
+            error: error.read().clone(),
+            on_back: move |_| on_back.call(()),
+            on_play_all: move |_| {
+                if all.is_empty() {
+                    return;
                 }
-                button {
-                    class: "shrink-0 inline-flex items-center gap-3 bg-white text-black px-8 py-3 rounded-full font-bold hover:bg-white/90 hover:scale-105 active:scale-95 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-default",
-                    disabled: *loading.read() || tracks.read().is_empty(),
-                    onclick: move |_| {
-                        let all = tracks.read().clone();
-                        if !all.is_empty() {
-                            if let Some(pid) = selected_playlist_id.read().clone() {
-                                now_playing.set(Some(pid));
-                            }
-                            ctrl.play_queue_linear(all);
-                        }
-                    },
-                    i { class: "fa-solid fa-play text-[10px]" }
-                    span { class: "text-sm", "{i18n::t(\"start_listening\")}" }
+                if let Some(pid) = selected_playlist_id.read().clone() {
+                    now_playing.set(Some(pid));
                 }
-            }
-
-            if *loading.read() {
-                div { class: "flex justify-center py-24",
-                    i { class: "fa-solid fa-arrows-rotate fa-spin text-2xl text-white/60" }
+                ctrl.play_queue_linear(all.clone());
+            },
+            on_play_from: move |t: Track| {
+                let mut queue = all_for_row.clone();
+                let start_idx = queue.iter().position(|x| x.path == t.path).unwrap_or(0);
+                queue.rotate_left(start_idx);
+                if let Some(pid) = selected_playlist_id.read().clone() {
+                    now_playing.set(Some(pid));
                 }
-            } else if let Some(err) = error.read().clone() {
-                div { class: "py-12 text-rose-400 text-sm",
-                    "{i18n::t_with(\"discover_failed\", &[(\"error\", err.clone())])}"
-                }
-            } else {
-                div { class: "flex flex-col",
-                    for (idx, track) in tracks.read().iter().enumerate() {
-                        DiscoverPlaylistRow {
-                            key: "{idx}",
-                            track: track.clone(),
-                            index: idx + 1,
-                            on_play: move |t: Track| {
-                                let mut queue = tracks.read().clone();
-                                let start_idx = queue
-                                    .iter()
-                                    .position(|x| x.path == t.path)
-                                    .unwrap_or(0);
-                                queue.rotate_left(start_idx);
-                                if let Some(pid) = selected_playlist_id.read().clone() {
-                                    now_playing.set(Some(pid));
-                                }
-                                ctrl.play_queue_linear(queue);
-                            },
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn DiscoverPlaylistRow(track: Track, index: usize, on_play: EventHandler<Track>) -> Element {
-    let thumbnail = utils::jellyfin_image::track_cover_url_with_album_fallback(
-        &track.path.to_string_lossy(),
-        &track.album_id,
-        "",
-        None,
-        96,
-        80,
-    );
-    let title = track.title.clone();
-    let artist = track.artist.clone();
-    let track_for_click = track.clone();
-    rsx! {
-        button {
-            class: "group flex items-center gap-4 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors text-left cursor-pointer w-full",
-            onclick: move |_| on_play.call(track_for_click.clone()),
-            span { class: "w-8 text-right text-white/40 text-xs tabular-nums group-hover:hidden", "{index}" }
-            i { class: "w-8 text-center fa-solid fa-play text-white text-xs hidden group-hover:inline-block" }
-            if let Some(url) = thumbnail {
-                img {
-                    src: "{url}",
-                    class: "w-11 h-11 object-cover rounded bg-white/5",
-                    loading: "lazy",
-                    decoding: "async",
-                }
-            } else {
-                div { class: "w-11 h-11 rounded bg-white/5" }
-            }
-            div { class: "min-w-0 flex-1",
-                p { class: "text-sm text-white font-medium truncate", "{title}" }
-                p { class: "text-xs text-white/50 truncate", "{artist}" }
-            }
+                ctrl.play_queue_linear(queue);
+            },
         }
     }
 }
@@ -1276,4 +1225,3 @@ pub fn DiscoverArtistPage(
         }
     }
 }
-

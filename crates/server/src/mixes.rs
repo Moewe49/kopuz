@@ -439,6 +439,35 @@ mod tests {
         assert!(distinct_mixes(&[("a".into(), vec![])]).is_empty());
     }
 
+    /// The set is written to disk and read back on the next launch, and the
+    /// detail page renders straight from it — so a Track field that does not
+    /// survive serde would show up as an empty tracklist rather than an error.
+    #[test]
+    fn a_mix_set_survives_being_written_and_read_back() {
+        let original = MixSet {
+            mixes: distinct_mixes(&[
+                ("a".to_string(), radio(0, 20, "Artist A")),
+                ("b".to_string(), radio(100, 20, "Artist B")),
+            ]),
+            generated: 1_700_000_000,
+        };
+        assert_eq!(original.mixes.len(), 2);
+
+        let json = serde_json::to_string(&original).expect("serialise");
+        let back: MixSet = serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(back, original);
+        // The detail page needs the tracks themselves, not just the count.
+        assert_eq!(back.mixes[0].tracks.len(), MIX_LEN.min(20));
+        assert_eq!(
+            back.mixes[0].tracks[0].title,
+            original.mixes[0].tracks[0].title
+        );
+        assert_eq!(
+            back.mixes[0].tracks[0].path,
+            original.mixes[0].tracks[0].path
+        );
+    }
+
     /// A run that produced nothing must still count as a run. Before this, an
     /// empty result was never recorded, so the shelf was permanently stale and
     /// re-fired eight paced requests on every visit to the home screen.

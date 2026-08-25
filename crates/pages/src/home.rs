@@ -16,6 +16,8 @@ pub fn Home(
     /// Playlists from the YT "For You" shelves, which need the discover route
     /// rather than the saved-playlist one. Only the server home uses it.
     on_select_discover_playlist: EventHandler<(String, String)>,
+    /// Open a generated mix's tracklist. Server home only.
+    on_open_mix: EventHandler<String>,
     on_search_artist: EventHandler<String>,
 ) -> Element {
     let mut config = use_context::<Signal<AppConfig>>();
@@ -76,6 +78,7 @@ pub fn Home(
                     on_play_album,
                     on_select_playlist,
                     on_select_discover_playlist,
+                    on_open_mix,
                     on_search_artist,
                 }
             } else {

@@ -6,6 +6,7 @@ pub mod download_manager;
 pub mod favorites;
 pub mod home;
 pub mod library;
+pub mod mix_detail;
 pub mod playlists;
 pub mod search;
 pub mod subsonic_sync;
@@ -92,7 +93,13 @@ pub(super) fn download_dest_no_ext(
     let mut n = 1;
     // Collide on the stem regardless of extension (we don't yet know the
     // final ext here): check for any file starting with the same stem.
-    while stem_taken(dir, candidate.file_name().and_then(|f| f.to_str()).unwrap_or(&base)) {
+    while stem_taken(
+        dir,
+        candidate
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(&base),
+    ) {
         n += 1;
         candidate = dir.join(format!("{base} ({n})"));
     }

@@ -2899,6 +2899,9 @@ fn App() -> Element {
     provide_context(pages::server::discover::DiscoverNowPlaying(
         discover_now_playing,
     ));
+    let generated_mixes = use_signal(server::mixes::MixSet::default);
+    let mut selected_mix_id = use_signal(|| None::<String>);
+    provide_context(pages::server::home::GeneratedMixes(generated_mixes));
     let discover_prefetch_cache = use_signal(std::collections::HashMap::new);
     provide_context(pages::server::discover::DiscoverPrefetchCache(
         discover_prefetch_cache,
@@ -3394,6 +3397,10 @@ fn App() -> Element {
                                     discover_playlist_origin.set(Route::Home);
                                     current_route.set(Route::DiscoverPlaylist);
                                 },
+                                on_open_mix: move |id: String| {
+                                    selected_mix_id.set(Some(id));
+                                    current_route.set(Route::MixDetail);
+                                },
                                 on_search_artist: move |artist: String| {
                                     selected_artist_name.set(artist);
                                     selected_artist_channel_id.set(None);
@@ -3435,6 +3442,17 @@ fn App() -> Element {
                                     discover_selected_playlist_id.set(None);
                                     discover_selected_playlist_title.set(None);
                                     current_route.set(*discover_playlist_origin.peek());
+                                },
+                            }
+                        },
+                        Route::MixDetail => rsx! {
+                            pages::server::mix_detail::MixDetail {
+                                selected_mix_id: selected_mix_id,
+                                on_back: move |_| {
+                                    // The mix stays selected: the set only
+                                    // changes on the daily refresh, so there is
+                                    // nothing to refetch on the way back.
+                                    current_route.set(Route::Home);
                                 },
                             }
                         },
