@@ -4,7 +4,11 @@ use config::{
 };
 use dioxus::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
 use rfd::AsyncFileDialog;
 use scrobble::lastfm;
 
@@ -135,7 +139,11 @@ pub fn MultiDirectoryPicker(
     }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
 #[component]
 fn AddFolderButton(on_add: EventHandler<std::path::PathBuf>, add_text: String) -> Element {
     rsx! {
@@ -193,7 +201,11 @@ fn AddFolderButton(on_add: EventHandler<std::path::PathBuf>, add_text: String) -
 }
 
 /// Reveal a folder in the OS file manager. Desktop-only.
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
 fn reveal_folder(path: &std::path::Path) {
     let _ = std::fs::create_dir_all(path);
     #[cfg(target_os = "windows")]
@@ -235,7 +247,11 @@ pub fn DownloadFolderSetting(config: Signal<AppConfig>) -> Element {
     }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
 #[component]
 fn OpenFolderButton(config: Signal<AppConfig>) -> Element {
     rsx! {
@@ -255,7 +271,11 @@ fn OpenFolderButton(config: Signal<AppConfig>) -> Element {
     rsx! {}
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
 #[component]
 fn ChooseDownloadFolderButton(config: Signal<AppConfig>) -> Element {
     rsx! {
@@ -1310,6 +1330,122 @@ pub fn RadioRegistryDropdown(
                         "{add_text}"
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Turn audio analysis on, and show what that costs while it happens.
+///
+/// Deliberately not a bare toggle. Switching this on downloads an inference
+/// runtime and a model — around 96 MB, of which 32 stays on disk — and the
+/// model's licence is non-commercial, so it is not something to fetch on
+/// someone's behalf without saying so. The text below is what says so.
+///
+/// Desktop only: the runtime has no verified aarch64-android build, and the
+/// phone is meant to consume the result rather than compute it.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
+#[component]
+pub fn AudioAnalysisSetting(config: Signal<config::AppConfig>) -> Element {
+    let enabled = config.read().audio_analysis;
+    let mut status = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+
+    // Already-installed is worth showing: it is the difference between "this
+    // will download 96 MB" and "this costs nothing more".
+    let installed = use_memo(move || embed::setup::is_installed());
+
+    let mut start_setup = move || {
+        if *busy.peek() {
+            return;
+        }
+        busy.set(true);
+        status.set("Preparing…".to_string());
+        let shared =
+            std::sync::Arc::new(std::sync::Mutex::new(embed::setup::SetupProgress::default()));
+        let watch = shared.clone();
+        // `spawn_forever`: leaving the settings page must not abandon a
+        // 96 MB download half-written.
+        dioxus::core::spawn_forever(async move {
+            let ticker = {
+                let watch = watch.clone();
+                dioxus::core::spawn_forever(async move {
+                    loop {
+                        utils::sleep(std::time::Duration::from_millis(400)).await;
+                        let p = watch.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        if p.done || p.error.is_some() {
+                            return;
+                        }
+                        if let Some(step) = p.step {
+                            let what = match step {
+                                embed::setup::Step::Runtime => "runtime",
+                                embed::setup::Step::Model => "model",
+                            };
+                            status.set(match p.fraction() {
+                                Some(f) => format!("Downloading {what} — {:.0}%", f * 100.0),
+                                None => format!("Downloading {what}…"),
+                            });
+                        }
+                    }
+                })
+            };
+            let result = embed::setup::ensure(shared).await;
+            ticker.cancel();
+            busy.set(false);
+            match result {
+                Ok(()) => {
+                    status.set("Ready — your library will be analysed in the background".into());
+                    config.write().audio_analysis = true;
+                }
+                Err(e) => {
+                    status.set(format!("Setup failed: {e}"));
+                    config.write().audio_analysis = false;
+                }
+            }
+        });
+    };
+
+    rsx! {
+        div { class: "flex flex-col gap-1.5 w-full",
+            div { class: "flex items-center justify-between gap-4",
+                div { class: "min-w-0",
+                    div { class: "text-white text-sm font-medium", "Analyse my music" }
+                    p { class: "text-white/40 text-xs mt-0.5",
+                        if enabled {
+                            "Mixes are grouped by how tracks actually sound."
+                        } else if installed() {
+                            "Everything needed is already downloaded."
+                        } else {
+                            "Downloads about 96 MB once (32 MB kept). The model is licensed for non-commercial use."
+                        }
+                    }
+                }
+                ToggleSetting {
+                    enabled,
+                    on_change: move |val: bool| {
+                        if !val {
+                            // Switching off leaves the files and the vectors
+                            // alone — turning it back on should not pay for
+                            // either again.
+                            config.write().audio_analysis = false;
+                            status.set(String::new());
+                            return;
+                        }
+                        if installed() {
+                            config.write().audio_analysis = true;
+                            status.set("Ready — your library will be analysed in the background".into());
+                        } else {
+                            start_setup();
+                        }
+                    },
+                }
+            }
+            if !status.read().is_empty() {
+                p { class: "text-xs text-white/50", "{status}" }
             }
         }
     }

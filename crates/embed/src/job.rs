@@ -262,6 +262,7 @@ mod tests {
             runtime: PathBuf::from("/no/such/runtime"),
             model: PathBuf::from("/no/such/model"),
             store: PathBuf::from("/tmp/store.bin"),
+            labels: PathBuf::from("/tmp/labels.json"),
         };
         assert!(!is_ready(&missing));
     }

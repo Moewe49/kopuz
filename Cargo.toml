@@ -61,6 +61,7 @@ tracing-appender = "0.2"
 i18n = { path = "./crates/i18n" }
 player = { path = "./crates/player" }
 reader = { path = "./crates/reader" }
+embed = { path = "./crates/embed" }
 components = { path = "./crates/components" }
 hooks = { path = "./crates/hooks" }
 pages = { path = "./crates/pages" }

@@ -19,6 +19,12 @@ fn theme_editor_section(config: Signal<AppConfig>) -> Element {
 fn theme_editor_section(_config: Signal<AppConfig>) -> Element {
     rsx! {}
 }
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
+use components::settings_items::AudioAnalysisSetting;
 use components::settings_items::{
     BackBehaviorSelector, ChannelModeSelector, DiscordPresencePausedSettings,
     DiscordPresenceSettings, DownloadFolderSetting, EqualizerPanel, LanguageSelector,
@@ -44,8 +50,7 @@ async fn try_resume(seed: Option<String>) -> Option<String> {
         return seed;
     }
     if let Some(c) = &seed
-        && let Ok(Some(rotated)) =
-            ::server::ytmusic::verify_session_keepalive::tick(c).await
+        && let Ok(Some(rotated)) = ::server::ytmusic::verify_session_keepalive::tick(c).await
         && validate(&rotated).await
     {
         return Some(rotated);
@@ -136,8 +141,7 @@ async fn ensure_signed_in(
 pub fn Settings(config: Signal<AppConfig>) -> Element {
     let mut ctrl = use_context::<PlayerController>();
     // Discord presence handle (for the diagnostic "Test" button).
-    let discord_presence =
-        use_context::<Option<std::sync::Arc<discord_presence::Presence>>>();
+    let discord_presence = use_context::<Option<std::sync::Arc<discord_presence::Presence>>>();
     let mut discord_test_result = use_signal(|| None::<Result<String, String>>);
     let crossfade_label = if config.read().crossfade_seconds == 0 {
         i18n::t("crossfade_off")
@@ -236,7 +240,8 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
             let srv = cfg.server.as_ref();
             (
                 srv.and_then(|s| s.yt_browser).unwrap_or(*yt_browser.peek()),
-                srv.and_then(|s| s.access_token.clone()).filter(|t| !t.is_empty()),
+                srv.and_then(|s| s.access_token.clone())
+                    .filter(|t| !t.is_empty()),
                 srv.and_then(|s| s.id.clone()).unwrap_or_default(),
                 srv.map(|s| s.yt_manual).unwrap_or(false),
             )
@@ -269,31 +274,33 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
 
         #[cfg(not(target_os = "android"))]
         {
-        let mut report = move |msg: String| {
-            error.set(Some(msg.clone()));
-            ctrl.playback_error.set(Some(msg));
-        };
-        spawn(async move {
-            match ensure_signed_in(existing, browser, &server_id, manual).await {
-                Ok(cookies) => persist_yt_session(config, error, cookies, browser, manual),
-                Err(e) if e == NEEDS_LOGIN => {
-                    // Open a normal (non-automated) browser window for the
-                    // one-time sign-in, then pop the "Done" modal. The headless
-                    // CDP extract happens when the user confirms.
-                    let profile = ::server::ytmusic::isolated_profile::profile_dir(&server_id);
-                    match ::server::ytmusic::cdp::spawn_login_window(browser, &profile).await {
-                        Ok(pid) => {
-                            yt_login_pid.set(Some(pid));
-                            yt_login_ctx.set(Some((browser, server_id.clone())));
-                            yt_login_open.set(true);
+            let mut report = move |msg: String| {
+                error.set(Some(msg.clone()));
+                ctrl.playback_error.set(Some(msg));
+            };
+            spawn(async move {
+                match ensure_signed_in(existing, browser, &server_id, manual).await {
+                    Ok(cookies) => persist_yt_session(config, error, cookies, browser, manual),
+                    Err(e) if e == NEEDS_LOGIN => {
+                        // Open a normal (non-automated) browser window for the
+                        // one-time sign-in, then pop the "Done" modal. The headless
+                        // CDP extract happens when the user confirms.
+                        let profile = ::server::ytmusic::isolated_profile::profile_dir(&server_id);
+                        match ::server::ytmusic::cdp::spawn_login_window(browser, &profile).await {
+                            Ok(pid) => {
+                                yt_login_pid.set(Some(pid));
+                                yt_login_ctx.set(Some((browser, server_id.clone())));
+                                yt_login_open.set(true);
+                            }
+                            Err(err) => {
+                                report(format!("Could not open the sign-in browser: {err}"))
+                            }
                         }
-                        Err(err) => report(format!("Could not open the sign-in browser: {err}")),
                     }
+                    Err(e) if manual => report(e),
+                    Err(e) => report(format!("YT Music sign-in failed ({browser}): {e}")),
                 }
-                Err(e) if manual => report(e),
-                Err(e) => report(format!("YT Music sign-in failed ({browser}): {e}")),
-            }
-        });
+            });
         }
     };
 
@@ -721,6 +728,17 @@ pub fn Settings(config: Signal<AppConfig>) -> Element {
                                     on_change: move |val| config.write().autoradio = val,
                                 }
                             }
+                        }
+                        // Sits beside autoradio because it changes the same
+                        // thing: what plays next and what the mixes contain.
+                        // Desktop only — the runtime has no verified
+                        // aarch64-android build.
+                        if cfg!(all(
+                            not(target_arch = "wasm32"),
+                            not(target_os = "android"),
+                            not(target_os = "ios")
+                        )) {
+                            AudioAnalysisSetting { config }
                         }
                         if !cfg!(target_arch = "wasm32") {
                             SettingItem {

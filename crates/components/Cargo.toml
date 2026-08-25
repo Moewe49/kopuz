@@ -33,3 +33,7 @@ web-time = { workspace = true }
 # Android (which auto-detects the music dir via JNI instead).
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))'.dependencies]
 rfd = { workspace = true }
+# Audio analysis is desktop-only: it links an ONNX runtime that has no verified
+# aarch64-android build, and the phone consumes the result rather than
+# computing it.
+embed = { workspace = true }

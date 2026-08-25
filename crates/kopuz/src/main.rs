@@ -1797,6 +1797,76 @@ fn App() -> Element {
             }
         });
     });
+
+    // Work through the library in small batches while the app is open, so the
+    // mixes get better on their own. Unlike the two fetches above this never
+    // starts on its own initiative: `audio_analysis` is off until the listener
+    // asks, because it downloads a non-commercially licensed model and then
+    // spends background network on every track.
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "android"),
+        not(target_os = "ios")
+    ))]
+    use_effect(move || {
+        /// Tracks per batch. At the measured 2.2s each, one batch is about a
+        /// minute of intermittent background traffic.
+        const BATCH: usize = 25;
+        /// Gap between batches. Long enough that the analysis never competes
+        /// with playback for YouTube's patience, short enough that a few
+        /// hundred tracks are done within an evening.
+        const BETWEEN_BATCHES: std::time::Duration = std::time::Duration::from_secs(600);
+
+        // `spawn_forever`: this outlives whatever screen happens to be mounted.
+        dioxus::core::spawn_forever(async move {
+            loop {
+                let wanted = config.peek().audio_analysis;
+                if wanted && embed::setup::is_installed() {
+                    let ids: Vec<String> = {
+                        let conf = config.peek();
+                        // `listen_counts` keys are `ytmusic:<id>:urlhex_…`;
+                        // most-played first, because those are what the mixes
+                        // are built from.
+                        let mut plays: Vec<(String, u64)> = conf
+                            .listen_counts
+                            .iter()
+                            .filter(|&(_, &n)| n >= 3)
+                            .filter_map(|(k, &n)| {
+                                let mut parts = k.split(':');
+                                if parts.next()? != "ytmusic" {
+                                    return None;
+                                }
+                                Some((parts.next()?.to_string(), n))
+                            })
+                            .collect();
+                        plays.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+                        let mut ids = Vec::with_capacity(plays.len());
+                        for (id, _) in plays {
+                            if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                        }
+                        ids
+                    };
+                    if !ids.is_empty() {
+                        let paths = embed::setup::paths(&config_dir());
+                        match embed::job::analyse(&ids, &paths, BATCH).await {
+                            Ok(p) if p.remaining == 0 => {
+                                tracing::info!("audio analysis complete: {} tracks", p.total);
+                            }
+                            Ok(p) => tracing::info!(
+                                "audio analysis: +{} ({} left)",
+                                p.embedded,
+                                p.remaining
+                            ),
+                            Err(e) => tracing::warn!("audio analysis: {e}"),
+                        }
+                    }
+                }
+                utils::sleep(BETWEEN_BATCHES).await;
+            }
+        });
+    });
     let mut trigger_rescan = use_signal(|| 0);
     let mut last_scan_key = use_signal(|| None::<String>);
     let mut scan_current_file = use_signal(|| Option::<String>::None);

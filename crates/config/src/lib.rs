@@ -580,6 +580,15 @@ pub struct AppConfig {
     /// "not heard in months" becomes expressible at all.
     #[serde(default)]
     pub play_history: HashMap<String, PlayRecord>,
+    /// Analyse how the library actually sounds, to group it into mixes.
+    ///
+    /// Off unless asked for. Turning it on fetches ~96 MB — an inference
+    /// runtime and a model whose licence is non-commercial, which is not
+    /// something to place on someone's disk by surprise — and then spends
+    /// background network and CPU working through the library. Nothing breaks
+    /// while it is off; the mixes shelf falls back to YouTube radio.
+    #[serde(default)]
+    pub audio_analysis: bool,
     #[serde(default)]
     pub musicbrainz_token: String,
     #[serde(default)]
@@ -947,6 +956,7 @@ impl Default for AppConfig {
             artist_view_order: default_artist_view_order(),
             listen_counts: HashMap::new(),
             play_history: HashMap::new(),
+            audio_analysis: false,
             musicbrainz_token: String::new(),
             lastfm_api_key: String::new(),
             lastfm_api_secret: String::new(),

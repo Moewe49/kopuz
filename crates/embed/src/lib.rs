@@ -10,6 +10,8 @@ pub mod mel;
 pub mod model;
 pub mod resample;
 pub mod runtime;
+#[cfg(all(feature = "job", feature = "onnx"))]
+pub mod setup;
 
 #[cfg(feature = "onnx")]
 pub mod session;

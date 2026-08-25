@@ -16,6 +16,12 @@ info_plist_path = "Info.plist"
 directories = { workspace = true }
 discord-presence = { workspace = true }
 
+# Audio analysis: an ONNX runtime with no verified aarch64-android build, and
+# a job that spends network and CPU in the background. The phone consumes the
+# resulting mixes rather than computing them.
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios")))'.dependencies]
+embed = { workspace = true }
+
 # Desktop only. Android uses the mobile renderer, logs to logcat, and has no Discord IPC.
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 dioxus = { workspace = true, features = ["desktop"] }
