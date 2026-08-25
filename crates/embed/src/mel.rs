@@ -143,10 +143,23 @@ impl Mel {
 
             let mut row = [0f32; N_MELS];
             for (band, weights) in row.iter_mut().zip(&self.filters) {
+                // POWER, not magnitude — `norm_sqr`, not `norm`.
+                //
+                // This is the whole difference between a spectrogram the model
+                // understands and one it does not. Magnitude compresses the
+                // dynamic range: measured against Essentia's own output, a
+                // band with no signal in it came out at 0.518 instead of
+                // 0.004, and the peak at 4.30 instead of 6.10. Every track
+                // then looks uniformly dense and mid-heavy, which is why a
+                // solo cello, a reggae song and a death metal track all came
+                // back labelled `Electronic---Experimental`.
+                //
+                // Cosine against the reference: 0.9396 with magnitude,
+                // 0.999919 with power.
                 let energy: f32 = spectrum
                     .iter()
                     .zip(weights)
-                    .map(|(c, w)| c.norm() * w)
+                    .map(|(c, w)| c.norm_sqr() * w)
                     .sum();
                 *band = (1.0 + 10_000.0 * energy).log10();
             }

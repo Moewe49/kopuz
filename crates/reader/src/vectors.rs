@@ -32,7 +32,22 @@ use std::io::Write;
 use std::path::Path;
 
 const MAGIC: &[u8; 4] = b"KPZV";
-const VERSION: u8 = 1;
+
+/// Bumped whenever the vectors *mean* something different — a change to the
+/// audio preprocessing, the model, or the pooling. Not just when the file
+/// layout changes.
+///
+/// This exists because of a real failure: a magnitude spectrogram was used
+/// where the model expects power, every vector in the store was quietly wrong,
+/// and nothing noticed until a listener said the mixes contained the wrong
+/// songs. Vectors carry no evidence of how they were made, so the version is
+/// the only thing that can invalidate them — and an outdated store is
+/// discarded and rebuilt rather than reported as an error, because the data is
+/// regenerable and a broken recommendation is worse than a slow one.
+///
+/// v1: magnitude spectrogram (wrong).
+/// v2: power spectrogram, matching Essentia at cosine 0.999919.
+const VERSION: u8 = 2;
 
 /// One vector per track id, all of the same width.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -45,6 +60,9 @@ pub struct VectorStore {
 pub enum StoreError {
     /// Not a vector file, or a version this build does not know.
     Format(&'static str),
+    /// A store written by an older feature version. Its contents are stale
+    /// rather than corrupt, so the caller starts again instead of failing.
+    Outdated { found: u8 },
     /// The file ends in the middle of a record.
     Truncated,
     /// A vector of a different width than the rest of the store.
@@ -55,6 +73,10 @@ impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StoreError::Format(m) => write!(f, "not a vector store: {m}"),
+            StoreError::Outdated { found } => write!(
+                f,
+                "vector store was written by feature version {found}, this build needs {VERSION}"
+            ),
             StoreError::Truncated => write!(f, "vector store ends mid-record"),
             StoreError::WrongWidth { expected, got } => {
                 write!(f, "vector has {got} dimensions, store has {expected}")
@@ -184,6 +206,9 @@ impl VectorStore {
         if data.len() < 11 || &data[..4] != MAGIC {
             return Err(StoreError::Format("bad magic"));
         }
+        if data[4] < VERSION {
+            return Err(StoreError::Outdated { found: data[4] });
+        }
         if data[4] != VERSION {
             return Err(StoreError::Format("unknown version"));
         }
@@ -218,7 +243,19 @@ impl VectorStore {
     /// state before anything has been analysed.
     pub fn load(path: &Path, dim: usize) -> Result<Self, StoreError> {
         match std::fs::read(path) {
-            Ok(bytes) => Self::from_bytes(&bytes),
+            Ok(bytes) => match Self::from_bytes(&bytes) {
+                // Stale, not broken: start again rather than refuse. The work
+                // to rebuild is real but it is work the machine can do on its
+                // own, and serving recommendations from vectors that mean
+                // something else is worse than serving none.
+                Err(StoreError::Outdated { found }) => {
+                    tracing::info!(
+                        "vector store is from feature version {found}, rebuilding for {VERSION}"
+                    );
+                    Ok(Self::new(dim))
+                }
+                other => other,
+            },
             Err(_) => Ok(Self::new(dim)),
         }
     }
@@ -296,6 +333,13 @@ mod tests {
         assert_eq!(
             VectorStore::from_bytes(&wrong_version).unwrap_err(),
             StoreError::Format("unknown version")
+        );
+        // An older feature version is stale rather than damaged.
+        let mut older = good.clone();
+        older[4] = 1;
+        assert_eq!(
+            VectorStore::from_bytes(&older).unwrap_err(),
+            StoreError::Outdated { found: 1 }
         );
         // An empty file is damaged, not empty — an empty store still has a
         // header.
@@ -378,6 +422,24 @@ mod tests {
         for (id, v) in ids.iter().zip(&vectors) {
             assert_eq!(s.get(id).unwrap(), v.as_slice());
         }
+    }
+
+    /// Vectors carry no evidence of how they were computed, so a preprocessing
+    /// change leaves a store full of confident nonsense. Loading must throw it
+    /// away by itself — nobody will remember to.
+    #[test]
+    fn a_store_from_an_older_feature_version_is_rebuilt_not_refused() {
+        let dir = std::env::temp_dir().join("kopuz-vectors-version-test");
+        let path = dir.join("vectors.bin");
+        let _ = std::fs::create_dir_all(&dir);
+        let mut bytes = store_of(5, 4).to_bytes();
+        bytes[4] = 1; // written by the version with the wrong spectrogram
+        std::fs::write(&path, &bytes).unwrap();
+
+        let loaded = VectorStore::load(&path, 4).expect("stale is not an error");
+        assert!(loaded.is_empty(), "stale vectors were kept");
+        assert_eq!(loaded.dim(), 4);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
