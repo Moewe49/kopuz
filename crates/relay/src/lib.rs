@@ -132,6 +132,10 @@ pub enum RelayError {
     TooLarge {
         bytes: usize,
     },
+    /// The jam session is over -- ended, expired, or the code was wrong, which
+    /// the relay does not distinguish on purpose. All three mean the same thing
+    /// to a listener: this jam is not there any more.
+    JamGone,
     Transport(String),
     Protocol(String),
 }
@@ -150,6 +154,7 @@ impl std::fmt::Display for RelayError {
                 f,
                 "{bytes} bytes is more than the relay accepts ({MAX_VALUE_BYTES})"
             ),
+            RelayError::JamGone => write!(f, "that jam has ended"),
             RelayError::Transport(m) => write!(f, "could not reach the relay: {m}"),
             RelayError::Protocol(m) => write!(f, "the relay answered unexpectedly: {m}"),
         }
@@ -161,6 +166,7 @@ impl std::error::Error for RelayError {}
 pub mod address;
 pub use address::{normalise_url, token_travels_in_the_clear};
 
+pub mod jam;
 pub mod pairing;
 
 #[cfg(feature = "client")]

@@ -186,3 +186,109 @@ async fn an_unconfigured_relay_is_not_contacted() {
         Err(RelayError::NotConfigured)
     );
 }
+
+/// A jam, from opening it to two people writing it at once. This is the part
+/// the whole live-jam feature rests on, so it is tested against a real server
+/// and a real socket rather than trusted to reason.
+#[tokio::test]
+async fn a_jam_opens_reads_and_survives_a_concurrent_write() {
+    let dir = scratch("jam");
+    let owner = RelayConfig {
+        url: start(&dir).await,
+        token: TOKEN.to_string(),
+    };
+
+    // The owner opens a jam and gets an access with a short code.
+    let access = relay::client::jam_open(&owner).await.expect("open");
+    assert_eq!(access.code.len(), relay::jam::CODE_LEN);
+    assert!(access.url.starts_with("http://127.0.0.1:"));
+
+    // Empty at version 0.
+    match relay::client::jam_read(&access, 0).await.unwrap() {
+        Fetched::Unchanged => {}
+        other => panic!("a fresh jam should read as unchanged at 0, got {other:?}"),
+    }
+
+    // First write, based on version 0, lands at version 1.
+    assert_eq!(
+        relay::client::jam_write(&access, b"queue-v1", 0)
+            .await
+            .unwrap(),
+        relay::jam::JamWrite::Stored { version: 1 }
+    );
+
+    // The other listener, holding the same code, reads it back.
+    match relay::client::jam_read(&access, 0).await.unwrap() {
+        Fetched::Value(v) => {
+            assert_eq!(v.version, 1);
+            assert_eq!(v.bytes, b"queue-v1");
+        }
+        other => panic!("expected the value, got {other:?}"),
+    }
+
+    // Two people edit from the same version 1. The first wins; the second is
+    // told it is out of date and given the version to rebase on -- it is NOT an
+    // error, it is the mechanism.
+    assert_eq!(
+        relay::client::jam_write(&access, b"added-a-song", 1)
+            .await
+            .unwrap(),
+        relay::jam::JamWrite::Stored { version: 2 }
+    );
+    assert_eq!(
+        relay::client::jam_write(&access, b"moved-a-song", 1)
+            .await
+            .unwrap(),
+        relay::jam::JamWrite::Conflict { current: 2 },
+        "a write based on a stale version must be refused, not silently clobber"
+    );
+    // The loser re-reads, rebases on 2, and its write now lands.
+    assert_eq!(
+        relay::client::jam_write(&access, b"moved-a-song", 2)
+            .await
+            .unwrap(),
+        relay::jam::JamWrite::Stored { version: 3 }
+    );
+}
+
+/// A join code carries the relay URL, so the guest -- who never had the relay
+/// configured -- can reach the jam from the code alone. And a wrong code is
+/// indistinguishable from an ended jam, on purpose.
+#[tokio::test]
+async fn a_guest_reaches_a_jam_from_the_join_code_alone() {
+    let dir = scratch("jam-join");
+    let owner = RelayConfig {
+        url: start(&dir).await,
+        token: TOKEN.to_string(),
+    };
+    let access = relay::client::jam_open(&owner).await.expect("open");
+    relay::client::jam_write(&access, b"hello", 0)
+        .await
+        .unwrap();
+
+    // The owner hands over one pasteable string; the guest decodes it into the
+    // same access, with no personal token anywhere in it.
+    let join = relay::jam::encode_join(&access);
+    let guest = relay::jam::decode_join(&join).expect("decode");
+    assert_eq!(guest.id, access.id);
+    assert!(
+        !join.contains(TOKEN),
+        "the owner's token must not ride in a join code"
+    );
+
+    match relay::client::jam_read(&guest, 0).await.unwrap() {
+        Fetched::Value(v) => assert_eq!(v.bytes, b"hello"),
+        other => panic!("guest should read the jam, got {other:?}"),
+    }
+
+    // A wrong code on a real session id is a 404 -- the same as no session --
+    // so a guesser cannot tell a live jam from a dead one.
+    let wrong = relay::jam::JamAccess {
+        code: "WRONGWRONGWR".to_string(),
+        ..guest.clone()
+    };
+    assert_eq!(
+        relay::client::jam_read(&wrong, 0).await,
+        Err(RelayError::JamGone)
+    );
+}
