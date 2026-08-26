@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod candidates;
 pub mod cover_fetcher;
+pub mod jamlive;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod metadata;
 pub mod models;

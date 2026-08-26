@@ -71,7 +71,12 @@ mod rec {
 }
 
 /// One track inside a shared playlist.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The one-shot share encodes these with its own tight codec below; the live
+/// jam ([`crate::jamlive`]) sends whole documents as JSON, which is why serde
+/// rides along too. Two formats for two jobs — the share code pays a byte tax
+/// it cannot afford, the jam document values legibility over size.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SharedTrack {
     /// Portable source path (`ytmusic:<id>` / `soundcloud:<id>`), or `None` for
     /// a track that only existed as a local file on the sender's machine.
