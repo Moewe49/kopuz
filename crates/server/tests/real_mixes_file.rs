@@ -34,16 +34,18 @@ fn a_mix_set_written_before_this_change_still_loads() {
         .unwrap_or_else(|e| panic!("the real {} no longer parses: {e}", path.display()));
 
     assert!(!set.mixes.is_empty(), "the file on disk has no mixes in it");
-    assert_eq!(
-        set.relay_version, 0,
-        "a locally built set must not claim to have come from a relay"
-    );
     eprintln!(
-        "{} mixes, feature version {}, generated {}",
+        "{} mixes, feature version {}, relay version {}, generated {}",
         set.mixes.len(),
         set.feature_version,
+        set.relay_version,
         set.generated
     );
+    // `relay_version` is 0 on a set that has never been published and the
+    // version it was published as afterwards — both legitimate. It is not
+    // asserted to be either, because which one depends on whether this machine
+    // has a relay configured and has run since; what matters is that the field
+    // round-trips, which the parse above already proved.
 
     // The device that wrote this has vectors, so it authors: it rebuilds
     // locally and never reads from the relay, whatever the relay holds.
@@ -54,11 +56,14 @@ fn a_mix_set_written_before_this_change_still_loads() {
     );
 
     // The same file, read by a phone: no vectors, so it asks rather than
-    // rebuilding. This is the exact case the whole design turns on.
+    // rebuilding, quoting back whatever relay version the file carries. This is
+    // the exact case the whole design turns on.
     assert_eq!(
         decide(&set, set.generated + 60, 0, true),
-        MixAction::Fetch { have: 0 },
-        "a device with no vectors must ask the relay"
+        MixAction::Fetch {
+            have: set.relay_version
+        },
+        "a device with no vectors must ask the relay, quoting what it holds"
     );
 }
 

@@ -15,6 +15,7 @@ pub mod folder_picker;
 pub mod fullscreen;
 pub mod header;
 pub mod jam;
+pub mod jam_sync;
 pub mod lyrics_view;
 pub mod metadata_modal;
 pub mod onboarding;

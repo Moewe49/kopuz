@@ -107,10 +107,59 @@ pub fn jam_tracks(jam: &Jam, at: usize) -> (Vec<reader::models::Track>, usize, b
 #[component]
 pub fn JamButton() -> Element {
     let ctrl = try_consume_context::<PlayerController>();
+    let jam = try_consume_context::<crate::jam_sync::JamState>();
+    let config = try_consume_context::<Signal<config::AppConfig>>();
     let mut open = use_signal(|| false);
     let mut pasted = use_signal(String::new);
 
     let has_queue = ctrl.map(|c| !c.queue.peek().is_empty()).unwrap_or(false);
+    let in_a_jam = jam.map(|j| j.in_a_jam()).unwrap_or(false);
+    let relay_ready = config
+        .map(|c| {
+            let conf = c.read();
+            !conf.relay_url.trim().is_empty() && !conf.relay_token.trim().is_empty()
+        })
+        .unwrap_or(false);
+
+    // Open a live jam from what is playing, and copy the invite to hand over.
+    let mut start_live = move |_| {
+        let (Some(jam), Some(ctrl), Some(config)) = (jam, ctrl, config) else {
+            return;
+        };
+        let relay = relay::RelayConfig {
+            url: relay::normalise_url(&config.peek().relay_url),
+            token: config.peek().relay_token.clone(),
+        };
+        dioxus::core::spawn_forever(crate::jam_sync::start_jam(jam, ctrl, relay));
+        open.set(false);
+    };
+
+    // Copy the live invite for whoever is already in a jam this device hosts.
+    let copy_invite = move |_| {
+        if let Some(jam) = jam
+            && let Some(access) = jam.access.peek().clone()
+        {
+            copy_to_clipboard(&relay::jam::encode_join(&access));
+            show_toast("Invite copied — send it to listen together".to_string());
+        }
+    };
+
+    let leave_live = move |_| {
+        if let Some(jam) = jam {
+            crate::jam_sync::leave_jam(jam);
+        }
+    };
+
+    // Join a live jam from a pasted `kopuz:live:` code.
+    let mut join_live = move || {
+        let (Some(jam), Some(ctrl)) = (jam, ctrl) else {
+            return;
+        };
+        let code = pasted.peek().clone();
+        dioxus::core::spawn_forever(crate::jam_sync::join_jam(jam, ctrl, code));
+        pasted.set(String::new());
+        open.set(false);
+    };
 
     // Decoded as they type, so the panel can say where they would land before
     // they commit to anything.
@@ -168,6 +217,57 @@ pub fn JamButton() -> Element {
                     class: "absolute right-0 top-full mt-2 w-80 z-50 rounded-xl border border-white/10 bg-neutral-900 shadow-2xl p-4 flex flex-col gap-3",
                     onclick: move |e| e.stop_propagation(),
 
+                    // Live jam: two people, both driving, staying in step. When
+                    // one is running it takes over the panel; otherwise it is an
+                    // offer, above the one-shot share it supersedes.
+                    if in_a_jam {
+                        div { class: "rounded-lg bg-violet-500/10 border border-violet-400/25 px-3 py-2.5 flex flex-col gap-2",
+                            div { class: "flex items-center gap-2 text-violet-200 text-sm font-medium",
+                                i { class: "fa-solid fa-tower-broadcast" }
+                                "Live jam"
+                            }
+                            if let Some(jam) = jam {
+                                if !jam.status.read().is_empty() {
+                                    p { class: "text-violet-200/70 text-[11px]", "{jam.status}" }
+                                }
+                            }
+                            div { class: "flex gap-2",
+                                if jam.map(|j| *j.is_host.peek()).unwrap_or(false) {
+                                    button {
+                                        class: "flex-1 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors",
+                                        onclick: copy_invite,
+                                        i { class: "fa-solid fa-copy mr-1.5" }
+                                        "Copy invite"
+                                    }
+                                }
+                                button {
+                                    class: "flex-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 text-xs font-medium transition-colors",
+                                    onclick: leave_live,
+                                    "Leave"
+                                }
+                            }
+                        }
+                        div { class: "h-px bg-white/10" }
+                    } else {
+                        button {
+                            class: if relay_ready && has_queue {
+                                "w-full px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors flex items-center justify-center gap-1.5"
+                            } else {
+                                "w-full px-3 py-2 rounded-lg bg-white/5 text-white/30 text-sm font-medium cursor-default flex items-center justify-center gap-1.5"
+                            },
+                            disabled: !relay_ready || !has_queue,
+                            onclick: start_live,
+                            i { class: "fa-solid fa-tower-broadcast" }
+                            "Start a live jam"
+                        }
+                        if !relay_ready {
+                            p { class: "text-white/40 text-[11px]",
+                                "Set up your own relay in Settings to jam live — you and the other person both playing, both in control."
+                            }
+                        }
+                        div { class: "h-px bg-white/10" }
+                    }
+
                     div {
                         div { class: "text-white text-sm font-semibold", "Listen together" }
                         // Says plainly what this does and does not do. Someone
@@ -204,7 +304,7 @@ pub fn JamButton() -> Element {
 
                     textarea {
                         class: "w-full h-16 bg-white/5 border border-white/10 rounded-lg px-2.5 py-2 text-white text-[11px] font-mono resize-none placeholder:text-white/25 focus:outline-none focus:border-violet-400 break-all",
-                        placeholder: "or paste a kopuz:jam: code you were sent",
+                        placeholder: "or paste a code you were sent",
                         value: "{pasted}",
                         oninput: move |e| pasted.set(e.value()),
                         // Without this the queue view eats the keystrokes as
@@ -212,6 +312,17 @@ pub fn JamButton() -> Element {
                         onkeydown: move |e| e.stop_propagation(),
                     }
 
+                    // A live invite and a one-shot code go in the same box; it
+                    // tells them apart and offers the right thing. The live one
+                    // joins an ongoing session, so it is not a "moment" preview.
+                    if relay::jam::looks_like_join(&pasted.read()) {
+                        button {
+                            class: "w-full px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-1.5",
+                            onclick: move |_| join_live(),
+                            i { class: "fa-solid fa-tower-broadcast" }
+                            "Join live jam"
+                        }
+                    } else {
                     match preview {
                         Some(Ok(jam)) => {
                             let count = jam.playlist.tracks.len();
@@ -250,6 +361,7 @@ pub fn JamButton() -> Element {
                             }
                         },
                         None => rsx! {},
+                    }
                     }
                 }
             }

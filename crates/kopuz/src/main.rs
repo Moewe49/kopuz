@@ -2058,6 +2058,10 @@ fn App() -> Element {
         config,
     );
 
+    // The live-jam sync loop and its shared state, provided app-wide. Idles
+    // cheaply until a jam is started or joined from the player's jam panel.
+    components::jam_sync::use_jam_sync(ctrl);
+
     use_effect(move || {
         if !*initial_load_done.read() {
             return;
