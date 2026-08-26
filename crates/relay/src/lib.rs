@@ -161,6 +161,8 @@ impl std::error::Error for RelayError {}
 pub mod address;
 pub use address::{normalise_url, token_travels_in_the_clear};
 
+pub mod pairing;
+
 #[cfg(feature = "client")]
 pub mod client;
 

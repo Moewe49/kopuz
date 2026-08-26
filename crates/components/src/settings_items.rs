@@ -1356,11 +1356,34 @@ pub fn RelaySetting(config: Signal<config::AppConfig>) -> Element {
     let mut token = use_signal(|| config.peek().relay_token.clone());
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    // The token is a long random secret; a password field hides it so a
+    // shoulder cannot read it, and this reveals it so the person typing can
+    // check they got it right. Both matter, which is why it is a toggle.
+    let mut show_token = use_signal(|| false);
 
     // Recomputed as the address is typed, so the warning appears while the
     // decision is still being made rather than after it.
     let in_the_clear = use_memo(move || relay::token_travels_in_the_clear(&url()));
     let ready = use_memo(move || !url().trim().is_empty() && !token().trim().is_empty());
+
+    // Fill both fields from whatever was typed or pasted into the address box.
+    // A pairing code carries the address *and* the token, so pasting one --
+    // the thing the desktop hands you, sent to yourself by any means -- means
+    // never transcribing a 43-character secret on a phone keyboard. Anything
+    // that is not a code is treated as a plain address, exactly as before.
+    let mut take_url_input = move |value: String| {
+        if let Some(paired) = relay::pairing::decode(&value) {
+            url.set(paired.url.clone());
+            token.set(paired.token.clone());
+            config.write().relay_url = paired.url;
+            config.write().relay_token = paired.token;
+            status.set("Filled in from the code.".to_string());
+        } else {
+            url.set(value.clone());
+            config.write().relay_url = value.trim().to_string();
+            status.set(String::new());
+        }
+    };
 
     let mut test = move || {
         if *busy.peek() {
@@ -1404,26 +1427,35 @@ pub fn RelaySetting(config: Signal<config::AppConfig>) -> Element {
                 div { class: "flex-1 bg-white/5 p-1 rounded-xl border border-white/5",
                     input {
                         class: "bg-transparent w-full px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none",
-                        placeholder: "ms-01:8484",
+                        placeholder: "ms-01:8484  or  paste a code",
                         value: "{url()}",
-                        oninput: move |evt| {
-                            url.set(evt.value());
-                            config.write().relay_url = evt.value().trim().to_string();
-                            status.set(String::new());
-                        },
+                        oninput: move |evt| take_url_input(evt.value()),
                     }
                 }
-                div { class: "flex-1 bg-white/5 p-1 rounded-xl border border-white/5",
+                // The token box, with an eye to reveal what was typed. The
+                // reveal is why the code exists to be pasted instead: on a
+                // phone, a hidden 43-character secret is a transcription error
+                // waiting to happen.
+                div { class: "flex-1 flex items-center bg-white/5 p-1 rounded-xl border border-white/5",
                     input {
                         class: "bg-transparent w-full px-3 py-2 text-sm text-white placeholder:text-white/50 outline-none",
                         placeholder: "shared secret",
                         value: "{token()}",
-                        r#type: "password",
+                        r#type: if show_token() { "text" } else { "password" },
                         oninput: move |evt| {
                             token.set(evt.value());
                             config.write().relay_token = evt.value().trim().to_string();
                             status.set(String::new());
                         },
+                    }
+                    button {
+                        class: "px-2 py-2 text-xs text-white/50 hover:text-white transition-colors shrink-0",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let now = *show_token.peek();
+                            show_token.set(!now);
+                        },
+                        if show_token() { "hide" } else { "show" }
                     }
                 }
                 button {
@@ -1431,6 +1463,25 @@ pub fn RelaySetting(config: Signal<config::AppConfig>) -> Element {
                     disabled: !ready() || busy(),
                     onclick: move |_| test(),
                     if busy() { "Checking…" } else { "Test" }
+                }
+            }
+            // The pairing code: this device's two fields packed into one string
+            // to send to another. Only offered once there is something to pack.
+            if ready() {
+                div { class: "flex items-center gap-3",
+                    button {
+                        class: "text-xs text-white/60 hover:text-white underline underline-offset-2 transition-colors",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let code = relay::pairing::encode(&relay::RelayConfig {
+                                url: url.peek().clone(),
+                                token: token.peek().clone(),
+                            });
+                            crate::track_row::copy_to_clipboard(&code);
+                            status.set("Code copied — paste it into the address box on your other device.".to_string());
+                        },
+                        "Copy a code for my other device"
+                    }
                 }
             }
             if in_the_clear() {
