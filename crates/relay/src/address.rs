@@ -26,8 +26,11 @@ pub fn normalise_url(input: &str) -> String {
 /// The host, without scheme, credentials, port or path.
 fn host_of(url: &str) -> &str {
     let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    // A backslash ends the authority too: the URL parser treats `\` as `/`, so
+    // `http://ms-01\@evil.com` reaches evil.com, and splitting only on `/`
+    // would read the host as the reassuring-looking `ms-01`.
     let authority = after_scheme
-        .split(['/', '?', '#'])
+        .split(['/', '?', '#', '\\'])
         .next()
         .unwrap_or(after_scheme);
     // `user:pass@host` — the part that matters is after the last `@`.
@@ -52,19 +55,50 @@ fn is_private_host(host: &str) -> bool {
     if host.ends_with(".local") || host.ends_with(".internal") || host.ends_with(".home") {
         return true;
     }
-    // A name with no dot in it is a LAN name — `ms-01`, `fileserver`. There is
-    // no such thing as a publicly routable single-label host.
-    if !host.contains('.') && !host.contains(':') {
-        return true;
+    // IPv6, told by its colons. Unique-local (fc00::/7 — the `fc`/`fd` prefix)
+    // and link-local (fe80::/10) are the private ranges. Tailscale hands out
+    // addresses inside fc00::/7 (fd7a:…), so recognising it keeps the warning
+    // quiet on the very path the warning tells you to use — without this a
+    // Tailscale IPv6 address nags every time, which teaches people to ignore
+    // the warning that matters.
+    if host.contains(':') {
+        return host.starts_with("fc") || host.starts_with("fd") || host.starts_with("fe80");
     }
-    let octets: Vec<u8> = host
-        .split('.')
-        .filter_map(|part| part.parse::<u8>().ok())
-        .collect();
-    if octets.len() != 4 || host.split('.').count() != 4 {
+    // A single label with no dot — `ms-01`, `fileserver` — but only when it
+    // truly looks like a hostname label: letters, digits and hyphens, with at
+    // least one letter. The URL parser expands other dotless forms into public
+    // addresses that this check would otherwise wave through in silence: an
+    // all-digit string is an integer-encoded IPv4 (134744072 becomes 8.8.8.8),
+    // `0x…` is hex IPv4 (0x08080808 becomes 8.8.8.8), and a percent-escape or a
+    // non-ASCII character can normalise to a public host too. None of those is
+    // a real LAN name, so treat anything that is not a clean label as public
+    // and let the warning fire.
+    if !host.contains('.') {
+        if host.starts_with("0x") {
+            return false;
+        }
+        return host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && host.bytes().any(|b| b.is_ascii_alphabetic());
+    }
+    // A dotted address is private only as a canonical IPv4 in a private range.
+    // A leading-zero octet is rejected: the URL parser reads `010` as octal 8,
+    // so `010.0.0.1` is not the 10.0.0.1 it looks like, and calling it private
+    // would be the same silent mistake in a different disguise.
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() != 4 {
         return false;
     }
-    match octets[..] {
+    let mut octets = [0u8; 4];
+    for (i, part) in parts.iter().enumerate() {
+        if part.len() > 1 && part.starts_with('0') {
+            return false;
+        }
+        match part.parse::<u8>() {
+            Ok(v) => octets[i] = v,
+            Err(_) => return false,
+        }
+    }
+    match octets {
         [127, ..] => true,
         [10, ..] => true,
         [192, 168, ..] => true,
@@ -157,5 +191,63 @@ mod tests {
         ] {
             assert!(token_travels_in_the_clear(loud), "should warn: {loud}");
         }
+    }
+
+    /// The disguises the URL parser sees through and an unwary check does not.
+    /// Every one of these resolves to a public host (8.8.8.8, evil.com), so the
+    /// warning MUST fire; the danger is entirely in it staying silent. Proven
+    /// against the real parser with a throwaway probe: `reqwest::Url` turns
+    /// each of the left-hand forms into the public host on the right.
+    #[test]
+    fn an_address_that_only_looks_private_still_warns() {
+        for disguised in [
+            // Integer-encoded IPv4: 134744072 == 8.8.8.8.
+            "http://134744072:8484",
+            // Hex IPv4: 0x08080808 == 8.8.8.8.
+            "http://0x08080808:8484",
+            // Percent-escaped dot: evil%2ecom == evil.com.
+            "http://evil%2ecom:8484",
+            // Leading zero read as octal: 010.0.0.1 == 8.0.0.1, not 10.0.0.1.
+            "http://010.0.0.1:8484",
+        ] {
+            assert!(
+                token_travels_in_the_clear(disguised),
+                "a disguised public host must still warn: {disguised}"
+            );
+        }
+    }
+
+    /// The mirror case, measured against the real parser rather than assumed.
+    /// A backslash in a special-scheme URL terminates the authority, so
+    /// `http://ms-01\@evil.com` actually reaches `ms-01` (private) and not
+    /// `evil.com` — verified: `reqwest::Url::parse` returns host `ms-01`. The
+    /// warning must therefore stay quiet, and `host_of` has to read the host
+    /// the same way the parser does, or it would false-alarm on a private one.
+    #[test]
+    fn a_backslash_terminates_the_authority_like_the_parser() {
+        assert_eq!(host_of(r"http://ms-01\@evil.com:8484"), "ms-01");
+        assert!(!token_travels_in_the_clear(r"http://ms-01\@evil.com:8484"));
+    }
+
+    /// The recommended path must not nag. Tailscale can address a node by its
+    /// IPv6 (fd7a:…, inside the unique-local fc00::/7 block) as readily as its
+    /// 100.64/10 IPv4, and a warning that fires on the setup its own text
+    /// recommends is a warning people learn to click past.
+    #[test]
+    fn private_ipv6_including_tailscale_stays_quiet() {
+        for quiet in [
+            "http://[fd7a:115c:a1e0::1]:8484", // Tailscale ULA
+            "http://[fd00::1]:8484",           // unique-local
+            "http://[fe80::1]:8484",           // link-local
+        ] {
+            assert!(
+                !token_travels_in_the_clear(quiet),
+                "a private IPv6 address should not warn: {quiet}"
+            );
+        }
+        // A public IPv6 still does.
+        assert!(token_travels_in_the_clear(
+            "http://[2606:4700:4700::1111]:8484"
+        ));
     }
 }

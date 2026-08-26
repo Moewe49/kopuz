@@ -130,16 +130,69 @@ pub fn decide(
     vectors_version: u8,
     relay_configured: bool,
 ) -> MixAction {
-    if vectors_version == 0 && relay_configured {
-        return MixAction::Fetch {
-            have: current.relay_version,
+    // A device with no vectors cannot author. It reads.
+    if vectors_version == 0 {
+        if relay_configured {
+            return MixAction::Fetch {
+                have: current.relay_version,
+            };
+        }
+        // Reached only on the second call, once the relay has turned out to
+        // be silent or out of reach. A measured set is the desktop's work,
+        // delivered on some earlier launch; keep it rather than grinding it
+        // back down to radio guesses the moment the relay blinks -- which, on
+        // mobile data, is most launches. Without this a phone throws the
+        // desktop's mixes away every time it cannot reach home, because a
+        // measured set's feature version can never match a phone's absent
+        // one, so `is_stale` calls it stale. That is the same trap `Fetch`
+        // guards against on the first call, and it has to be shut here too.
+        if current.feature_version != 0 && !current.mixes.is_empty() {
+            return MixAction::Keep;
+        }
+        // A radio set of this device's own making, or nothing at all: refresh
+        // it on the usual schedule, exactly as it worked before a relay
+        // existed. `is_stale` with version 0 reduces to an age check here,
+        // because a radio set already carries feature version 0.
+        return if current.is_stale(now_secs, 0) {
+            MixAction::Build
+        } else {
+            MixAction::Keep
         };
     }
+    // A device with vectors authors: rebuild when stale, keep otherwise.
     if current.is_stale(now_secs, vectors_version) {
         MixAction::Build
     } else {
         MixAction::Keep
     }
+}
+
+/// Whether this device should push what it is holding to the relay now.
+///
+/// Publishing is deliberately not tied to rebuilding. Turning the relay on
+/// after the mixes were already built is the first thing this listener will do
+/// — the desktop has a measured set on disk from before the feature existed —
+/// and if a push only happened as part of a rebuild, the phone would sit empty
+/// until the next daily one, up to a day of "I set it up and nothing changed".
+///
+/// The conditions:
+/// - `vectors_version != 0`: only an authoring device publishes. A phone
+///   pushing its radio guesses would let a device that has never analysed
+///   anything overwrite the desktop's measurements.
+/// - the set is measured (`feature_version != 0`) and non-empty: radio guesses
+///   and empty sets are never worth another device's bandwidth.
+/// - `relay_version == 0`: it has not been published yet. After a successful
+///   push the caller records the returned version here, which is what stops the
+///   same unchanged set being published again on every launch — each republish
+///   would bump the version the phone watches and cost it a re-fetch. A rebuild
+///   writes `relay_version` back to 0, so the next genuine change publishes
+///   exactly once.
+pub fn should_publish(current: &MixSet, vectors_version: u8, relay_configured: bool) -> bool {
+    relay_configured
+        && vectors_version != 0
+        && current.feature_version != 0
+        && current.relay_version == 0
+        && !current.mixes.is_empty()
 }
 
 /// How often to rebuild. A day: long enough that the shelf is a fixture the
@@ -950,13 +1003,99 @@ mod tests {
 
     /// When the relay has nothing, or cannot be reached from wherever the
     /// phone currently is, the caller asks again with the relay ruled out. A
-    /// worse shelf beats an empty one.
+    /// worse shelf beats an empty one -- but only when the shelf is empty.
     #[test]
     fn a_silent_relay_falls_back_to_building_something() {
         assert_eq!(
             decide(&MixSet::default(), 1_100, 0, false),
             MixAction::Build,
             "nothing held and nowhere to ask: build"
+        );
+    }
+
+    /// The bug the first audit of this feature missed, because every silent-
+    /// relay test used an empty set.
+    ///
+    /// A phone holding the desktop's measured mixes, on a launch where the
+    /// relay cannot be reached: it must KEEP them, not rebuild radio ones over
+    /// the top. On mobile data the relay is unreachable more often than not,
+    /// and the earlier code rebuilt every one of those times -- because a
+    /// measured set's feature version (2) can never match a phone's absent one
+    /// (0), so `is_stale` fires, so the fallback said Build. The desktop's work
+    /// would have been ground down to radio guesses on most launches, and the
+    /// on-disk copy clobbered with them.
+    #[test]
+    fn a_silent_relay_keeps_the_desktops_measured_set() {
+        let delivered = a_set(2, 5, 1_000);
+        // Old enough that an age check alone would rebuild; the point is that
+        // age must not enter into it for a set this device did not author.
+        let much_later = 1_000 + 30 * DAY;
+        assert!(
+            delivered.is_stale(much_later, 0),
+            "precondition: is_stale fires for a measured set on a phone"
+        );
+        assert_eq!(
+            decide(&delivered, much_later, 0, false),
+            MixAction::Keep,
+            "a device that cannot author must not rebuild over what it was given"
+        );
+    }
+
+    /// The desktop must push its already-built mixes the moment the relay is
+    /// turned on, not wait for the next daily rebuild.
+    #[test]
+    fn an_authoring_device_publishes_a_measured_set_it_has_not_published() {
+        // Measured, on disk, never published (relay_version 0).
+        let built_here = a_set(2, 0, 1_000);
+        assert!(
+            should_publish(&built_here, 2, true),
+            "a measured, unpublished set on an authoring device must publish"
+        );
+        // Once published (version recorded), it must not publish again — else
+        // every launch bumps the version and costs the phone a re-fetch.
+        let published = a_set(2, 9, 1_000);
+        assert!(
+            !should_publish(&published, 2, true),
+            "an already-published set must not be published again unchanged"
+        );
+    }
+
+    /// The things that must never be pushed to the relay.
+    #[test]
+    fn a_device_publishes_only_its_own_measured_work() {
+        // A phone (no vectors) never publishes, whatever it holds.
+        assert!(!should_publish(&a_set(2, 0, 1_000), 0, true));
+        // A radio set (feature_version 0) is a guess, not measured work.
+        assert!(!should_publish(&a_set(0, 0, 1_000), 2, true));
+        // Nothing configured, nothing to publish to.
+        assert!(!should_publish(&a_set(2, 0, 1_000), 2, false));
+        // An empty set is not worth another device's bandwidth.
+        let empty_measured = MixSet {
+            mixes: Vec::new(),
+            generated: 1_000,
+            feature_version: 2,
+            relay_version: 0,
+        };
+        assert!(!should_publish(&empty_measured, 2, true));
+    }
+
+    /// The other half: a phone's OWN radio set, with no relay, still refreshes
+    /// on the daily schedule exactly as it did before the relay existed. The
+    /// Keep-the-measured-set rule must not freeze radio shelves in place.
+    #[test]
+    fn a_phones_own_radio_set_still_refreshes_without_a_relay() {
+        // feature_version 0 == built here from radios.
+        let fresh_radio = a_set(0, 0, 1_000);
+        assert_eq!(
+            decide(&fresh_radio, 1_100, 0, false),
+            MixAction::Keep,
+            "a fresh radio set is left alone"
+        );
+        let stale_radio = a_set(0, 0, 1_000);
+        assert_eq!(
+            decide(&stale_radio, 1_000 + 2 * DAY, 0, false),
+            MixAction::Build,
+            "a day-old radio set rebuilds, as it always did"
         );
     }
 

@@ -89,13 +89,26 @@ fn mixes_path() -> std::path::PathBuf {
 /// Config rather than cache: mixes are cheap to read and expensive to rebuild
 /// -- eight paced network requests, or an evening of analysis -- so losing
 /// them to a cache clear would be a visible regression on the next launch.
+///
+/// Written through a temporary file and renamed, the same way the relay
+/// persists its own state. A plain `write` truncates the file before it starts
+/// filling it, so a crash or a full disk mid-write leaves neither the old mixes
+/// nor the new ones -- and on the desktop this file is the only copy of an
+/// evening's analysis. The rename is atomic on every platform this ships to;
+/// the worst a crash can now do is leave a stray `.tmp` beside the real file.
 fn write_mixes(text: &str) {
     let path = mixes_path();
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    if let Err(e) = std::fs::write(&path, text) {
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, text) {
         tracing::warn!("could not record the mixes: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        tracing::warn!("could not replace the mixes file: {e}");
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 
@@ -211,8 +224,13 @@ pub fn JellyfinHome(
                 })
                 .unwrap_or(0);
         let conf = config.peek();
+        // Normalised here, at the point of use, not only behind the settings
+        // screen's Test button. Someone who types the address the placeholder
+        // shows -- `ms-01:8484`, no scheme -- and never presses Test would
+        // otherwise have every relay call fail to parse and fall silently to
+        // the radio path, which reads as "the feature does nothing".
         let relay = relay::RelayConfig {
-            url: conf.relay_url.clone(),
+            url: relay::normalise_url(&conf.relay_url),
             token: conf.relay_token.clone(),
         };
         // Anchors are the most-played YouTube tracks. `listen_counts` keys look
@@ -298,64 +316,74 @@ pub fn JellyfinHome(
                 }
                 // Nothing published yet, or the relay is out of reach -- on a
                 // phone that has just left the flat, the second is by far the
-                // more common. Decide again with it ruled out: a shelf built
-                // from radios is worse than the desktop's, and better than
-                // none at all.
+                // more common. Decide again with it ruled out. If this device
+                // already holds the desktop's measured mixes, `decide` now says
+                // Keep rather than Build, so a momentary loss of the relay no
+                // longer grinds them down to radio guesses; only a device with
+                // nothing to show falls through to building.
                 action = server::mixes::decide(&mixes.peek(), now, vectors_version, false);
             }
 
-            if action != server::mixes::MixAction::Build {
-                return;
-            }
-            // Not a YouTube account, or too little history to seed a radio.
-            if anchors.is_empty() {
-                return;
-            }
-            // Analysed audio when there is any: it groups tracks by what they
-            // actually sound like rather than by how much two YouTube radios
-            // happen to overlap, and it costs no requests at all because the
-            // tracks and their grouping are both already known. The radio path
-            // stays as the fallback, so the shelf works on day one -- before
-            // anything has been analysed, and for anyone who never opts in.
-            let vectors = mixes_dir().join("style_vectors.bin");
-            let labels_path = mixes_dir().join("style_meta.json");
-            let from_audio = reader::vectors::VectorStore::load(&vectors, 400)
-                .ok()
-                .filter(|store| !store.is_empty())
-                .map(|store| {
-                    let labels = server::mixes::load_labels(&labels_path);
-                    server::mixes::from_vectors(&store, &labels, now, 42)
-                })
-                .filter(|set| !set.mixes.is_empty());
+            // Build, when that is the decision and there is history to seed a
+            // radio. Analysed audio when there is any: it groups tracks by what
+            // they actually sound like rather than by how much two YouTube
+            // radios happen to overlap, and it costs no requests at all because
+            // the tracks and their grouping are both already known. The radio
+            // path stays as the fallback, so the shelf works on day one --
+            // before anything has been analysed, and for anyone who never opts
+            // in.
+            if action == server::mixes::MixAction::Build && !anchors.is_empty() {
+                let vectors = mixes_dir().join("style_vectors.bin");
+                let labels_path = mixes_dir().join("style_meta.json");
+                let from_audio = reader::vectors::VectorStore::load(&vectors, 400)
+                    .ok()
+                    .filter(|store| !store.is_empty())
+                    .map(|store| {
+                        let labels = server::mixes::load_labels(&labels_path);
+                        server::mixes::from_vectors(&store, &labels, now, 42)
+                    })
+                    .filter(|set| !set.mixes.is_empty());
 
-            let built = match from_audio {
-                Some(set) => set,
-                None => server::mixes::generate(&anchors, &cookies, now).await,
-            };
-            // Written even when empty. An unrecorded attempt is an attempt
-            // that repeats on every single visit to this screen.
-            let encoded = serde_json::to_string(&built).ok();
-            if let Some(text) = encoded.as_deref() {
-                write_mixes(text);
+                let built = match from_audio {
+                    Some(set) => set,
+                    None => server::mixes::generate(&anchors, &cookies, now).await,
+                };
+                // Written even when empty. An unrecorded attempt is an attempt
+                // that repeats on every single visit to this screen.
+                if let Ok(text) = serde_json::to_string(&built) {
+                    write_mixes(&text);
+                }
+                mixes.set(built);
             }
-            // Measured rather than guessed: `feature_version` is non-zero only
-            // for a set that came out of the vectors.
-            let is_measured = built.feature_version != 0 && !built.mixes.is_empty();
-            mixes.set(built);
 
-            // Publish real work only. A radio-built set is this device
-            // guessing from how much two playlists overlap; putting that on
-            // the relay would let a laptop that has never analysed anything
-            // overwrite what the desktop actually measured.
-            if is_measured
-                && relay.is_configured()
-                && let Some(text) = encoded
+            // Publish, decoupled from building. Whatever this device now holds
+            // -- freshly built, or the measured set it already had when the
+            // relay was first turned on -- an authoring device pushes it if it
+            // is real work the relay has not seen. `should_publish` is the guard
+            // that keeps radio guesses, empty sets, and phones out of it, and
+            // that stops an unchanged set being published twice. The returned
+            // version is written back so the next launch knows this set is
+            // already up there and does not re-publish it, which would cost the
+            // phone a re-fetch it does not need.
+            if server::mixes::should_publish(&mixes.peek(), vectors_version, relay.is_configured())
             {
-                match relay::client::put(&relay, relay::KEY_MIXES, text.as_bytes()).await {
-                    Ok(stored) => {
-                        tracing::info!("mixes published to the relay as version {}", stored.version)
+                let held = mixes.peek().clone();
+                if let Ok(text) = serde_json::to_string(&held) {
+                    match relay::client::put(&relay, relay::KEY_MIXES, text.as_bytes()).await {
+                        Ok(stored) => {
+                            let mut confirmed = held;
+                            confirmed.relay_version = stored.version;
+                            if let Ok(recorded) = serde_json::to_string(&confirmed) {
+                                write_mixes(&recorded);
+                            }
+                            mixes.set(confirmed);
+                            tracing::info!(
+                                "mixes published to the relay as version {}",
+                                stored.version
+                            );
+                        }
+                        Err(e) => tracing::warn!("relay: {e}"),
                     }
-                    Err(e) => tracing::warn!("relay: {e}"),
                 }
             }
         });

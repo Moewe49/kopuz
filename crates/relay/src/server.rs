@@ -98,13 +98,19 @@ async fn write(
             bytes: body.to_vec(),
         };
         values.insert(key.clone(), stored.clone());
-        persist(&relay.data_path, &values);
-        stored
+        let saved = persist(&relay.data_path, &values);
+        (stored, saved)
     };
+    let (stored, saved) = stored;
     eprintln!(
-        "[relay] {key} <- {} bytes, now version {}",
+        "[relay] {key} <- {} bytes, now version {}{}",
         stored.bytes.len(),
-        stored.version
+        stored.version,
+        if saved {
+            ""
+        } else {
+            " (NOT PERSISTED — see warning above)"
+        }
     );
     Json(stored).into_response()
 }
@@ -112,14 +118,31 @@ async fn write(
 /// Written through a temporary file and renamed, so a crash mid-write leaves
 /// the previous state rather than a truncated file that fails to parse on the
 /// next start.
-fn persist(path: &std::path::Path, values: &HashMap<String, Stored>) {
+///
+/// Returns whether it stuck. A silent failure here is the nastiest kind: the
+/// value is already in memory and served happily, the write answers 200, and
+/// only a restart reveals that nothing was ever saved -- by which point the
+/// data is gone and there is no line anywhere saying why. So the caller logs
+/// what this returns.
+#[must_use]
+fn persist(path: &std::path::Path, values: &HashMap<String, Stored>) -> bool {
     let Ok(json) = serde_json::to_vec(values) else {
-        return;
+        return false;
     };
     let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, &json).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if let Err(e) = std::fs::write(&tmp, &json) {
+        eprintln!(
+            "[relay] WARNING: could not write state to {}: {e}",
+            tmp.display()
+        );
+        return false;
     }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        eprintln!("[relay] WARNING: could not replace {}: {e}", path.display());
+        let _ = std::fs::remove_file(&tmp);
+        return false;
+    }
+    true
 }
 
 fn load(path: &std::path::Path) -> HashMap<String, Stored> {
