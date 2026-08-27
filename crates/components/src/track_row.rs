@@ -12,9 +12,42 @@ use hooks::PlayerController;
 use reader::models::Track;
 
 pub(crate) fn copy_to_clipboard(text: &str) {
+    // `navigator.clipboard` is only defined in a secure context, and the desktop
+    // webview does not serve the app from one — so on desktop the modern API is
+    // simply absent and the button did nothing at all. The old textarea +
+    // `execCommand('copy')` route has no such requirement and works in the
+    // webview, so it is the fallback whenever the modern API is missing or its
+    // promise rejects. Between the two, the button copies everywhere the app
+    // runs.
     let value = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string());
     let js = format!(
-        "navigator.clipboard.writeText({value}).catch((e) => console.error('clipboard writeText failed', e));"
+        r#"(function(){{
+            const t = {value};
+            function legacy(){{
+                try {{
+                    const ta = document.createElement('textarea');
+                    ta.value = t;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '0';
+                    ta.style.left = '0';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                    ta.setSelectionRange(0, t.length);
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }} catch (e) {{ console.error('clipboard fallback failed', e); }}
+            }}
+            try {{
+                if (navigator.clipboard && navigator.clipboard.writeText) {{
+                    navigator.clipboard.writeText(t).catch(legacy);
+                }} else {{
+                    legacy();
+                }}
+            }} catch (e) {{ legacy(); }}
+        }})();"#
     );
     let _ = dioxus::document::eval(&js);
 }

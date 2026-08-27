@@ -121,6 +121,13 @@ pub fn JamButton() -> Element {
         })
         .unwrap_or(false);
 
+    // The invite as plain, selectable text. The copy button is a convenience;
+    // this is the guarantee. A webview where the clipboard API is unavailable
+    // used to leave the host with no way at all to get the code out — so it is
+    // shown, and can always be selected by hand and copied.
+    let invite_text =
+        use_memo(move || jam.and_then(|j| j.access.read().as_ref().map(relay::jam::encode_join)));
+
     // Open a live jam from what is playing, and copy the invite to hand over.
     let mut start_live = move |_| {
         let (Some(jam), Some(ctrl), Some(config)) = (jam, ctrl, config) else {
@@ -229,6 +236,21 @@ pub fn JamButton() -> Element {
                             if let Some(jam) = jam {
                                 if !jam.status.read().is_empty() {
                                     p { class: "text-violet-200/70 text-[11px]", "{jam.status}" }
+                                }
+                            }
+                            // The invite, shown so it can always be selected and
+                            // copied by hand — the copy button is only the quick
+                            // path. Read-only, and clicking it selects the lot.
+                            if jam.map(|j| *j.is_host.peek()).unwrap_or(false) {
+                                if let Some(code) = invite_text() {
+                                    textarea {
+                                        class: "w-full h-14 bg-black/30 border border-violet-400/20 rounded-lg px-2 py-1.5 text-violet-100/80 text-[10px] font-mono resize-none focus:outline-none focus:border-violet-400 break-all select-all",
+                                        readonly: true,
+                                        value: "{code}",
+                                        // Keystrokes here (Ctrl+A, Ctrl+C) are for
+                                        // selecting and copying, not playback.
+                                        onkeydown: move |e| e.stop_propagation(),
+                                    }
                                 }
                             }
                             div { class: "flex gap-2",
