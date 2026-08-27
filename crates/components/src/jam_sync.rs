@@ -30,10 +30,13 @@ use relay::jam::JamAccess;
 
 use crate::toast::show_toast;
 
-/// How often the loop reads the jam and reports its own changes. Fast enough
-/// that a pause on one side reaches the other within a breath, slow enough not
-/// to hammer a relay on the far end of a home connection.
-const TICK_MS: u64 = 1_500;
+/// How often the loop reads the jam and reports its own changes. 1.5 seconds
+/// was too coarse for "at the same time" — a pause could take that long to
+/// land. At 600 ms a pause or a skip reaches the other side within about half a
+/// second, and the read is almost always the tiny "Unchanged" answer, so it
+/// stays cheap even across a home connection. The loop idles at this cadence
+/// too, but an idle tick only peeks a signal and sleeps again.
+const TICK_MS: u64 = 600;
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -169,14 +172,31 @@ async fn tick(mut state: JamState, ctrl: PlayerController, access: &JamAccess) {
 }
 
 /// Read the player as the brain needs to see it.
+///
+/// The queue published is the *play order* — the shuffle applied — not the raw
+/// queue. That is the whole shuffle fix: if one side publishes the sequence it
+/// is actually playing, the other simply adopts it in that order. Publishing
+/// the raw queue plus a shuffle index instead meant the index pointed into a
+/// different order on each side, and the follower landed on the wrong track (or
+/// back at the first). `current_queue_index` already counts in play order, so it
+/// indexes straight into this list.
 fn local_view(ctrl: PlayerController) -> LocalView {
-    let queue = ctrl.queue.peek();
-    let index = (*ctrl.current_queue_index.peek()).min(queue.len().saturating_sub(1));
+    // The play order, computed from the public signals so it is the same on
+    // desktop and Android: the shuffle permutation applied when shuffle is on,
+    // the raw queue otherwise.
+    let order: Vec<Track> = if *ctrl.shuffle.peek() {
+        let so = ctrl.shuffle_order.peek();
+        let q = ctrl.queue.peek();
+        so.iter().filter_map(|&i| q.get(i).cloned()).collect()
+    } else {
+        ctrl.queue.peek().clone()
+    };
+    let index = (*ctrl.current_queue_index.peek()).min(order.len().saturating_sub(1));
     LocalView {
         playing: *ctrl.is_playing.peek(),
         index,
         position_ms: (*ctrl.current_song_progress.peek()).saturating_mul(1000),
-        queue: queue
+        queue: order
             .iter()
             .map(|t| {
                 share::shared_track(&t.path.to_string_lossy(), &t.title, &t.artist, t.duration)
@@ -199,6 +219,13 @@ fn apply_action(mut ctrl: PlayerController, action: Action) {
             if playable.is_empty() {
                 return;
             }
+            // The incoming list is already the play order, so this device holds
+            // it flat: shuffle OFF. That keeps every index the two sides exchange
+            // meaning the same slot — with shuffle on, `play_track(index)` reads
+            // the index against the raw queue instead and lands on a different
+            // song. Shuffling in a jam is therefore a reorder of this shared
+            // list, published by whoever did it, not a per-device mode.
+            ctrl.shuffle.set(false);
             ctrl.play_queue_at(playable, mapped, position_ms / 1000);
             if !playing {
                 ctrl.pause();
