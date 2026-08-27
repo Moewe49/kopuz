@@ -509,6 +509,12 @@ pub fn Fullscreen(
                         {tab_btn(1, "fa-solid fa-list", "Queue tab")}
                         {tab_btn(2, "fa-solid fa-align-left", "Lyrics tab")}
                     }
+                    // The jam control lives up here on mobile, beside the tabs.
+                    // Without this the whole live-jam feature is unreachable on
+                    // a phone — the desktop layout has it beside its text tabs,
+                    // but this Android layout is a separate tree that never got
+                    // it. Found by trying to start a jam on the actual phone.
+                    crate::jam::JamButton {}
                 }
 
                 if tab == 0 {
