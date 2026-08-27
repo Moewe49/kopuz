@@ -117,10 +117,7 @@ fn record_play(config: &mut AppConfig, track_id: &str, track: &reader::models::T
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let entry = config
-        .play_history
-        .entry(track_id.to_string())
-        .or_default();
+    let entry = config.play_history.entry(track_id.to_string()).or_default();
     // Refresh the metadata every time: a track first heard from search may get
     // better tags later, and the newest reading is the one worth keeping.
     entry.title = track.title.clone();
@@ -306,6 +303,18 @@ pub fn use_player_task(ctrl: PlayerController) {
             let mut last_progress_secs: u64 = u64::MAX;
             let mut prev_playing = false;
             let mut crossfade_triggered_for_gen: Option<usize> = None;
+            // How many tracks in a row have "finished" almost the instant they
+            // started — the signature of a stream that resolved but then 403'd on
+            // the actual bytes, which YouTube does in waves. Each one auto-skips
+            // to the next, so without a cap a bad wave burns through the whole
+            // queue in seconds and hammers YouTube into rate-limiting, making it
+            // worse. After a few, stop and say so instead.
+            let mut consecutive_dead_tracks: u32 = 0;
+            // Which generation the cap halted on. A dead track keeps reporting
+            // "complete" every tick, so without this latch the auto-skip would
+            // fire again the instant after it stopped. Cleared the moment the
+            // listener plays something new (a fresh generation).
+            let mut halted_on_gen: Option<usize> = None;
             let mut last_recent_path: Option<String> = None;
             #[cfg(not(target_arch = "wasm32"))]
             let bg_notify = BG_NOTIFY.get_or_init(tokio::sync::Notify::new);
@@ -798,28 +807,65 @@ pub fn use_player_task(ctrl: PlayerController) {
                                 || (duration > 0 && pos.as_secs() >= duration.saturating_add(5))
                         };
 
-                        if should_skip && !*ctrl.is_loading.read() && !*ctrl.skip_in_progress.read()
+                        // Already halted the cascade on this track: leave it
+                        // stopped until the listener plays something new.
+                        if should_skip && halted_on_gen == Some(current_gen) {
+                            // do nothing
+                        } else if should_skip
+                            && !*ctrl.is_loading.read()
+                            && !*ctrl.skip_in_progress.read()
                         {
                             ctrl.skip_in_progress.set(true);
-                            if !is_radio && duration > 0 && last_progress_secs != duration {
-                                last_progress_secs = duration;
-                                ctrl.current_song_progress.set(duration);
+
+                            // A track that "completed" in the first few seconds of
+                            // a song that is really minutes long did not finish —
+                            // its stream died. Count those; a real finish resets.
+                            const MAX_DEAD_TRACKS: u32 = 3;
+                            let played = pos.as_secs();
+                            let died_early = duration > 5 && played < 3;
+                            if died_early {
+                                consecutive_dead_tracks += 1;
+                            } else {
+                                consecutive_dead_tracks = 0;
                             }
-                            {
-                                let mut config_write = config.write();
-                                let _q = ctrl.queue.peek();
-                                let idx = *ctrl.current_queue_index.peek();
-                                if let Some(track) = ctrl.get_track_at(idx) {
-                                    let track_id = track.path.to_string_lossy().to_string();
-                                    *config_write
-                                        .listen_counts
-                                        .entry(track_id.clone())
-                                        .or_insert(0) += 1;
-                                    record_play(&mut config_write, &track_id, &track);
+
+                            if died_early && consecutive_dead_tracks >= MAX_DEAD_TRACKS {
+                                // Stop, rather than skip through the whole queue.
+                                halted_on_gen = Some(current_gen);
+                                consecutive_dead_tracks = 0;
+                                ctrl.pause();
+                                ctrl.playback_error.set(Some(
+                                    "Playback keeps failing — YouTube is refusing these streams right now. \
+                                     Stopped so it does not skip through your whole queue. \
+                                     Give it a minute, or re-sign in under Settings → YouTube Music."
+                                        .to_string(),
+                                ));
+                                ctrl.skip_in_progress.set(false);
+                                nudge_event_loop();
+                            } else {
+                                // A real finish is worth recording; a dead track is
+                                // not a play and must not inflate the counts that
+                                // drive recommendations.
+                                if !died_early {
+                                    if !is_radio && duration > 0 && last_progress_secs != duration {
+                                        last_progress_secs = duration;
+                                        ctrl.current_song_progress.set(duration);
+                                    }
+                                    let mut config_write = config.write();
+                                    let _q = ctrl.queue.peek();
+                                    let idx = *ctrl.current_queue_index.peek();
+                                    if let Some(track) = ctrl.get_track_at(idx) {
+                                        let track_id = track.path.to_string_lossy().to_string();
+                                        *config_write
+                                            .listen_counts
+                                            .entry(track_id.clone())
+                                            .or_insert(0) += 1;
+                                        record_play(&mut config_write, &track_id, &track);
+                                    }
                                 }
+                                ctrl.play_next();
+                                nudge_event_loop();
                             }
-                            ctrl.play_next();
-                            nudge_event_loop();
                         }
                     }
                 } else {
