@@ -61,6 +61,11 @@ pub struct JamState {
     applied_rev: Signal<u64>,
     /// The relay's compare-and-swap version this device holds.
     relay_version: Signal<u64>,
+    /// This device's own clock (unix seconds) at the moment it last adopted or
+    /// published the shared state. The seek-detection measures elapsed time
+    /// against THIS, never against the other machine's timestamps — which is
+    /// what stops two slightly-different clocks from yanking the playhead.
+    baseline_secs: Signal<u64>,
     /// Set for the one tick after applying a remote change, so the player is
     /// left to settle before its state is read as a local edit.
     settling: Signal<bool>,
@@ -82,6 +87,7 @@ pub fn use_jam_sync(ctrl: PlayerController) -> JamState {
         shared: Signal::new(JamDoc::default()),
         applied_rev: Signal::new(0),
         relay_version: Signal::new(0),
+        baseline_secs: Signal::new(0),
         settling: Signal::new(false),
     });
 
@@ -111,13 +117,16 @@ async fn tick(mut state: JamState, ctrl: PlayerController, access: &JamAccess) {
             state.relay_version.set(stored.version);
             if let Some(doc) = jamlive::decode(&stored.bytes) {
                 let applied = *state.applied_rev.peek();
-                let action = jamlive::reconcile(&local_view(ctrl), &doc, applied, now_secs());
+                let action = jamlive::reconcile(&local_view(ctrl), &doc, applied);
                 if !matches!(action, Action::Nothing) {
                     apply_action(ctrl, action);
                     state.settling.set(true);
                 }
                 state.shared.set(doc.clone());
                 state.applied_rev.set(doc.rev);
+                // The shared state is now this doc; time it against our own
+                // clock from here, so seek-detection is skew-free.
+                state.baseline_secs.set(now_secs());
             }
         }
         Ok(relay::Fetched::Missing) | Err(relay::RelayError::JamGone) => {
@@ -135,7 +144,10 @@ async fn tick(mut state: JamState, ctrl: PlayerController, access: &JamAccess) {
     }
 
     let shared = state.shared.peek().clone();
-    if let Some(op) = jamlive::local_change(&shared, &local_view(ctrl), now_secs()) {
+    let elapsed_ms = now_secs()
+        .saturating_sub(*state.baseline_secs.peek())
+        .saturating_mul(1000);
+    if let Some(op) = jamlive::local_change(&shared, &local_view(ctrl), elapsed_ms) {
         let next = jamlive::apply(&shared, op, now_secs());
         let based_on = *state.relay_version.peek();
         match relay::client::jam_write(access, &jamlive::encode(&next), based_on).await {
@@ -143,6 +155,9 @@ async fn tick(mut state: JamState, ctrl: PlayerController, access: &JamAccess) {
                 state.relay_version.set(version);
                 state.shared.set(next.clone());
                 state.applied_rev.set(next.rev);
+                // We just re-based the shared state on our own action; start the
+                // local clock for it now.
+                state.baseline_secs.set(now_secs());
             }
             // Someone wrote first: do nothing now. Next tick reads their version,
             // reconciles it, and re-derives this change on top if it still holds.
@@ -286,6 +301,7 @@ pub async fn start_jam(mut state: JamState, ctrl: PlayerController, config: rela
             state.relay_version.set(version);
             state.shared.set(doc.clone());
             state.applied_rev.set(doc.rev);
+            state.baseline_secs.set(now_secs());
             state.is_host.set(true);
             state.access.set(Some(access));
             state
@@ -320,6 +336,7 @@ pub async fn join_jam(mut state: JamState, ctrl: PlayerController, code: String)
                 state.shared.set(doc.clone());
                 // Mark applied, so the loop does not immediately re-apply it.
                 state.applied_rev.set(doc.rev);
+                state.baseline_secs.set(now_secs());
                 state.settling.set(true);
                 state.is_host.set(false);
                 state.access.set(Some(access));
@@ -338,6 +355,7 @@ pub async fn join_jam(mut state: JamState, ctrl: PlayerController, code: String)
             state.relay_version.set(0);
             state.shared.set(JamDoc::default());
             state.applied_rev.set(0);
+            state.baseline_secs.set(now_secs());
             state.is_host.set(false);
             state.access.set(Some(access));
             state

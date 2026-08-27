@@ -220,10 +220,17 @@ pub const DRIFT_TOLERANCE_MS: u64 = 2_500;
 ///
 /// `prev_rev` is the document revision this device has already applied. When
 /// `incoming.rev` is not newer, there is nothing to do — this is the common
-/// case on a poll and must be cheap. Otherwise it returns the *narrowest*
-/// action that fits, so following a pause does not rebuild the queue and
-/// following a reorder does not reset the playhead.
-pub fn reconcile(local: &LocalView, incoming: &JamDoc, prev_rev: u64, now: u64) -> Action {
+/// case on a poll and must be cheap.
+///
+/// The position is followed **exactly as the document states it**, with no
+/// rolling-forward by elapsed time. This is the fix for the two playheads
+/// fighting: a new revision means the other side *just* published an event —
+/// at most a poll old — so its position is current, and the old code that
+/// extrapolated it by `now − event_at` was subtracting one machine's clock
+/// from another's. When the two clocks differed by forty seconds, so did the
+/// playhead, every single poll. The document's number is a fixed point both
+/// sides seek to; neither machine's clock enters into it.
+pub fn reconcile(local: &LocalView, incoming: &JamDoc, prev_rev: u64) -> Action {
     if incoming.rev <= prev_rev {
         return Action::Nothing;
     }
@@ -233,23 +240,21 @@ pub fn reconcile(local: &LocalView, incoming: &JamDoc, prev_rev: u64, now: u64) 
         .filter_map(|t| t.path.as_deref())
         .collect();
     if incoming_ids != local.ids() {
-        let (index, position_ms) = catch_up(incoming, now);
         return Action::ReplaceQueue {
             tracks: incoming.queue.clone(),
-            index,
-            position_ms,
+            index: incoming.index,
+            position_ms: incoming.position_ms,
             playing: incoming.playing,
         };
     }
 
-    let (target_index, target_pos) = catch_up(incoming, now);
-    let index_moved = target_index != local.index;
-    let seeked = local.position_ms.abs_diff(target_pos) > DRIFT_TOLERANCE_MS;
+    let index_moved = incoming.index != local.index;
+    let seeked = local.position_ms.abs_diff(incoming.position_ms) > DRIFT_TOLERANCE_MS;
     let play_changed = incoming.playing != local.playing;
     if index_moved || seeked || play_changed {
         Action::Follow {
-            index: target_index,
-            position_ms: target_pos,
+            index: incoming.index,
+            position_ms: incoming.position_ms,
             playing: incoming.playing,
         }
     } else {
@@ -267,11 +272,19 @@ pub fn reconcile(local: &LocalView, incoming: &JamDoc, prev_rev: u64, now: u64) 
 /// either a jam that does not follow or one that publishes on every tick. The
 /// adapter that owns the player just calls this and, on `Some`, does the write.
 ///
-/// `shared` is the document both sides last agreed on. Normal playback advances
-/// the position by about a poll interval each time; that is expected and must
-/// not publish. A seek is a jump away from where continued play would have put
-/// the head, and that does.
-pub fn local_change(shared: &JamDoc, local: &LocalView, now: u64) -> Option<JamOp> {
+/// `shared` is the document both sides last agreed on, and `elapsed_ms` is how
+/// long — **by this device's own clock** — since it adopted that document.
+/// Normal playback advances the position by roughly that elapsed time; that is
+/// expected and must not publish. A seek is a jump away from it, and that does.
+///
+/// `elapsed_ms` is the whole point of the redesign. The old version measured
+/// "how far should the head have moved" as `now − shared.event_at`, mixing this
+/// machine's `now` with the *other* machine's `event_at` — so a clock that ran
+/// forty seconds ahead reported the head forty seconds out of place every poll,
+/// published a phantom seek, and the two players yanked each other around. Here
+/// the elapsed time is measured against a local timestamp taken when `shared`
+/// was adopted; no other machine's clock is ever subtracted.
+pub fn local_change(shared: &JamDoc, local: &LocalView, elapsed_ms: u64) -> Option<JamOp> {
     let shared_ids: Vec<&str> = shared
         .queue
         .iter()
@@ -296,11 +309,10 @@ pub fn local_change(shared: &JamDoc, local: &LocalView, now: u64) -> Option<JamO
             playing: local.playing,
         });
     }
-    // A seek: the head is somewhere continued play would not have carried it.
+    // A seek: the head is somewhere this device's own continued play would not
+    // have carried it.
     let expected = if shared.playing {
-        shared
-            .position_ms
-            .saturating_add(now.saturating_sub(shared.event_at).saturating_mul(1000))
+        shared.position_ms.saturating_add(elapsed_ms)
     } else {
         shared.position_ms
     };
@@ -444,7 +456,7 @@ mod tests {
     #[test]
     fn an_already_applied_revision_is_nothing_to_do() {
         let d = doc(&[("a", 100)], 0, true);
-        assert_eq!(reconcile(&view(&d), &d, d.rev, 1_000), Action::Nothing);
+        assert_eq!(reconcile(&view(&d), &d, d.rev), Action::Nothing);
     }
 
     #[test]
@@ -452,7 +464,7 @@ mod tests {
         let local = doc(&[("a", 100)], 0, true);
         let mut incoming = doc(&[("a", 100), ("b", 100)], 0, true);
         incoming.rev = 2;
-        match reconcile(&view(&local), &incoming, 1, 1_000) {
+        match reconcile(&view(&local), &incoming, 1) {
             Action::ReplaceQueue { tracks, .. } => assert_eq!(tracks.len(), 2),
             other => panic!("expected a replace, got {other:?}"),
         }
@@ -468,7 +480,7 @@ mod tests {
         incoming.event_at = 1_000;
         // A pause is a stop AND a seek to where it stopped — both, in one Follow.
         assert_eq!(
-            reconcile(&view(&local), &incoming, 1, 1_000),
+            reconcile(&view(&local), &incoming, 1),
             Action::Follow {
                 index: 0,
                 position_ms: 30_000,
@@ -482,11 +494,11 @@ mod tests {
         let local = doc(&[("a", 100), ("b", 100)], 0, true);
         let mut incoming = local.clone();
         incoming.index = 1;
-        incoming.playing = false; // paused so catch_up does not roll it on
+        incoming.playing = false;
         incoming.rev = 2;
         incoming.event_at = 1_000;
         assert_eq!(
-            reconcile(&view(&local), &incoming, 1, 1_000),
+            reconcile(&view(&local), &incoming, 1),
             Action::Follow {
                 index: 1,
                 position_ms: 0,
@@ -504,15 +516,12 @@ mod tests {
 
         // Within tolerance: nothing.
         incoming.position_ms = 10_000 + DRIFT_TOLERANCE_MS - 1;
-        assert_eq!(
-            reconcile(&view(&local), &incoming, 1, 1_000),
-            Action::Nothing
-        );
+        assert_eq!(reconcile(&view(&local), &incoming, 1), Action::Nothing);
 
         // A real seek, past tolerance: correct it.
         incoming.position_ms = 60_000;
         assert_eq!(
-            reconcile(&view(&local), &incoming, 1, 1_000),
+            reconcile(&view(&local), &incoming, 1),
             Action::Follow {
                 index: 0,
                 position_ms: 60_000,
@@ -536,7 +545,7 @@ mod tests {
         let mut local = view(&shared);
         // Two seconds later, the head has advanced two seconds. Expected, quiet.
         local.position_ms = 2_000;
-        assert_eq!(local_change(&shared, &local, 1_002), None);
+        assert_eq!(local_change(&shared, &local, 2_000), None);
     }
 
     #[test]
@@ -546,7 +555,7 @@ mod tests {
         local.playing = false;
         local.position_ms = 2_000;
         assert_eq!(
-            local_change(&shared, &local, 1_002),
+            local_change(&shared, &local, 2_000),
             Some(JamOp::Transport {
                 index: 0,
                 position_ms: 2_000,
@@ -561,11 +570,11 @@ mod tests {
         let mut local = view(&shared);
         // Within tolerance of expected (2s): quiet.
         local.position_ms = 2_000 + DRIFT_TOLERANCE_MS - 1;
-        assert_eq!(local_change(&shared, &local, 1_002), None);
+        assert_eq!(local_change(&shared, &local, 2_000), None);
         // A real jump forward: published.
         local.position_ms = 120_000;
         assert!(matches!(
-            local_change(&shared, &local, 1_002),
+            local_change(&shared, &local, 2_000),
             Some(JamOp::Transport {
                 position_ms: 120_000,
                 ..
@@ -583,7 +592,7 @@ mod tests {
             artist: "Someone".into(),
             duration: 180,
         });
-        match local_change(&shared, &local, 1_000) {
+        match local_change(&shared, &local, 0) {
             Some(JamOp::SetQueue { tracks, .. }) => {
                 assert_eq!(tracks.len(), 2);
                 // The new track's metadata survives — the whole reason LocalView
@@ -608,7 +617,7 @@ mod tests {
             position_ms: 5_000,
             queue: shared.queue.clone(),
         };
-        let op = local_change(&shared, &a_local, 1_005).expect("A publishes a pause");
+        let op = local_change(&shared, &a_local, 5_000).expect("A publishes a pause");
         let published = apply(&shared, op, 1_005);
 
         // B receives it and reconciles. B was still playing, roughly in step at
@@ -619,7 +628,7 @@ mod tests {
             position_ms: 5_000,
             queue: shared.queue.clone(),
         };
-        let action = reconcile(&b_before, &published, shared.rev, 1_005);
+        let action = reconcile(&b_before, &published, shared.rev);
         assert_eq!(
             action,
             Action::Follow {
@@ -638,7 +647,7 @@ mod tests {
         };
         // And B, agreeing with the published doc, has nothing to send back.
         assert_eq!(
-            local_change(&published, &b_after, 1_005),
+            local_change(&published, &b_after, 0),
             None,
             "convergence: the follower must not echo the change back"
         );
