@@ -242,6 +242,15 @@ const GRAPH_SHARE: usize = 12;
 /// resumes would be a worse regression than a less varied queue.
 const GRAPH_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
 
+/// Tracks to ask SoundCloud's own related endpoint for, for a queue that
+/// contained SoundCloud songs. Same role as [`GRAPH_SHARE`] on the other side.
+const SC_SHARE: usize = 12;
+
+/// How long SoundCloud's related lookups get before the continuation goes ahead
+/// without them — same reasoning as [`GRAPH_BUDGET`]: the listener is waiting
+/// with the music stopped, so a slow third source must never hold it up.
+const SC_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+
 /// The continuation for a queue that just finished: YouTube's radio for the
 /// tracks that played, woven together with tracks reached through the artist
 /// graph.
@@ -270,10 +279,17 @@ pub async fn blended_continuation(
     }
 
     // A queue of local files or SoundCloud tracks has no YouTube seed, so
-    // there is no radio to fetch — but it still has artist names, and the
-    // graph works from those. Returning early here (which is what this did)
-    // meant a SoundCloud queue simply stopped at the end with no continuation
-    // at all, while the comment above claimed otherwise.
+    // there is no YouTube radio to fetch — but SoundCloud tracks have their own
+    // related endpoint, and every source still has artist names for the graph.
+    // Three sources, fetched concurrently: YouTube's radio (when there are YT
+    // seeds), SoundCloud's related (when the queue held SoundCloud tracks), and
+    // the artist graph. Whichever produce something get woven together.
+    let sc_paths: Vec<String> = finished
+        .iter()
+        .map(|t| t.path.to_string_lossy().to_string())
+        .filter(|p| crate::soundcloud::is_soundcloud_path(p))
+        .collect();
+
     let radio_fut = async {
         if seeds.is_empty() {
             Ok(Vec::new())
@@ -281,13 +297,24 @@ pub async fn blended_continuation(
             crate::ytmusic::mix::start_mix_multi(&seeds, cookies).await
         }
     };
+    let sc_fut = tokio::time::timeout(
+        SC_BUDGET,
+        crate::soundcloud::radio_from_paths(&sc_paths, SC_SHARE),
+    );
     let graph_fut = tokio::time::timeout(
         GRAPH_BUDGET,
         from_artist_graph(finished, exclude, GRAPH_SHARE),
     );
-    let (radio, graph) = tokio::join!(radio_fut, graph_fut);
+    let (radio, sc, graph) = tokio::join!(radio_fut, sc_fut, graph_fut);
 
     let radio = radio.unwrap_or_default();
+    let sc = match sc {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::debug!("soundcloud related missed its budget; continuing without it");
+            Vec::new()
+        }
+    };
     let graph = match graph {
         Ok(g) => g,
         Err(_) => {
@@ -295,12 +322,9 @@ pub async fn blended_continuation(
             Vec::new()
         }
     };
-    if graph.is_empty() {
-        // Nothing to blend with — this is the previous behaviour, not a
-        // failure, and it must stay exactly as good as it was.
-        return weave(&[radio], exclude);
-    }
-    weave(&[radio, graph], exclude)
+    // `weave` skips empty lists, so this preserves the old radio-only / radio+
+    // graph behaviour when there is no SoundCloud source to add.
+    weave(&[radio, sc, graph], exclude)
 }
 
 /// The queue after weaving `extra` into everything past `current`.

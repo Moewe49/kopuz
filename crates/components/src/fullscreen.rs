@@ -222,11 +222,53 @@ fn TrackMetadata(
     current_song_artist: Signal<String>,
     current_song_album: Signal<String>,
     current_song_bitrate: Signal<u16>,
+    /// Whether the current track is a favorite. Only meaningful when
+    /// `on_toggle_favorite` is set (the heart is hidden otherwise).
+    #[props(default = false)]
+    is_favorite: bool,
+    /// When set, a heart button appears beside the title and calls this on tap.
+    #[props(default = None)]
+    on_toggle_favorite: Option<EventHandler<()>>,
+    /// When set, a long-press (or right-click) on the cover calls this — the
+    /// now-playing view wires it to "add to playlist".
+    #[props(default = None)]
+    on_cover_hold: Option<EventHandler<()>>,
 ) -> Element {
+    // The hold gesture: a 500ms timer armed on touch-down and cancelled by a
+    // lift or a scroll, so only a deliberate press-and-hold fires. contextmenu
+    // is swallowed so the webview's native long-press image menu doesn't fight
+    // it (and doubles as desktop right-click). Firing the same handler twice is
+    // harmless — it just re-sets the same add-to-playlist target.
+    let mut hold_task = use_signal(|| None);
     rsx! {
         div {
             class: "rounded-2xl overflow-hidden mb-8 shadow-2xl",
             style: "width: 100%; max-width: 420px; aspect-ratio: 1/1;",
+            ontouchstart: move |_| {
+                if let Some(h) = on_cover_hold {
+                    let task = spawn(async move {
+                        utils::sleep(std::time::Duration::from_millis(500)).await;
+                        h.call(());
+                    });
+                    hold_task.set(Some(task));
+                }
+            },
+            ontouchmove: move |_| {
+                if let Some(t) = hold_task.write().take() {
+                    t.cancel();
+                }
+            },
+            ontouchend: move |_| {
+                if let Some(t) = hold_task.write().take() {
+                    t.cancel();
+                }
+            },
+            oncontextmenu: move |evt| {
+                if let Some(h) = on_cover_hold {
+                    evt.prevent_default();
+                    h.call(());
+                }
+            },
             {
                 let cover = current_song_cover_url.read();
                 if cover.is_empty() {
@@ -253,14 +295,32 @@ fn TrackMetadata(
         }
 
         div {
-            class: "flex flex-col items-start w-full mb-2",
+            class: "flex items-start justify-between w-full mb-2 gap-3",
             style: "max-width: 420px;",
-            h1 { class: "text-3xl font-bold text-white mb-2 line-clamp-1", "{current_song_title}" }
             div {
-                class: "flex items-center gap-2",
-                h2 { class: "text-xl text-white/70 font-medium line-clamp-1", "{current_song_artist}" }
-                span { class: "text-white/30", "•" }
-                h3 { class: "text-lg text-white/50 line-clamp-1", "{current_song_album}" }
+                class: "flex flex-col items-start min-w-0",
+                h1 { class: "text-3xl font-bold text-white mb-2 line-clamp-1", "{current_song_title}" }
+                div {
+                    class: "flex items-center gap-2",
+                    h2 { class: "text-xl text-white/70 font-medium line-clamp-1", "{current_song_artist}" }
+                    span { class: "text-white/30", "•" }
+                    h3 { class: "text-lg text-white/50 line-clamp-1", "{current_song_album}" }
+                }
+            }
+            if let Some(toggle) = on_toggle_favorite {
+                button {
+                    class: if is_favorite {
+                        "shrink-0 w-11 h-11 flex items-center justify-center text-red-400 active:scale-90 transition-transform"
+                    } else {
+                        "shrink-0 w-11 h-11 flex items-center justify-center text-white/50 active:scale-90 transition-transform"
+                    },
+                    "aria-label": if is_favorite { i18n::t("remove_from_favorites").to_string() } else { i18n::t("add_to_favorites").to_string() },
+                    onclick: move |evt| {
+                        evt.stop_propagation();
+                        toggle.call(());
+                    },
+                    i { class: if is_favorite { "fa-solid fa-heart text-2xl" } else { "fa-regular fa-heart text-2xl" } }
+                }
             }
         }
 
@@ -359,6 +419,7 @@ pub fn Fullscreen(
 
     let ctrl = use_context::<PlayerController>();
     let config = use_context::<Signal<AppConfig>>();
+    let favorites_store = use_context::<Signal<reader::FavoritesStore>>();
 
     let mut lyrics: Signal<Option<Option<utils::lyrics::Lyrics>>> = use_signal(|| None);
     let mut fetch_gen: Signal<u32> = use_signal(|| 0);
@@ -479,6 +540,26 @@ pub fn Fullscreen(
     let mut active_tab = use_signal(|| 0usize);
     if cfg!(target_os = "android") {
         let tab = *active_tab.read();
+
+        // Favorite state + the two now-playing gestures: the like button, and
+        // hold-the-cover to add the song to a playlist. Reading the snapshot and
+        // the store here is what makes the heart re-render when the track
+        // changes or is (un)favorited.
+        let fav_snapshot = ctrl.current_track_snapshot.read().clone();
+        let is_fav = crate::shared::get_favorite(fav_snapshot.as_ref(), &favorites_store);
+        let fav_toggle = EventHandler::new(move |_| {
+            crate::shared::toggle_favorite(
+                ctrl.current_track_snapshot.read().clone(),
+                favorites_store,
+                config,
+            );
+        });
+        let cover_hold = EventHandler::new(move |_| {
+            if let Some(track) = ctrl.current_track_snapshot.read().clone() {
+                crate::add_to_playlist::request_add_to_playlist(track);
+            }
+        });
+
         let tab_btn = |idx: usize, icon: &'static str, label: &'static str| {
             let cls = if tab == idx {
                 "flex-1 h-10 flex items-center justify-center text-white border-b-2 border-white"
@@ -526,6 +607,9 @@ pub fn Fullscreen(
                             current_song_artist,
                             current_song_album,
                             current_song_bitrate,
+                            is_favorite: is_fav,
+                            on_toggle_favorite: Some(fav_toggle),
+                            on_cover_hold: Some(cover_hold),
                         }
                         ProgressBarControl { player, current_song_duration, current_song_progress }
                         PlaybackControl { is_playing }

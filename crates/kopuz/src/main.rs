@@ -2990,6 +2990,10 @@ fn App() -> Element {
     provide_context(components::add_to_playlist::AddToPlaylistState(
         add_to_playlist_pending,
     ));
+    // So the fullscreen now-playing view can show a like button without
+    // threading the store through its (already long) prop list — the same way
+    // it already reads the player controller and config from context.
+    provide_context(favorites_store);
     let toast_message = use_signal(|| None::<String>);
     provide_context(components::toast::ToastState(toast_message));
     // SoundCloud "download" buttons drop a permalink here; the Downloads

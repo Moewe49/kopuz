@@ -309,6 +309,60 @@ pub async fn native_search(query: &str, limit: usize) -> Result<Vec<Track>, Stri
     Err(format!("sc search failed (status {last_status:?})"))
 }
 
+/// The tracks SoundCloud considers related to the one at `permalink_url` — its
+/// own "station"/autoplay seed (`/tracks/{id}/related`).
+///
+/// This is what makes end-of-queue autoradio work for a SoundCloud queue: the
+/// ListenBrainz artist graph only knows artists MusicBrainz has heard of, and
+/// most SoundCloud uploaders it has not. SoundCloud's own co-listening graph
+/// does, so it is the reliable seed here.
+///
+/// The synthetic path stores only the permalink, not the numeric id, so this
+/// resolves the permalink first (one call) and then reads the related list
+/// (a second). Two round-trips per seed is why callers seed from only a few.
+pub async fn native_related(permalink_url: &str, limit: usize) -> Result<Vec<Track>, String> {
+    let limit = limit.clamp(1, 50).to_string();
+    for attempt in 0..2 {
+        let cid = client_id().await?;
+        // Resolve the permalink to the numeric track id the related endpoint needs.
+        let resolved = http()
+            .get(format!("{API}/resolve"))
+            .query(&[("url", permalink_url), ("client_id", cid.as_str())])
+            .header(reqwest::header::USER_AGENT, UA)
+            .send()
+            .await
+            .map_err(|e| format!("sc related resolve: {e}"))?;
+        if resolved.status() == reqwest::StatusCode::UNAUTHORIZED && attempt == 0 {
+            invalidate_client_id();
+            continue;
+        }
+        let track: Value = resolved
+            .error_for_status()
+            .map_err(|e| format!("sc related resolve http: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("sc related resolve json: {e}"))?;
+        let Some(id) = track.get("id").and_then(|v| v.as_u64()) else {
+            return Err("sc related: resolved track has no id".to_string());
+        };
+        let resp = http()
+            .get(format!("{API}/tracks/{id}/related"))
+            .query(&[("client_id", cid.as_str()), ("limit", limit.as_str())])
+            .header(reqwest::header::USER_AGENT, UA)
+            .send()
+            .await
+            .map_err(|e| format!("sc related: {e}"))?;
+        let val: Value = resp
+            .error_for_status()
+            .map_err(|e| format!("sc related http: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("sc related json: {e}"))?;
+        return Ok(tracks_from_collection(&val));
+    }
+    Err("sc related failed after client_id refresh".to_string())
+}
+
 fn tracks_from_collection(val: &Value) -> Vec<Track> {
     let Some(cols) = val.get("collection").and_then(|v| v.as_array()) else {
         return Vec::new();

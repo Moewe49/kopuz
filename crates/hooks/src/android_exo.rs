@@ -621,11 +621,18 @@ async fn seed_autoradio() -> bool {
     // instead of each having its own index arithmetic.
     let (finished, exclude, cookies) = {
         let m = mirror().lock().unwrap_or_else(|e| e.into_inner());
-        let played: Vec<String> = m.tracks.iter().filter_map(video_id).collect();
-        if played.is_empty() {
+        if m.tracks.is_empty() {
             return false;
         }
-        let exclude: std::collections::HashSet<String> = played.into_iter().collect();
+        // Exclude everything that played, keyed for every source (videoId for
+        // YouTube, the whole path for SoundCloud / local) rather than only
+        // YouTube ids — otherwise a SoundCloud queue seeds nothing and stops
+        // dead at the end, which is the "no autoradio after SoundCloud" bug.
+        let exclude: std::collections::HashSet<String> = m
+            .tracks
+            .iter()
+            .map(|t| ::server::recommend::track_key(&t.path))
+            .collect();
         (m.tracks.clone(), exclude, m.cookies.clone())
     };
     let cookies = cookies.unwrap_or_default();

@@ -604,7 +604,15 @@ pub fn TrackRow(
                     }
                 }
 
-                div { class: "flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity",
+                // On a phone there is no hover to reveal the menu, so the dots
+                // stay visible — otherwise every per-track action (remove from
+                // playlist, add to playlist, queue…) is simply unreachable on
+                // mobile, which is why "can't remove songs from playlists".
+                div { class: if cfg!(target_os = "android") {
+                        "flex items-center justify-center transition-opacity"
+                    } else {
+                        "flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    },
                     if !is_selection_mode {
                         DotsMenu {
                             actions,
@@ -889,7 +897,11 @@ pub fn TrackRow(
                         is_open: is_menu_open,
                         on_open: move |_| on_click_menu.call(()),
                         on_close: move |_| on_close_menu.call(()),
-                        button_class: "opacity-0 group-hover:opacity-100 focus:opacity-100".to_string(),
+                        button_class: if cfg!(target_os = "android") {
+                            String::new()
+                        } else {
+                            "opacity-0 group-hover:opacity-100 focus:opacity-100".to_string()
+                        },
                         anchor: "right".to_string(),
                         on_action: move |idx: usize| {
                             if let Some(play_next_idx) = play_next_idx

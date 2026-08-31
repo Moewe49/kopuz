@@ -75,7 +75,9 @@ fn search_blocking(binary: &str, query: &str, limit: usize) -> Result<Vec<Track>
         return Err(format!(
             "yt-dlp scsearch exited {}: {}",
             output.status,
-            err.lines().find(|l| !l.trim().is_empty()).unwrap_or("no output")
+            err.lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("no output")
         ));
     }
 
@@ -98,7 +100,13 @@ fn search_blocking(binary: &str, query: &str, limit: usize) -> Result<Vec<Track>
             .map(|s| s as u64)
             .unwrap_or(0);
         let thumbnail = na(f.next());
-        tracks.push(build_track(url, &title, &uploader, duration, thumbnail.as_deref()));
+        tracks.push(build_track(
+            url,
+            &title,
+            &uploader,
+            duration,
+            thumbnail.as_deref(),
+        ));
     }
     Ok(tracks)
 }
@@ -106,8 +114,8 @@ fn search_blocking(binary: &str, query: &str, limit: usize) -> Result<Vec<Track>
 /// Resolve a SoundCloud track (its synthetic path) to a playable stream.
 /// `track_path` is the `soundcloud:<hexUrl>…` path the search produced.
 pub async fn resolve_path(track_path: &str) -> Result<YtStreamInfo, String> {
-    let url = decode_url_from_path(track_path)
-        .ok_or_else(|| "not a soundcloud path".to_string())?;
+    let url =
+        decode_url_from_path(track_path).ok_or_else(|| "not a soundcloud path".to_string())?;
     resolve_url(&url).await
 }
 
@@ -132,6 +140,88 @@ pub async fn resolve_url(url: &str) -> Result<YtStreamInfo, String> {
 /// Permalink URL behind a SoundCloud track path, for the yt-dlp downloader.
 pub fn permalink_from_path(track_path: &str) -> Option<String> {
     decode_url_from_path(track_path)
+}
+
+/// A SoundCloud "radio" for a finished queue: the tracks SoundCloud considers
+/// related to a spread of the SoundCloud songs that just played.
+///
+/// This is the SoundCloud half of end-of-queue autoradio, and the reason it can
+/// work at all for SoundCloud — the artist graph the YouTube side blends with
+/// only knows artists MusicBrainz has heard of, which most SoundCloud uploaders
+/// are not. Empty when the queue holds no SoundCloud tracks, or when SoundCloud
+/// returns nothing.
+///
+/// Seeds are spread across the queue rather than taken from its tail, for the
+/// same reason the YouTube side does it: a continuation seeded only from the
+/// last song drifts to whatever happened to end the playlist.
+pub async fn radio_from_paths(paths: &[String], want: usize) -> Vec<Track> {
+    /// SoundCloud seeds to expand. Each is a resolve + a related call, so this
+    /// is a small latency budget, not a large one.
+    const MAX_SEEDS: usize = 3;
+    /// Related tracks to read per seed.
+    const PER_SEED: usize = 8;
+
+    if want == 0 {
+        return Vec::new();
+    }
+    // Permalinks for the SoundCloud entries, in queue order, de-duplicated.
+    let mut urls: Vec<String> = Vec::new();
+    for p in paths {
+        if !is_soundcloud_path(p) {
+            continue;
+        }
+        if let Some(url) = decode_url_from_path(p) {
+            if !urls.contains(&url) {
+                urls.push(url);
+            }
+        }
+    }
+    if urls.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out: Vec<Track> = Vec::new();
+    // Never re-offer a track that was already in the finished queue: seed with
+    // every SoundCloud permalink that played, keyed the same way the results are.
+    let mut seen: std::collections::HashSet<String> = urls.iter().cloned().collect();
+    for url in spread_urls(&urls, MAX_SEEDS) {
+        if out.len() >= want {
+            break;
+        }
+        let Ok(related) = native::native_related(&url, PER_SEED).await else {
+            continue;
+        };
+        for t in related {
+            if out.len() >= want {
+                break;
+            }
+            let key = decode_url_from_path(&t.path.to_string_lossy())
+                .unwrap_or_else(|| t.path.to_string_lossy().to_string());
+            if seen.insert(key) {
+                out.push(t);
+            }
+        }
+    }
+    out
+}
+
+/// Evenly spread up to `want` items across `items`, first and last included.
+fn spread_urls(items: &[String], want: usize) -> Vec<String> {
+    if items.is_empty() || want == 0 {
+        return Vec::new();
+    }
+    if items.len() <= want {
+        return items.to_vec();
+    }
+    let mut out: Vec<String> = Vec::with_capacity(want);
+    for k in 0..want {
+        let pos = k * (items.len() - 1) / (want - 1).max(1);
+        let candidate = items[pos.min(items.len() - 1)].clone();
+        if !out.contains(&candidate) {
+            out.push(candidate);
+        }
+    }
+    out
 }
 
 fn build_track(
@@ -170,7 +260,13 @@ fn build_track(
 /// duration lets the track be reconstructed for display + playback when it
 /// lives in a local playlist (it's not in any scanned library), so SoundCloud
 /// songs can sit in playlists and queue up like anything else.
-fn make_path(url: &str, title: &str, artist: &str, duration: u64, thumbnail: Option<&str>) -> String {
+fn make_path(
+    url: &str,
+    title: &str,
+    artist: &str,
+    duration: u64,
+    thumbnail: Option<&str>,
+) -> String {
     let cover = thumbnail
         .filter(|t| !t.is_empty() && *t != "NA")
         .map(|t| format!("urlhex_{}", hex::encode(t.as_bytes())))
@@ -225,7 +321,11 @@ pub fn track_from_path(track_path: &str) -> Option<Track> {
         musicbrainz_recording_id: None,
         musicbrainz_track_id: None,
         playlist_item_id: None,
-        artists: if artist.is_empty() { Vec::new() } else { vec![artist] },
+        artists: if artist.is_empty() {
+            Vec::new()
+        } else {
+            vec![artist]
+        },
     })
 }
 

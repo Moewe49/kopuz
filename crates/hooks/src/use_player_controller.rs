@@ -1855,41 +1855,33 @@ impl PlayerController {
         }
     }
 
-    /// At the end of the queue, kick off a YT Music radio mix seeded from the
-    /// track at `idx` (a "Staub → similar songs" continuation). Returns true if
-    /// a radio was started (so the caller shouldn't pause). YT tracks only.
+    /// At the end of the queue, kick off a radio continuation seeded from the
+    /// whole finished playlist — YouTube's radio, SoundCloud's related tracks,
+    /// and the ListenBrainz artist graph, blended, whichever the queue can seed.
+    /// Returns true if a continuation was started (so the caller shouldn't
+    /// pause). Works for any source, not only YouTube.
     pub(crate) fn try_start_autoradio(&mut self, _idx: usize) -> bool {
         if !self.config.peek().autoradio {
             return false;
         }
-        /// videoId out of a `ytmusic:<vid>[:tag]` path (empty if not one).
-        fn yt_vid(track: &Track) -> String {
-            track
-                .path
-                .to_string_lossy()
-                .strip_prefix("ytmusic:")
-                .and_then(|rest| rest.split(':').next())
-                .unwrap_or("")
-                .to_string()
-        }
 
         // Seed from the WHOLE finished playlist, not just the last song, so the
-        // continuation matches the playlist's overall genre mix instead of
-        // drifting to whatever single track happened to be last.
-        let played_ids: Vec<String> = self
-            .queue
-            .peek()
-            .iter()
-            .map(yt_vid)
-            .filter(|v| !v.is_empty())
-            .collect();
-        if played_ids.is_empty() {
-            return false; // no YT tracks to seed a radio from
-        }
-        let exclude: std::collections::HashSet<String> = played_ids.into_iter().collect();
-        // The finished queue itself, not just its ids: the artist graph half of
-        // the blend needs the names.
+        // continuation matches the playlist's overall mix instead of drifting to
+        // whatever single track happened to be last.
         let finished: Vec<Track> = self.queue.peek().clone();
+        if finished.is_empty() {
+            return false;
+        }
+        // Everything that just played is excluded, so the continuation is new
+        // rather than a reshuffle. `track_key` keys YouTube by videoId and
+        // everything else — SoundCloud, local — by its whole path, so this
+        // covers every source. The old version keyed only YouTube videoIds and
+        // bailed outright when there were none, which is exactly why a
+        // SoundCloud queue used to stop dead at the end with no continuation.
+        let exclude: std::collections::HashSet<String> = finished
+            .iter()
+            .map(|t| ::server::recommend::track_key(&t.path))
+            .collect();
         let cookies = self
             .config
             .peek()
@@ -1900,14 +1892,9 @@ impl PlayerController {
         let mut ctrl = *self;
         ctrl.is_loading.set(true);
         spawn(async move {
-            // YouTube's radio woven with the ListenBrainz artist graph, so the
-            // continuation is not simply more of what the queue already was.
-            // Both are fetched concurrently and the graph has a deadline, so
-            // this is no slower to start than the radio alone.
-            // Already-played tracks are excluded inside, by track path rather
-            // than by videoId — so no second filter here. The one that used to
-            // stand at this point keyed non-YouTube paths as the empty string
-            // and would have let them through.
+            // All three sources are fetched concurrently, the slower ones on a
+            // deadline, so this is no slower to start than the fastest source
+            // alone. Already-played tracks are excluded inside.
             let tracks =
                 ::server::recommend::blended_continuation(&finished, &cookies, &exclude).await;
             if tracks.is_empty() {

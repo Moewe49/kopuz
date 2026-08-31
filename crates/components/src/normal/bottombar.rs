@@ -62,6 +62,8 @@ pub fn BottombarNormal(
             0.0
         };
         let cover = current_song_cover_url.read().clone();
+        let snapshot = ctrl.current_track_snapshot.read().clone();
+        let fav = get_favorite(snapshot.as_ref(), &favorites_store);
         return rsx! {
             div {
                 class: "shrink-0 h-[68px] box-content pb-[env(safe-area-inset-bottom)] bg-[#121212]/95 backdrop-blur-3xl border-t border-white/10 rounded-t-[20px] flex items-center px-3 gap-3 relative overflow-hidden shadow-[0_-8px_30px_rgba(0,0,0,0.6)]",
@@ -81,6 +83,11 @@ pub fn BottombarNormal(
                     span { class: "text-[11px] font-medium text-white/60 truncate leading-tight", "{current_song_artist}" }
                 }
                 div { class: "flex items-center gap-1 pr-1",
+                    button {
+                        class: if fav { "w-10 h-10 flex items-center justify-center text-red-400 active:scale-90 transition-transform" } else { "w-10 h-10 flex items-center justify-center text-slate-400 active:scale-90 transition-transform" },
+                        onclick: move |evt| { evt.stop_propagation(); toggle_favorite(ctrl.current_track_snapshot.read().clone(), favorites_store, config); },
+                        i { class: if fav { "fa-solid fa-heart text-sm" } else { "fa-regular fa-heart text-sm" } }
+                    }
                     button {
                         class: "w-12 h-12 flex items-center justify-center text-white text-xl active:scale-90 transition-transform",
                         onclick: move |evt| { evt.stop_propagation(); ctrl.toggle(); },
