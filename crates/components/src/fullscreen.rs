@@ -537,23 +537,26 @@ pub fn Fullscreen(
         }
     };
 
+    // Favorite state + the like toggle, shared by the mobile and desktop
+    // layouts so the heart sits in the now-playing view on both. Reading the
+    // snapshot and the store here is what makes the heart re-render when the
+    // track changes or is (un)favorited.
+    let fav_snapshot = ctrl.current_track_snapshot.read().clone();
+    let is_fav = crate::shared::get_favorite(fav_snapshot.as_ref(), &favorites_store);
+    let fav_toggle = EventHandler::new(move |_| {
+        crate::shared::toggle_favorite(
+            ctrl.current_track_snapshot.read().clone(),
+            favorites_store,
+            config,
+        );
+    });
+
     let mut active_tab = use_signal(|| 0usize);
     if cfg!(target_os = "android") {
         let tab = *active_tab.read();
 
-        // Favorite state + the two now-playing gestures: the like button, and
-        // hold-the-cover to add the song to a playlist. Reading the snapshot and
-        // the store here is what makes the heart re-render when the track
-        // changes or is (un)favorited.
-        let fav_snapshot = ctrl.current_track_snapshot.read().clone();
-        let is_fav = crate::shared::get_favorite(fav_snapshot.as_ref(), &favorites_store);
-        let fav_toggle = EventHandler::new(move |_| {
-            crate::shared::toggle_favorite(
-                ctrl.current_track_snapshot.read().clone(),
-                favorites_store,
-                config,
-            );
-        });
+        // Hold the cover to add the song to a playlist — mobile only, since the
+        // desktop cover already offers this via right-click in the player bar.
         let cover_hold = EventHandler::new(move |_| {
             if let Some(track) = ctrl.current_track_snapshot.read().clone() {
                 crate::add_to_playlist::request_add_to_playlist(track);
@@ -657,6 +660,8 @@ pub fn Fullscreen(
                         current_song_artist,
                         current_song_album,
                         current_song_bitrate,
+                        is_favorite: is_fav,
+                        on_toggle_favorite: Some(fav_toggle),
                     }
 
                     ProgressBarControl {
