@@ -42,7 +42,12 @@ pub fn JellyfinFavorites(
     use_effect(move || {
         let nonce = *refresh_nonce.read();
 
-        let token = match config.peek().server.as_ref().and_then(|s| s.access_token.clone()) {
+        let token = match config
+            .peek()
+            .server
+            .as_ref()
+            .and_then(|s| s.access_token.clone())
+        {
             Some(t) => t,
             None => return,
         };
@@ -80,8 +85,7 @@ pub fn JellyfinFavorites(
                     remote.get_starred_song_ids().await.unwrap_or_default()
                 }
                 MusicService::YtMusic => {
-                    let yt =
-                        ::server::ytmusic::YouTubeMusicClient::with_cookies(token);
+                    let yt = ::server::ytmusic::YouTubeMusicClient::with_cookies(token);
 
                     {
                         let mut lib = library.write();
@@ -120,16 +124,14 @@ pub fn JellyfinFavorites(
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
                             library.write().last_yt_sync_at = Some(now);
-                            let liked_cover = accumulated
-                                .first()
-                                .and_then(|t| {
-                                    t.path
-                                        .to_string_lossy()
-                                        .split(':')
-                                        .nth(2)
-                                        .filter(|s| s.starts_with("urlhex_"))
-                                        .map(|s| s.to_string())
-                                });
+                            let liked_cover = accumulated.first().and_then(|t| {
+                                t.path
+                                    .to_string_lossy()
+                                    .split(':')
+                                    .nth(2)
+                                    .filter(|s| s.starts_with("urlhex_"))
+                                    .map(|s| s.to_string())
+                            });
                             let liked_entry = reader::models::JellyfinPlaylist {
                                 id: "LM".to_string(),
                                 name: "Liked Songs".to_string(),
@@ -139,10 +141,8 @@ pub fn JellyfinFavorites(
                             };
                             {
                                 let mut ps = playlist_store.write();
-                                if let Some(existing) = ps
-                                    .jellyfin_playlists
-                                    .iter_mut()
-                                    .find(|p| p.id == "LM")
+                                if let Some(existing) =
+                                    ps.jellyfin_playlists.iter_mut().find(|p| p.id == "LM")
                                 {
                                     *existing = liked_entry;
                                 } else {
@@ -175,7 +175,8 @@ pub fn JellyfinFavorites(
             .iter()
             .map(|s| s.as_str())
             .collect();
-        lib.jellyfin_tracks
+        let mut out: Vec<(reader::models::Track, Option<utils::CoverUrl>)> = lib
+            .jellyfin_tracks
             .iter()
             .filter(|t| {
                 let path_str = t.path.to_string_lossy();
@@ -203,7 +204,27 @@ pub fn JellyfinFavorites(
                 };
                 (t.clone(), cover_url)
             })
-            .collect()
+            .collect();
+
+        // Liked SoundCloud tracks live in `local_favorites` by their
+        // self-describing path, not in `jellyfin_tracks` — so surface them here,
+        // next to the YT likes, or they would show nowhere and could never be
+        // un-liked. Cover is decoded from the path's own `urlhex_` segment.
+        for path in &store.local_favorites {
+            let p = path.to_string_lossy();
+            if !::server::soundcloud::is_soundcloud_path(&p) {
+                continue;
+            }
+            if let Some(t) = ::server::soundcloud::track_from_path(&p) {
+                let cover = p
+                    .split(':')
+                    .nth(2)
+                    .and_then(utils::jellyfin_image::decode_embedded_cover_url)
+                    .and_then(|u| utils::map_cover_url(Some(u)));
+                out.push((t, cover));
+            }
+        }
+        out
     };
 
     let sorted_displayed_tracks =
@@ -233,6 +254,7 @@ pub fn JellyfinFavorites(
             let track_select = track.path.clone();
             let track_add = track.clone();
             let track_queue = track.clone();
+            let track_unfav = track.clone();
             let queue_source = queue_tracks.clone();
             let track_key = format!("{}-{}", track.path.display(), idx);
             let is_menu_open = active_menu_track.read().as_ref() == Some(&track.path);
@@ -296,6 +318,14 @@ pub fn JellyfinFavorites(
                         active_menu_track.set(None);
                     },
                     on_close_menu: move |_| active_menu_track.set(None),
+                    on_unfavorite: move |_| {
+                        components::shared::toggle_favorite(
+                            Some(track_unfav.clone()),
+                            favorites_store,
+                            config,
+                        );
+                        active_menu_track.set(None);
+                    },
                     on_delete: move |_| active_menu_track.set(None),
                     hide_delete: true,
                     on_download: move |_| {
@@ -612,9 +642,9 @@ pub fn JellyfinFavorites(
                         "grid gap-6 px-2 py-2 border-b border-white/5 text-sm font-medium text-slate-500 mb-2 uppercase tracking-wider"
                     },
                     style: if is_modern {
-                        "grid-template-columns: 40px 1fr 180px 180px 56px 40px; color: rgba(255,255,255,0.25); border-color: rgba(255,255,255,0.06);"
+                        "grid-template-columns: 40px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 56px 40px; color: rgba(255,255,255,0.25); border-color: rgba(255,255,255,0.06);"
                     } else {
-                        "grid-template-columns: 40px minmax(0, 1fr) 200px 200px 64px 40px; align-items: center;"
+                        "grid-template-columns: 40px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 64px 40px; align-items: center;"
                     },
                     div {}
                     button {

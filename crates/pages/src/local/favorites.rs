@@ -46,14 +46,34 @@ pub fn LocalFavorites(
                 )
             })
             .collect::<std::collections::HashMap<String, Option<utils::CoverUrl>>>();
-        lib.tracks
+        let mut out: Vec<(reader::models::Track, Option<utils::CoverUrl>)> = lib
+            .tracks
             .iter()
             .filter(|t| store.is_local_favorite(&t.path))
             .map(|t| {
                 let cover_url = album_covers.get(&t.album_id).cloned().flatten();
                 (t.clone(), cover_url)
             })
-            .collect()
+            .collect();
+
+        // Liked SoundCloud tracks aren't in the scanned library — reconstruct
+        // them from their self-describing favorite path so they show and can be
+        // un-liked here too. Cover comes from the path's own `urlhex_` segment.
+        for path in &store.local_favorites {
+            let p = path.to_string_lossy();
+            if !::server::soundcloud::is_soundcloud_path(&p) {
+                continue;
+            }
+            if let Some(t) = ::server::soundcloud::track_from_path(&p) {
+                let cover = p
+                    .split(':')
+                    .nth(2)
+                    .and_then(utils::jellyfin_image::decode_embedded_cover_url)
+                    .and_then(|u| utils::map_cover_url(Some(u)));
+                out.push((t, cover));
+            }
+        }
+        out
     };
 
     let sorted_displayed_tracks =
@@ -86,6 +106,7 @@ pub fn LocalFavorites(
                 let track_queue = track.clone();
                 let track_meta = track.clone();
                 let track_delete = track.clone();
+                let track_unfav = track.clone();
                 let queue_source = queue_tracks.clone();
                 let track_key = format!("{}-{}", track.path.display(), idx);
                 let is_menu_open = active_menu_track.read().as_ref() == Some(&track.path);
@@ -137,6 +158,14 @@ pub fn LocalFavorites(
                             active_menu_track.set(None);
                         },
                         on_close_menu: move |_| active_menu_track.set(None),
+                        on_unfavorite: move |_| {
+                            components::shared::toggle_favorite(
+                                Some(track_unfav.clone()),
+                                favorites_store,
+                                config,
+                            );
+                            active_menu_track.set(None);
+                        },
                         on_view_metadata: move |_| {
                             metadata_track.set(Some(track_meta.clone()));
                             active_menu_track.set(None);

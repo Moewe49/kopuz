@@ -181,7 +181,7 @@ pub fn encode_cover_url(url: &str) -> String {
     format!("urlhex_{}", hex::encode(url.as_bytes()))
 }
 
-fn decode_embedded_cover_url(tag: &str) -> Option<String> {
+pub fn decode_embedded_cover_url(tag: &str) -> Option<String> {
     let hex = tag.strip_prefix("urlhex_")?;
     if hex.len() % 2 != 0 {
         return None;

@@ -104,6 +104,9 @@ pub fn TrackRow(
     on_play: EventHandler<()>,
     on_delete: EventHandler<()>,
     on_remove_from_playlist: Option<EventHandler<()>>,
+    /// When set, an "Aus Favoriten entfernen" item appears in the menu. Wired by
+    /// the Liked Songs views so a like can be dropped without opening the track.
+    on_unfavorite: Option<EventHandler<()>>,
     on_view_metadata: Option<EventHandler<()>>,
     #[props(default = false)] is_selection_mode: bool,
     #[props(default = false)] is_selected: bool,
@@ -206,6 +209,20 @@ pub fn TrackRow(
         }
         actions.push(action);
     }
+
+    // Placed after download and before the destructive delete. Its index is
+    // taken from the live length, so it never disturbs the fixed indices above
+    // (play-next / queue / add-to-playlist / remove / download).
+    let unfavorite_idx = if on_unfavorite.is_some() {
+        let idx = actions.len();
+        actions.push(MenuAction::new(
+            i18n::t("remove_from_favorites").to_string(),
+            "fa-solid fa-heart-crack",
+        ));
+        Some(idx)
+    } else {
+        None
+    };
 
     let delete_action_idx = if !hide_delete {
         let idx = actions.len();
@@ -662,6 +679,9 @@ pub fn TrackRow(
                                 } else if direct_download_idx == Some(idx) {
                                     trigger_download();
                                     on_close_menu.call(());
+                                } else if unfavorite_idx == Some(idx) {
+                                    if let Some(handler) = on_unfavorite { handler.call(()); }
+                                    on_close_menu.call(());
                                 } else if Some(idx) == delete_action_idx {
                                     on_delete.call(());
                                 }
@@ -950,6 +970,11 @@ pub fn TrackRow(
                                 on_close_menu.call(());
                             } else if direct_download_idx == Some(idx) {
                                 trigger_download_normal();
+                                on_close_menu.call(());
+                            } else if unfavorite_idx == Some(idx) {
+                                if let Some(handler) = on_unfavorite {
+                                    handler.call(());
+                                }
                                 on_close_menu.call(());
                             } else if Some(idx) == delete_action_idx {
                                 on_delete.call(());
