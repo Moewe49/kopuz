@@ -246,9 +246,28 @@ fn walk_tracks(resp: &Value) -> Vec<Track> {
             if let Some(parsed) = parse_card_shelf(card) {
                 emit(parsed, &mut out);
             }
+            // An artist top-result card lists that artist's songs in its
+            // `contents`, and those rows carry only [type, duration] in flex[1]
+            // — no artist of their own, because the card header already names
+            // it. Without a fallback they land with an empty byline ("no artist
+            // shown"). The card's title IS the artist, so carry it down.
+            let card_artist = card
+                .pointer("/title/runs/0/text")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .filter(|s| !s.is_empty());
             if let Some(items) = card.get("contents").and_then(|v| v.as_array()) {
                 for item in items {
-                    if let Some(parsed) = parse_row(item) {
+                    if let Some(mut parsed) = parse_row(item) {
+                        if parsed.artists.is_empty() {
+                            // No byline of its own: its "album" slot is really
+                            // the type label ("Song"), so drop it, and inherit
+                            // the artist from the card header.
+                            parsed.album = None;
+                            if let Some(a) = &card_artist {
+                                parsed.artists = vec![a.clone()];
+                            }
+                        }
                         emit(parsed, &mut out);
                     }
                 }
