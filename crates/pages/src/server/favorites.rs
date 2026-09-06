@@ -54,8 +54,44 @@ pub fn JellyfinFavorites(
         let service = config.peek().server.as_ref().map(|s| s.service);
         let is_ytmusic = service == Some(MusicService::YtMusic);
 
-        if is_ytmusic && nonce == 0 && library.peek().last_yt_sync_at.is_some() {
-            return;
+        // Re-sync the liked library when the page opens if the local cache is
+        // out of date — likes live on the YT account, this is only a mirror:
+        //   * stale: it's been a while, so another device may have (un)liked;
+        //   * unresolved like: a liked id here has no track yet, which is a like
+        //     made on THIS device that hasn't been pulled in — exactly the
+        //     "I liked it but it isn't under Liked Songs" case.
+        // Otherwise keep the cheap once-and-cached behaviour. The effect only
+        // re-runs on mount and manual refresh, so this fetches at most once per
+        // open (no loop even if an id stays unresolved).
+        const LIKED_STALE_SECS: u64 = 300;
+        if is_ytmusic && nonce == 0 {
+            let last_sync = library.peek().last_yt_sync_at;
+            if let Some(last) = last_sync {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let stale = now.saturating_sub(last) > LIKED_STALE_SECS;
+                let has_unresolved_like = {
+                    let lib = library.peek();
+                    let store = favorites_store.peek();
+                    let have: std::collections::HashSet<String> = lib
+                        .jellyfin_tracks
+                        .iter()
+                        .filter_map(|t| {
+                            t.path
+                                .to_string_lossy()
+                                .split(':')
+                                .nth(1)
+                                .map(|s| s.to_string())
+                        })
+                        .collect();
+                    store.jellyfin_favorites.iter().any(|id| !have.contains(id))
+                };
+                if !stale && !has_unresolved_like {
+                    return;
+                }
+            }
         }
 
         is_syncing.set(true);
