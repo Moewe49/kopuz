@@ -226,6 +226,86 @@ fn spread_seeds(ids: &[String], want: usize) -> Vec<String> {
     out
 }
 
+/// YouTube-radio seed videos, allocated to artists in proportion to how much of
+/// the finished queue each one actually was.
+///
+/// Plain positional spreading ([`spread_seeds`]) gave a lone outlier the same
+/// full radio as the dominant artist: one metal song dropped into an otherwise
+/// hyperpop playlist seeded a whole metal radio and came back as a quarter of
+/// the continuation. D'Hondt allocation keeps a rare artist from grabbing a seed
+/// slot while dominant ones exist, and within an artist the ids are still spread
+/// so a seed isn't just the tail. YouTube tracks only — other sources handle the
+/// rest of the queue.
+fn weighted_seeds(finished: &[Track], want: usize) -> Vec<String> {
+    if want == 0 {
+        return Vec::new();
+    }
+    let prefix = format!("{SOURCE_PREFIX}:");
+    // Artists in first-appearance order (a stable tie-break), each with its
+    // de-duplicated videoIds.
+    let mut order: Vec<String> = Vec::new();
+    let mut by_artist: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for t in finished {
+        if !t.path.to_string_lossy().starts_with(&prefix) {
+            continue;
+        }
+        let vid = track_key(&t.path);
+        if vid.is_empty() {
+            continue;
+        }
+        let artist = scrobble::similar::clean_artist(&t.artist).to_lowercase();
+        let ids = by_artist.entry(artist.clone()).or_insert_with(|| {
+            order.push(artist.clone());
+            Vec::new()
+        });
+        if !ids.contains(&vid) {
+            ids.push(vid);
+        }
+    }
+    if order.is_empty() {
+        return Vec::new();
+    }
+    let counts: Vec<usize> = order.iter().map(|a| by_artist[a].len()).collect();
+    let total: usize = counts.iter().sum();
+    let want = want.min(total);
+
+    // D'Hondt: each seat goes to the artist maximising count / (seats + 1),
+    // skipping any whose ids are exhausted. Ties fall to the earlier artist.
+    let mut seats: Vec<usize> = vec![0; order.len()];
+    for _ in 0..want {
+        let mut best: Option<usize> = None;
+        let mut best_q = 0.0f64;
+        for i in 0..order.len() {
+            if seats[i] >= counts[i] {
+                continue;
+            }
+            let q = counts[i] as f64 / (seats[i] + 1) as f64;
+            if best.is_none() || q > best_q + f64::EPSILON {
+                best = Some(i);
+                best_q = q;
+            }
+        }
+        match best {
+            Some(i) => seats[i] += 1,
+            None => break,
+        }
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for (i, artist) in order.iter().enumerate() {
+        if seats[i] == 0 {
+            continue;
+        }
+        for vid in spread_seeds(&by_artist[artist], seats[i]) {
+            if !out.contains(&vid) {
+                out.push(vid);
+            }
+        }
+    }
+    out
+}
+
 /// Tracks to ask the artist graph for. The weave alternates, so this is what
 /// decides how far into the continuation the blend actually reaches: twelve
 /// means the first two dozen tracks alternate, and the radio carries on alone
@@ -265,15 +345,11 @@ pub async fn blended_continuation(
     exclude: &HashSet<String>,
 ) -> Vec<Track> {
     // Only YouTube tracks can seed a YouTube radio. A local file or a
-    // SoundCloud track still counts towards the artist graph below, which
-    // works from names rather than ids.
-    let prefix = format!("{SOURCE_PREFIX}:");
-    let ids: Vec<String> = finished
-        .iter()
-        .filter(|t| t.path.to_string_lossy().starts_with(&prefix))
-        .map(|t| track_key(&t.path))
-        .collect();
-    let seeds = spread_seeds(&ids, 4);
+    // SoundCloud track still counts towards the artist graph below, which works
+    // from names rather than ids. Seeds are allocated per artist in proportion
+    // to the queue (see `weighted_seeds`), so a lone outlier in a mixed playlist
+    // can't seed a whole radio of its own genre.
+    let seeds = weighted_seeds(finished, 4);
     if seeds.is_empty() && finished.is_empty() {
         return Vec::new();
     }
@@ -594,6 +670,46 @@ mod tests {
         let got = spread_seeds(&ids, 4);
         assert_eq!(got.len(), 2, "got {got:?}");
         assert!(got.contains(&"other".to_string()));
+    }
+
+    /// The bug this fixes: a lone outlier artist (one metal song in an otherwise
+    /// hyperpop playlist) must not grab a seed slot — and thus a whole radio of
+    /// its own genre — while a dominant artist is present.
+    #[test]
+    fn a_lone_outlier_gets_no_seed_when_one_artist_dominates() {
+        let mut q: Vec<Track> = (0..6)
+            .map(|i| track(&format!("ytmusic:a{i}"), "S1RENA", "x"))
+            .collect();
+        q.push(track("ytmusic:m0", "Iron Maiden", "y"));
+        let got = weighted_seeds(&q, 4);
+        assert_eq!(got.len(), 4);
+        assert!(
+            got.iter().all(|v| v.starts_with('a')),
+            "outlier seeded: {got:?}"
+        );
+    }
+
+    /// Two artists share the four seeds in proportion to their counts (6:2 → 3:1).
+    #[test]
+    fn seeds_are_split_in_proportion_to_artist_frequency() {
+        let mut q: Vec<Track> = (0..6)
+            .map(|i| track(&format!("ytmusic:a{i}"), "A", "x"))
+            .collect();
+        q.extend((0..2).map(|i| track(&format!("ytmusic:b{i}"), "B", "y")));
+        let got = weighted_seeds(&q, 4);
+        let a = got.iter().filter(|v| v.starts_with('a')).count();
+        let b = got.iter().filter(|v| v.starts_with('b')).count();
+        assert_eq!((a, b), (3, 1), "got {got:?}");
+    }
+
+    /// Only YouTube tracks can seed a YouTube radio.
+    #[test]
+    fn weighted_seeds_ignores_non_youtube_tracks() {
+        let q = vec![
+            track("soundcloud:dead:none:t01:a02:d0", "SC", "x"),
+            track("/home/me/song.flac", "Local", "y"),
+        ];
+        assert!(weighted_seeds(&q, 4).is_empty());
     }
 
     #[test]
